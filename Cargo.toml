@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["musce_core", "musce_host", "musce_persistence"]
+members = ["musce_core", "musce_host", "musce_net", "musce_persistence"]
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.15"
@@ -15,4 +15,5 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # internal
 musce_core = { path = "musce_core" }
+musce_net = { path = "musce_net" }
 musce_persistence = { path = "musce_persistence" }

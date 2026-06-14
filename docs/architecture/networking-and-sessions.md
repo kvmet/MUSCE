@@ -1,6 +1,11 @@
 # Networking and Sessions
 
-> Status: **proposed, not implemented.** This records the design and rationale.
+> Status: **first slice built.** The raw TCP line-mode transport, the
+> transport-agnostic `Connection` abstraction, the commands-in/events-out pipe
+> (`musce_net`), and the session floor (`@quit`/`@who`/`@help`, auth stubbed) are
+> implemented and wired into the tick loop. WebSocket/SSH transports, char/raw
+> input-mode switching, real accounts/auth, embodiment, and modal overlays remain
+> proposed; the rest of this document records that design.
 
 ## Three layers, and the thread boundary
 
@@ -44,6 +49,8 @@ Input handling, top to bottom:
 
 The `@`-namespace always routes to the floor regardless of what's on top; bare commands go to the active frame. So `@quit` works whether you're a fresh login, deep in a possessed drone, or mid-edit.
 
+One sim-side **dispatcher** implements this routing and is the single entry point the tick loop calls as it drains the command inbox. The runtime hands it each `Command` plus the world and an event sink; it selects the frame, emits output events, and (for in-game frames) produces `Action`s through `execute` (see [actions.md](actions.md)). The tick loop itself holds no command knowledge.
+
 ### Two kinds of control state (different homes, different durability)
 
 The distinction that matters: embodied control is a *fact about the world*, not UI.
@@ -74,10 +81,31 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 
 ## Build order
 
-1. Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
+1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
 2. WebSocket + SSH behind the same `Connection` abstraction.
-3. Auth/accounts and the session floor (`@`-commands).
+3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. Embodiment: the `Controls` relation, the `Focus` component, and the `@play` flow.
 5. Modal overlays: menus and editors, with input-mode switching.
+
+### What the first slice actually built
+
+- `musce_net`: a `Connection` trait splitting any transport into line-oriented
+  read/write halves plus `Capabilities`; the raw TCP impl; the per-connection
+  task and event router; and the boundary vocabulary (`Command`/`Input`,
+  `Outgoing`/`Event`/`Audience`/`EventKind`, `ConnectionId`). Net is the producer
+  of `Command`s and consumer of `Outgoing`; it holds only per-connection
+  presentation state.
+- Connection lifecycle rides the command channel as `Input::Connected` /
+  `Line` / `Disconnected`, so the sim has one entry point for allocating, driving,
+  and tearing down a session.
+- Only `Audience::Connection` is routed; `Entity`/`Room` need the embodiment
+  mapping and are deferred with the rest of step 4.
+- A single sim-side dispatcher (`musce_host`, `dispatch.rs`) is the one entry
+  point the tick loop calls as it drains the inbox; it owns the input-stack
+  routing above and takes `&mut World`. Only the session floor frame
+  (`session.rs`) exists in this slice, so every command lands there. The in-game
+  command layer (the embodiment frame) is the dispatch table in
+  [actions.md](actions.md) and is deferred; when it lands it slots in behind the
+  same entry point and the floor narrows to the `@`-namespace.
 
 New engine pieces this needs: a `Controls` relation (a new instance of the relation layer, cascade `Detach`) and a `Focus` component. Both are small additions to `musce_core`.

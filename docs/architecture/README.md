@@ -40,14 +40,15 @@ These hold across every subsystem:
 - [concurrency.md](concurrency.md) — the threading model, the tick pipeline, and
   why there is no auto-scheduler.
 - [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
-  the source-to-executor model, and the mutator/action layering. *(Proposed; not
-  implemented.)*
+  the source-to-executor model, command dispatch as a registry, and the
+  mutator/action layering. *(Proposed; not implemented.)*
 - [sequences.md](sequences.md) — timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
 - [networking-and-sessions.md](networking-and-sessions.md) — transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
-  overlay, the account floor, staff multi-puppet). *(Proposed; not implemented.)*
+  overlay, the account floor, staff multi-puppet). *(First slice built: raw TCP +
+  session floor; the rest proposed.)*
 - [sharding.md](sharding.md) — the deferred sharding plan and the seams kept now
   to make it possible.
 
@@ -58,14 +59,19 @@ Built:
 - `musce_core`: world, identity, relation layer, containment, JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the tick loop (fixed cadence, `TickCtx` carrying both clocks),
-  boot load, periodic + graceful-shutdown persistence.
+  boot load, periodic + graceful-shutdown persistence, and a single command
+  dispatcher (currently just the session floor) draining the inbox each tick.
+- `musce_net`: raw TCP line-mode transport behind a transport-agnostic
+  `Connection`, plus the commands-in/events-out pipe and event router. The
+  session floor (`@quit`/`@who`/`@help`) is reachable; auth is stubbed.
 
 Deferred (with seams in place where noted):
 
 - Game systems: the phase pipeline runs, but no systems yet (designed in
   actions.md and sequences.md).
-- Networking: transports, sessions, accounts, puppets (designed in
-  networking-and-sessions.md).
+- Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
+  overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
+  are built.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

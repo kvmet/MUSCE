@@ -3,26 +3,38 @@
 //! until networking lands). The world is loaded before the first tick and saved
 //! synchronously on shutdown.
 
+mod dispatch;
+mod session;
+
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
 use musce_core::{EntityId, Snapshot, World};
+use musce_net::{Command, Outgoing};
 use musce_persistence::{Loaded, Persistence, SqliteStore};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
+
+use crate::dispatch::Dispatch;
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
 pub const TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// Periodic snapshot cadence, in ticks. Tick-count (not wall-clock) so it stays
 /// deterministic. ~every 5 s at the default tick rate.
 pub const SAVE_EVERY: u32 = 50;
+/// Default TCP listen address for the line-mode transport.
+pub const LISTEN_ADDR: &str = "127.0.0.1:4000";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub tick_interval: Duration,
     pub save_every: u32,
+    /// Where the TCP transport binds. `None` runs headless (no networking),
+    /// which is what the tests use.
+    pub listen_addr: Option<SocketAddr>,
 }
 
 impl Default for Config {
@@ -30,6 +42,7 @@ impl Default for Config {
         Self {
             tick_interval: TICK_INTERVAL,
             save_every: SAVE_EVERY,
+            listen_addr: Some(LISTEN_ADDR.parse().expect("valid default listen addr")),
         }
     }
 }
@@ -69,11 +82,23 @@ pub async fn run(
     let (ack_tx, ack_rx) = crossbeam_channel::unbounded::<Ack>();
     let (done_tx, done_rx) = oneshot::channel::<RunReport>();
 
+    // The net <-> sim boundary: commands in (crossbeam, drained by the sim
+    // thread), events out (tokio mpsc, drained by the net router).
+    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<Command>();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
+
+    if let Some(addr) = config.listen_addr {
+        match musce_net::start(addr, cmd_tx, event_rx).await {
+            Ok(bound) => tracing::info!(%bound, "listening"),
+            Err(e) => tracing::error!(error = %e, "failed to start networking"),
+        }
+    }
+
     let persist = tokio::spawn(persistence_task(store.clone(), snap_rx, ack_tx));
 
     let sim = std::thread::Builder::new()
         .name("musce-sim".into())
-        .spawn(move || sim_loop(loaded, snap_tx, ack_rx, shutdown, config, done_tx))
+        .spawn(move || sim_loop(loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, done_tx))
         .expect("spawn sim thread");
 
     let report = done_rx.await?; // fires after the final save is acked
@@ -102,10 +127,13 @@ async fn persistence_task(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sim_loop(
     loaded: Loaded,
     snap_tx: UnboundedSender<Snapshot>,
     ack_rx: Receiver<Ack>,
+    cmd_rx: Receiver<Command>,
+    event_tx: UnboundedSender<Outgoing>,
     shutdown: Arc<AtomicBool>,
     config: Config,
     done_tx: oneshot::Sender<RunReport>,
@@ -115,6 +143,7 @@ fn sim_loop(
         tracing::error!(error = %e, "failed to load world; starting empty");
     }
 
+    let mut dispatch = Dispatch::new();
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -145,9 +174,19 @@ fn sim_loop(
             now: SystemTime::now(),
         };
 
-        // drain inbox -> actions (no-op until net)
+        // Drain the command inbox: the only entry point for external mutation.
+        // The loop holds no command knowledge; it hands each command to the
+        // dispatcher, which routes it to the right input-stack frame and emits
+        // events (and, for in-game frames, runs `execute` against the world).
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            dispatch.handle(cmd, &mut world, &mut |out| {
+                if event_tx.send(out).is_err() {
+                    tracing::error!("event outbox closed; dropping output");
+                }
+            });
+        }
+
         run_phases(&mut world, &ctx);
-        // collect events -> outbox (no-op until net)
 
         since_save += 1;
         if since_save >= config.save_every {
@@ -228,6 +267,7 @@ mod tests {
         let config = Config {
             tick_interval: Duration::from_millis(10),
             save_every: 2,
+            listen_addr: None, // headless: no real socket in the lifecycle test
         };
         let report = run(store.clone(), config, shutdown).await.unwrap();
 
