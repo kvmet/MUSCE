@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-musce_core = { workspace = true }
-tokio = { workspace = true }
 crossbeam-channel = { workspace = true }
-serde = { workspace = true }
+musce_core = { workspace = true }
+musce_proto = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }

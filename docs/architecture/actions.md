@@ -1,7 +1,12 @@
 # Actions and the Executor
 
-> Status: **design agreed; not yet implemented.** This records the reviewed
-> design and its rationale; building it is the next slice.
+> Status: **first slice built.** The structural executor (`Action::Move` +
+> `execute` + `ExecError`), the verb dispatch table, the verbs `look`, `go`/bare
+> direction, `take`, `drop`, and `say`, the stub `@play` actor binding, the
+> sim-side audience resolver, and the code-seeded starter world are implemented
+> in `musce_proto` (shared vocabulary) and `musce_action`, and wired into
+> `musce_host`. `Create`/`Destroy`/`SetComponent` and the admin verbs remain
+> proposed; the rest of this document records that design.
 
 ## Action is the only thing that mutates the world
 
@@ -243,18 +248,30 @@ commands-in / events-out vocabulary (`Command`, `Event`, `Audience`, `EventKind`
 
 ## MVP starting set
 
-Engine mutators are already built; leave them as `World` methods. Do not pre-build
-the `Action` enum. The first slice is deliberately minimal:
+Engine mutators are already built; they stay `World` methods. The `Action` enum
+is only as large as the verbs need. The first slice (built) is deliberately
+minimal:
 
-- `Action::Move { entity, into }` only, with `execute` and `ExecError`.
+- `Action::Move { entity, into }` only, with `execute` and `ExecError`. `execute`
+  carries a structural-event sink for reactions; `Move` emits nothing into it yet.
 - Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, and `say` (Room-
-  addressed, no mutation). The account floor's `@quit`/`@who`/`@help` stay.
-- A stub `@play` binding the connection to an actor `EntityId` (session state),
-  standing in for embodiment so bare commands have an actor. The full `Controls`
-  relation + `Focus` component + `@play` flow is the next slice and replaces the
-  pointer without touching handlers.
-- A small code-seeded world (a few linked rooms, an item, a player avatar), built
-  with `World::spawn` when the DB loads empty, as ground truth for tests and play.
+  addressed, no mutation), in a `CommandTable` looked up by exact name then first
+  registered prefix (movement registered before `say`, so `s` is south and `sa`
+  is say). The account floor's `@quit`/`@who`/`@help` stay.
+- A stub `@play` binding the connection to an actor `EntityId` (session state, in
+  `musce_action::Actors`), standing in for embodiment so bare commands have an
+  actor. The full `Controls` relation + `Focus` component + `@play` flow is the
+  next slice and replaces the pointer without touching handlers, which already
+  take the actor explicitly.
+- A code-seeded world (a hall, a garden, a cellar linked by `Exits`; a takeable
+  key; a player avatar), built with `World::spawn` when the DB loads empty, as
+  ground truth for tests and play.
+
+Output is addressed semantically and resolved sim-side: handlers emit first-person
+feedback to the acting connection and third-person narration to the room (the
+actor excluded), and the audience resolver expands `Room`/`Entity` into the
+connections that should see it before anything reaches net. Net is left a pure
+`Connection` pipe.
 
 The next increment adds `Create`/`Destroy`/`SetComponent` (with the registry's
 third per-tag function noted above) and the admin verbs `@create`/`@destroy`/

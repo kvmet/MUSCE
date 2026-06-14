@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::Sender;
 use tokio::sync::mpsc;
 
-use crate::boundary::{Capabilities, Command, ConnectionId, Event, Input, Outgoing};
+use musce_proto::{Capabilities, Command, ConnectionId, Event, Input, Outgoing};
 
 /// A reader half: yields input one line at a time. `None` means end of stream.
 /// The newline framing is the transport's concern (a WebSocket frame is already
@@ -106,16 +106,18 @@ pub async fn serve_connection<C: Connection>(
 }
 
 /// Drain the sim's outbox and fan each message into the right connection mailbox.
-/// `Entity`/`Room` audiences need the embodiment mapping and are dropped for now.
+/// Net is a pure `Connection` pipe: the action layer's audience resolver expands
+/// `Entity`/`Room` into `Connection` events sim-side before they reach here, so a
+/// non-connection audience at this point is a bug upstream, not normal traffic.
 pub async fn route_events(mut outbox: mpsc::UnboundedReceiver<Outgoing>, registry: Registry) {
-    use crate::boundary::Audience;
+    use musce_proto::Audience;
 
     while let Some(out) = outbox.recv().await {
         match out {
             Outgoing::Event(ev) => match ev.to {
                 Audience::Connection(id) => send_to(&registry, id, ConnMsg::Event(ev)),
                 Audience::Entity(_) | Audience::Room(_) => {
-                    tracing::debug!(audience = ?ev.to, "non-connection audience not yet routable");
+                    tracing::error!(audience = ?ev.to, "unresolved audience reached net; resolver should have expanded it");
                 }
             },
             Outgoing::Close(id) => {

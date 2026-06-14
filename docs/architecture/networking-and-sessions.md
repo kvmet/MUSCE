@@ -1,11 +1,15 @@
 # Networking and Sessions
 
-> Status: **first slice built.** The raw TCP line-mode transport, the
-> transport-agnostic `Connection` abstraction, the commands-in/events-out pipe
-> (`musce_net`), and the session floor (`@quit`/`@who`/`@help`, auth stubbed) are
-> implemented and wired into the tick loop. WebSocket/SSH transports, char/raw
-> input-mode switching, real accounts/auth, embodiment, and modal overlays remain
-> proposed; the rest of this document records that design.
+> Status: **first slice built, plus the embodiment-frame stub.** The raw TCP
+> line-mode transport, the transport-agnostic `Connection` abstraction, the
+> commands-in/events-out pipe (`musce_net`/`musce_proto`), and the session floor
+> (`@quit`/`@who`/`@help`/`@play`, auth stubbed) are implemented and wired into the
+> tick loop. The dispatcher now also routes bare commands to an embodiment frame
+> via a **stub** `@play` that binds a connection to an actor `EntityId` as session
+> state (see [actions.md](actions.md)). WebSocket/SSH transports, char/raw
+> input-mode switching, real accounts/auth, the persisted `Controls`/`Focus`
+> embodiment, and modal overlays remain proposed; the rest of this document records
+> that design.
 
 ## Three layers, and the thread boundary
 
@@ -85,10 +89,12 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 2. WebSocket + SSH behind the same `Connection` abstraction.
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. Embodiment: the `Controls` relation, the `Focus` component, and the `@play` flow.
-   The action layer ([actions.md](actions.md)) lands first with a **stub `@play`**
-   that binds a connection to an actor `EntityId` as session state, so in-game
-   verbs have an actor; this step then replaces the pointer with the persisted
-   `Controls`/`Focus` world state without touching the verb handlers.
+   **The action layer ([actions.md](actions.md)) landed first with a stub `@play`**
+   that binds a connection to an actor `EntityId` as session state
+   (`musce_action::Actors`), so in-game verbs have an actor; that part is built.
+   This step then replaces the pointer with the persisted `Controls`/`Focus` world
+   state without touching the verb handlers, which already take the actor
+   explicitly.
 5. Modal overlays: menus and editors, with input-mode switching.
 
 ### What the first slice actually built
@@ -104,15 +110,16 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
   and tearing down a session.
 - Net handles only `Audience::Connection`. Resolving `Entity`/`Room` to the
   connections that should see an event is **sim-side** (it needs world state and
-  the connection-to-entity map), done by the action layer before output reaches
-  net; net never resolves audiences. Until that layer lands the router has nothing
-  else to route.
+  the connection-to-entity map), done by the action layer's audience resolver
+  before output reaches net; net never resolves audiences and logs an error if an
+  unresolved audience ever reaches it.
 - A single sim-side dispatcher (`musce_host`, `dispatch.rs`) is the one entry
   point the tick loop calls as it drains the inbox; it owns the input-stack
-  routing above and takes `&mut World`. Only the session floor frame
-  (`session.rs`) exists in this slice, so every command lands there. The in-game
-  command layer (the embodiment frame) is the dispatch table in
-  [actions.md](actions.md) and is deferred; when it lands it slots in behind the
-  same entry point and the floor narrows to the `@`-namespace.
+  routing above and takes `&mut World`. The `@`-namespace and connection lifecycle
+  land on the session floor (`session.rs`); a bare command routes to the
+  embodiment frame, which this slice realizes as the stub actor binding plus the
+  action layer's command table ([actions.md](actions.md)). The persisted
+  `Controls`/`Focus` embodiment replaces the stub binding behind this same entry
+  point without touching the floor or the verb handlers.
 
 New engine pieces this needs: a `Controls` relation (a new instance of the relation layer, cascade `Detach`) and a `Focus` component. Both are small additions to `musce_core`.

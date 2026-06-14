@@ -1,0 +1,8 @@
+[package]
+name = "musce_action"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+musce_core  = { workspace = true }
+musce_proto = { workspace = true }

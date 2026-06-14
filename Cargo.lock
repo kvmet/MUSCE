@@ -737,6 +737,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "musce_action"
+version = "0.1.0"
+dependencies = [
+ "musce_core",
+ "musce_proto",
+]
+
+[[package]]
 name = "musce_core"
 version = "0.1.0"
 dependencies = [
@@ -752,9 +760,11 @@ name = "musce_host"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "musce_action",
  "musce_core",
  "musce_net",
  "musce_persistence",
+ "musce_proto",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -766,7 +776,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "musce_core",
- "serde",
+ "musce_proto",
  "tokio",
  "tracing",
 ]
@@ -781,6 +791,14 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "musce_proto"
+version = "0.1.0"
+dependencies = [
+ "musce_core",
+ "serde",
 ]
 
 [[package]]

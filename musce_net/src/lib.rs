@@ -5,7 +5,6 @@
 //! sim-side; net holds only per-connection presentation state (capabilities,
 //! later input mode). See `docs/architecture/networking-and-sessions.md`.
 
-mod boundary;
 mod connection;
 mod tcp;
 
@@ -14,9 +13,12 @@ use std::net::SocketAddr;
 use crossbeam_channel::Sender;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-pub use boundary::{
+// The boundary vocabulary now lives in `musce_proto` (shared with the action
+// layer); re-export it so existing `musce_net::{Command, ...}` paths keep working.
+pub use musce_proto::{
     Audience, Capabilities, Command, ConnectionId, Event, EventKind, Input, Outgoing,
 };
+
 pub use connection::{Connection, LineReader, LineWriter, render};
 
 /// Start networking: bind the TCP transport, spawn its accept loop and the event

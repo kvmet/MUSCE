@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crossbeam-channel = { workspace = true }
+musce_action = { workspace = true }
 musce_core = { workspace = true }
 musce_net = { workspace = true }
+musce_proto  = { workspace = true }
 musce_persistence = { workspace = true }
 tokio = { workspace = true }
-crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -13,7 +13,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::boundary::{Capabilities, Command, ConnectionId};
+use musce_proto::{Capabilities, Command, ConnectionId};
+
 use crate::connection::{Connection, LineReader, LineWriter, Registry, serve_connection};
 
 /// A TCP connection's read half, buffered for line framing.

@@ -41,7 +41,8 @@ These hold across every subsystem:
   why there is no auto-scheduler.
 - [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
   the structural-only executor, command dispatch as a registry, and where rules
-  and perception live. *(Design agreed; not implemented. Next slice.)*
+  and perception live. *(First slice built: `Move` executor, the core verbs, stub
+  `@play`, sim-side audience resolution; admin verbs deferred.)*
 - [sequences.md](sequences.md) — timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
@@ -63,13 +64,20 @@ Built:
   dispatcher (currently just the session floor) draining the inbox each tick.
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
-  session floor (`@quit`/`@who`/`@help`) is reachable; auth is stubbed.
+  session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
+- `musce_proto`: the shared command/event vocabulary (`Command`, `Event`,
+  `Audience`, `EventKind`, `ConnectionId`, `Capabilities`), depended on by net,
+  action, and host so the action layer never touches the transport.
+- `musce_action`: the structural executor (`Action::Move`), the verb dispatch
+  table (`look`, `go`/bare direction, `take`, `drop`, `say`), the stub `@play`
+  actor binding, the sim-side audience resolver, and the code-seeded starter
+  world. Wired into `musce_host`'s dispatcher as the embodiment frame.
 
 Deferred (with seams in place where noted):
 
-- Game logic: the action/executor layer (`musce_action`) over a shared protocol
-  crate (`musce_proto`), then systems on the phase pipeline (designed in
-  actions.md and sequences.md). The next slice.
+- Game logic: the rest of the action layer (`Create`/`Destroy`/`SetComponent` and
+  the admin verbs), then systems on the phase pipeline (designed in actions.md and
+  sequences.md). The next slice.
 - Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
   overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
   are built.

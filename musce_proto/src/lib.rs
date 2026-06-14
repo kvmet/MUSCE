@@ -1,7 +1,9 @@
-//! The types that cross the net <-> sim thread boundary: commands in, events
-//! out. These are the *only* vocabulary the sim shares with networking, so they
-//! stay free of any transport detail. Addressed by `ConnectionId` (net-local)
-//! and, once embodiment lands, by `EntityId` (world-global).
+//! The shared protocol vocabulary: the types that cross the net <-> sim thread
+//! boundary (commands in, events out) plus the audience/event model the action
+//! layer addresses output with. Pure and transport-free (no tokio): `musce_net`,
+//! `musce_action`, and `musce_host` all speak it, so the action layer never
+//! depends on the transport. See `docs/architecture/actions.md` and
+//! `docs/architecture/networking-and-sessions.md`.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,11 +81,17 @@ impl Event {
     pub fn to_connection(id: ConnectionId, kind: EventKind, text: impl Into<String>) -> Self {
         Event { to: Audience::Connection(id), kind, text: text.into() }
     }
+
+    /// Text aimed at everyone in a room. The sim-side audience resolver expands
+    /// this into per-connection events; net never sees it.
+    pub fn to_room(room: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
+        Event { to: Audience::Room(room), kind, text: text.into() }
+    }
 }
 
-/// Who an event is for. `Entity`/`Room` resolution needs the embodiment mapping
-/// (which connection drives which entity) and is deferred; this slice routes only
-/// `Connection`.
+/// Who an event is for. `Entity`/`Room` are resolved to `Connection` sim-side by
+/// the action layer's audience resolver (it needs world state and the
+/// connection-to-entity map); net only ever routes `Connection`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Audience {
     Connection(ConnectionId),
@@ -97,6 +105,6 @@ pub enum EventKind {
     System,
     /// Direct response to a command.
     Feedback,
-    /// World description (room look, arrivals).
+    /// World description (room look, arrivals, things others do).
     Narration,
 }

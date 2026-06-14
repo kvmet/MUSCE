@@ -13,8 +13,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
 use musce_core::{EntityId, Snapshot, World};
-use musce_net::{Command, Outgoing};
 use musce_persistence::{Loaded, Persistence, SqliteStore};
+use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -141,6 +141,12 @@ fn sim_loop(
     let mut world = World::new();
     if let Err(e) = world.load(&loaded.entities, loaded.next_id) {
         tracing::error!(error = %e, "failed to load world; starting empty");
+    }
+    // First boot against an empty database: lay down the starter map so there is
+    // ground truth to play. A loaded world is left untouched.
+    if loaded.entities.is_empty() {
+        let seeded = musce_action::seed(&mut world);
+        tracing::info!(start = ?seeded.start, avatar = ?seeded.avatar, "seeded starter world");
     }
 
     let mut dispatch = Dispatch::new();
