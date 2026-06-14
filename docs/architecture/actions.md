@@ -245,6 +245,13 @@ Event stream.
 
 ## Where it lives
 
+The verbs, the seed world, and name resolution currently live in `musce_action`
+as the first-slice scaffolding that proved the plumbing; they are game content and
+move to the reference game crate `musce_ref`, leaving `musce_action` pure engine
+mechanism (the executor, the `CommandTable` lookup and registration, `Ctx` and its
+emit API, the audience resolver). See
+[engine-and-game.md](engine-and-game.md).
+
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to
 test. The

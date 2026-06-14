@@ -94,7 +94,9 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
    (`musce_action::Actors`), so in-game verbs have an actor; that part is built.
    This step then replaces the pointer with the persisted `Controls`/`Focus` world
    state without touching the verb handlers, which already take the actor
-   explicitly.
+   explicitly. Which actor `@play` binds is game policy, injected into the runtime
+   by the `Game` (see [engine-and-game.md](engine-and-game.md)); the floor itself
+   (`@quit`/`@who`/`@help`) stays engine.
 5. Modal overlays: menus and editors, with input-mode switching.
 
 ### What the first slice actually built

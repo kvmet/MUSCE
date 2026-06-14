@@ -33,24 +33,28 @@ These hold across every subsystem:
 
 ## Documents
 
-- [ecs-and-relations.md](ecs-and-relations.md) — the ECS, identity, the generic
+- [ecs-and-relations.md](ecs-and-relations.md): the ECS, identity, the generic
   relation layer, containment, and how queries work.
-- [persistence.md](persistence.md) — World-as-truth, the snapshot model, the
+- [persistence.md](persistence.md): World-as-truth, the snapshot model, the
   blob schema, and the save/confirm contract.
-- [concurrency.md](concurrency.md) — the threading model, the tick pipeline, and
+- [concurrency.md](concurrency.md): the threading model, the tick pipeline, and
   why there is no auto-scheduler.
-- [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
+- [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
   the structural-only executor, command dispatch as a registry, and where rules
   and perception live. *(Structural vocabulary built: the full `Action` set, the
   core verbs, stub `@play`, sim-side audience resolution; admin verbs deferred.)*
-- [sequences.md](sequences.md) — timed behavior as components, sequences and
+- [engine-and-game.md](engine-and-game.md): the boundary between the engine
+  substrate and a game built on it, the `Game` the runtime is parameterized over,
+  and the in-repo reference game `musce_ref`. *(Agreed; not implemented. Next
+  slice.)*
+- [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
-- [networking-and-sessions.md](networking-and-sessions.md) — transports behind one
+- [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
   overlay, the account floor, staff multi-puppet). *(First slice built: raw TCP +
   session floor; the rest proposed.)*
-- [sharding.md](sharding.md) — the deferred sharding plan and the seams kept now
+- [sharding.md](sharding.md): the deferred sharding plan and the seams kept now
   to make it possible.
 
 ## Status
@@ -77,9 +81,13 @@ Built:
 
 Deferred (with seams in place where noted):
 
+- The engine/game split: the runtime becomes a library parameterized by a `Game`,
+  and the game content currently in `musce_action` (verbs, seed, name resolution)
+  moves to a reference crate `musce_ref` that owns `main` (designed in
+  engine-and-game.md). The next slice.
 - Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
   `@summon`/`@set`) that ride the now-built structural action set, then systems on
-  the phase pipeline (designed in actions.md and sequences.md). The next slice.
+  the phase pipeline (designed in actions.md and sequences.md).
 - Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
   overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
   are built.
