@@ -36,6 +36,7 @@ pub trait Persistence {
 
 const NEXT_ID_KEY: &str = "next_id";
 
+#[derive(Clone)]
 pub struct SqliteStore {
     pool: SqlitePool,
 }

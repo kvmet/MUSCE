@@ -1,0 +1,12 @@
+[package]
+name = "musce_host"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+musce_core = { workspace = true }
+musce_persistence = { workspace = true }
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
