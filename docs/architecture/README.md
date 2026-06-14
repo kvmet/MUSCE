@@ -32,6 +32,12 @@ These hold across every subsystem:
   blob schema, and the save/confirm contract.
 - [concurrency.md](concurrency.md) — the threading model, the tick pipeline, and
   why there is no auto-scheduler.
+- [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
+  the source-to-executor model, and the mutator/action layering. *(Proposed; not
+  implemented.)*
+- [sequences.md](sequences.md) — timed behavior as components, sequences and
+  effects on a shared skeleton, and how they differ from systems. *(Proposed; not
+  implemented.)*
 - [sharding.md](sharding.md) — the deferred sharding plan and the seams kept now
   to make it possible.
 
@@ -44,7 +50,8 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Systems and the tick pipeline.
+- Systems and the tick pipeline (designed in concurrency.md, actions.md, and
+  sequences.md; not built).
 - Networking: connections, sessions, accounts, puppets.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
