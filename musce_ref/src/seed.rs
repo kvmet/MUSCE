@@ -1,14 +1,12 @@
 //! The reference game's starting world and its `@play` actor policy. The seed is
 //! spawned into an empty database on first boot so there is ground truth to play
-//! and test against before any builder tools exist; `bind_actor` is the policy
+//! and test against before any builder tools exist; `choose_actor` is the policy
 //! the runtime injects for `@play`, choosing which actor a connection comes to
 //! drive. Both are game content over the world API the engine exposes. See
 //! `docs/architecture/engine-and-game.md`.
 
-use musce_action::Actors;
 use musce_core::hecs::EntityBuilder;
 use musce_core::{Description, EntityId, Exit, Exits, Item, Player, Room, World};
-use musce_proto::ConnectionId;
 
 /// Build the starter map into an empty world: a hall, a garden to its north, and
 /// a cellar below it; a takeable key in the garden; and a player avatar standing
@@ -30,15 +28,11 @@ pub fn seed(world: &mut World) {
     world.move_entity(avatar, hall).expect("seed: place avatar");
 }
 
-/// The `@play` policy: bind a connection to the seeded player avatar as session
-/// state, and return the actor so the floor can confirm it. The persisted
-/// `Controls`/`Focus` embodiment will replace the body of this hook later without
-/// changing the interface; the floor and the verb handlers, which already take
-/// the actor explicitly, are untouched.
-pub fn bind_actor(world: &World, actors: &mut Actors, conn: ConnectionId) -> Option<EntityId> {
-    let actor = find_player(world)?;
-    actors.bind(conn, actor);
-    Some(actor)
+/// The `@play` policy: choose which actor a connection comes to drive. The floor
+/// records the attachment; this only selects. For now that is the seeded player
+/// avatar; the real flow will resolve the account's chosen character.
+pub fn choose_actor(world: &World) -> Option<EntityId> {
+    find_player(world)
 }
 
 /// Find the player avatar in the world. Returns the first `Player` entity, of
@@ -122,14 +116,10 @@ mod tests {
     }
 
     #[test]
-    fn bind_actor_binds_the_seeded_avatar() {
+    fn choose_actor_selects_the_seeded_avatar() {
         let mut w = World::new();
         seed(&mut w);
-        let mut actors = Actors::default();
-        let conn = ConnectionId(1);
-
-        let actor = bind_actor(&w, &mut actors, conn);
-        assert!(actor.is_some());
-        assert_eq!(actors.actor_of(conn), actor);
+        assert_eq!(choose_actor(&w), find_player(&w));
+        assert!(choose_actor(&w).is_some());
     }
 }

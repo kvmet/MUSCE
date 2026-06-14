@@ -80,7 +80,8 @@ Built:
   `Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`, returning the
   action's subject), the `CommandTable` lookup and public `register`, `Ctx` and
   its public emit API (the surface a game's verb handlers program against), the
-  stub `@play` actor binding (`Actors`), and the sim-side audience resolver.
+  conn->actor audience index (`Actors`, derived from the floor's session
+  attachments), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`, `say`)
   and their parsing, name resolution, the takeable rule, narration prose, the
@@ -92,9 +93,10 @@ Deferred (with seams in place where noted):
 - Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
   `@summon`/`@set`) that ride the now-built structural action set, then systems on
   the phase pipeline (designed in actions.md and sequences.md).
-- Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
-  overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
-  are built.
+- Networking: WebSocket/SSH transports, real accounts/auth, durable embodiment
+  (the persisted `Controls`/`Focus` world state behind `@play`), and modal
+  overlays (designed in networking-and-sessions.md). Raw TCP, the session floor,
+  and the session attachment that `@play` sets are built.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

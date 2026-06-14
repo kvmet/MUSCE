@@ -1,12 +1,12 @@
 //! The single command entry point the tick loop calls as it drains the inbox.
 //! It owns input-stack routing: the `@`-namespace always goes to the account
 //! floor; a bare command goes to the active in-game frame (the embodiment frame),
-//! which this slice realizes as the stub actor binding plus the injected game's
-//! command table. Keeping this seam means the loop holds no command knowledge: it
-//! drains the inbox and calls `handle`. See `docs/architecture/actions.md` and
-//! `docs/architecture/engine-and-game.md`.
+//! which this slice realizes as the connection's session attachment plus the
+//! injected game's command table. Keeping this seam means the loop holds no
+//! command knowledge: it drains the inbox and calls `handle`. See
+//! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Actors, dispatch_bare};
+use musce_action::dispatch_bare;
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
 
@@ -14,13 +14,11 @@ use crate::Game;
 use crate::session::Sessions;
 
 pub struct Dispatch {
-    /// The always-present account/session floor (`@`-commands, lifecycle).
+    /// The always-present account/session floor: `@`-commands, lifecycle, and the
+    /// conn->actor attachments that back the embodiment frame.
     floor: Sessions,
-    /// Stub connection<->actor bindings; the embodiment frame and the audience
-    /// resolver both read these.
-    actors: Actors,
     /// The injected game: its command table drives bare commands and its
-    /// `bind_actor` policy backs the floor's `@play`. The runtime holds no game
+    /// `choose_actor` policy backs the floor's `@play`. The runtime holds no game
     /// content beyond this value.
     game: Game,
 }
@@ -29,22 +27,18 @@ impl Dispatch {
     pub fn new(game: Game) -> Self {
         Self {
             floor: Sessions::default(),
-            actors: Actors::default(),
             game,
         }
     }
 
     /// Route one inbound command, pushing output through `emit`. Lifecycle and
     /// the `@`-namespace land on the floor; a bare command acts through the
-    /// connection's bound actor, or reports having none.
+    /// connection's attached actor, or reports having none.
     pub fn handle(&mut self, cmd: Command, world: &mut World, emit: &mut impl FnMut(Outgoing)) {
         let id = cmd.connection;
         match cmd.input {
             Input::Connected { .. } => self.floor.connect(id, emit),
-            Input::Disconnected => {
-                self.actors.unbind(id);
-                self.floor.disconnect(id);
-            }
+            Input::Disconnected => self.floor.disconnect(id),
             Input::Line(line) => self.handle_line(id, line.trim(), world, emit),
         }
     }
@@ -61,24 +55,13 @@ impl Dispatch {
         }
 
         if let Some(rest) = line.strip_prefix('@') {
-            self.floor.account_command(
-                id,
-                rest,
-                world,
-                &mut self.actors,
-                self.game.bind_actor,
-                emit,
-            );
-        } else if let Some(actor) = self.actors.actor_of(id) {
-            dispatch_bare(
-                &self.game.commands,
-                world,
-                &self.actors,
-                actor,
-                id,
-                line,
-                emit,
-            );
+            self.floor
+                .account_command(id, rest, world, self.game.choose_actor, emit);
+        } else if let Some(actor) = self.floor.actor_of(id) {
+            // The resolver needs the conn<->actor view; the attachments on the
+            // floor are the source of truth, so derive a fresh index from them.
+            let actors = self.floor.audience_index();
+            dispatch_bare(&self.game.commands, world, &actors, actor, id, line, emit);
         } else {
             emit(Outgoing::Event(Event::to_connection(
                 id,
@@ -99,8 +82,8 @@ mod tests {
 
     /// An engine-only `Game` so the router can be exercised without depending on
     /// a real game. Its seed makes one described room with a player avatar in it,
-    /// `bind_actor` binds the connection to that avatar, and `look` echoes the
-    /// avatar's room description, so the routing is observable end to end.
+    /// `choose_actor` selects that avatar, and `look` echoes the avatar's room
+    /// description, so the routing is observable end to end.
     fn test_game() -> Game {
         fn seed(world: &mut World) {
             let room = {
@@ -118,15 +101,13 @@ mod tests {
             world.move_entity(avatar, room).unwrap();
         }
 
-        fn bind_actor(world: &World, actors: &mut Actors, conn: ConnectionId) -> Option<EntityId> {
-            let actor = world
+        fn choose_actor(world: &World) -> Option<EntityId> {
+            world
                 .ecs
                 .query::<(&Id, &Player)>()
                 .iter()
                 .next()
-                .map(|(id, _)| id.0)?;
-            actors.bind(conn, actor);
-            Some(actor)
+                .map(|(id, _)| id.0)
         }
 
         fn look(ctx: &mut Ctx, _args: &str) {
@@ -147,7 +128,7 @@ mod tests {
         Game {
             commands,
             seed,
-            bind_actor,
+            choose_actor,
         }
     }
 

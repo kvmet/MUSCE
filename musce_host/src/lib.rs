@@ -12,10 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
-use musce_action::{Actors, CommandTable};
+use musce_action::CommandTable;
 use musce_core::{EntityId, Snapshot, World};
 use musce_persistence::{Loaded, Persistence, SqliteStore};
-use musce_proto::{Command, ConnectionId, Outgoing};
+use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -58,21 +58,21 @@ pub struct RunReport {
 /// left untouched.
 pub type Seed = fn(&mut World);
 
-/// The `@play` policy: which actor a connection comes to drive. Binds the
-/// connection in `Actors` and returns the chosen actor (or `None` if the game
-/// has no character to give it).
-pub type BindActor = fn(&World, &mut Actors, ConnectionId) -> Option<EntityId>;
+/// The `@play` policy: which actor a connection comes to drive. Pure selection;
+/// the floor records the attachment as session state. Returns `None` if the game
+/// has no character to give.
+pub type ChooseActor = fn(&World) -> Option<EntityId>;
 
 /// The whole of what the runtime needs from a game: its in-game verb registry,
-/// its world seed, and its `@play` actor policy. A plain struct of values plus fn
-/// pointers; the runtime never depends on a particular game, only on this. The
-/// account floor (`@quit`/`@who`/`@help`) stays engine; only `@play`'s actor
-/// choice is game policy, which is why `bind_actor` is the one floor concern the
-/// game injects. See `docs/architecture/engine-and-game.md`.
+/// its world seed, and its `@play` actor-choice policy. A plain struct of values
+/// plus fn pointers; the runtime never depends on a particular game, only on
+/// this. The account floor (`@quit`/`@who`/`@help`) stays engine; only `@play`'s
+/// choice of actor is game policy, which is why `choose_actor` is the one floor
+/// concern the game injects. See `docs/architecture/engine-and-game.md`.
 pub struct Game {
     pub commands: CommandTable,
     pub seed: Seed,
-    pub bind_actor: BindActor,
+    pub choose_actor: ChooseActor,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -278,7 +278,7 @@ mod tests {
         Game {
             commands: CommandTable::new(),
             seed: |_| {},
-            bind_actor: |_, _, _| None,
+            choose_actor: |_| None,
         }
     }
 

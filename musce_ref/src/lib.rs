@@ -17,6 +17,6 @@ pub fn game() -> Game {
     Game {
         commands: verbs::commands(),
         seed: seed::seed,
-        bind_actor: seed::bind_actor,
+        choose_actor: seed::choose_actor,
     }
 }

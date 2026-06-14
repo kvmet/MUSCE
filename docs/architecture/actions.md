@@ -274,11 +274,12 @@ minimal:
   addressed, no mutation), in a `CommandTable` looked up by exact name then first
   registered prefix (movement registered before `say`, so `s` is south and `sa`
   is say). The account floor's `@quit`/`@who`/`@help` stay.
-- A stub `@play` binding the connection to an actor `EntityId` (session state, in
-  `musce_action::Actors`), standing in for embodiment so bare commands have an
-  actor. The full `Controls` relation + `Focus` component + `@play` flow is the
-  next slice and replaces the pointer without touching handlers, which already
-  take the actor explicitly.
+- `@play` records a connection's actor `EntityId` as a session attachment on the
+  floor (session state), so bare commands have an actor; the audience resolver
+  reads a conn->actor index derived from those attachments
+  (`musce_action::Actors`). Durable embodiment (the `Controls` relation + `Focus`
+  component, world state) is deferred and will back the attachment without
+  touching handlers, which already take the actor explicitly.
 - A code-seeded world (a hall, a garden, a cellar linked by `Exits`; a takeable
   key; a player avatar), built with `World::spawn` when the DB loads empty, as
   ground truth for tests and play.

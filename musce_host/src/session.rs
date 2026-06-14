@@ -15,14 +15,19 @@
 use std::collections::HashMap;
 
 use musce_action::Actors;
-use musce_core::World;
+use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
 
-use crate::BindActor;
+use crate::ChooseActor;
 
-/// One live session. A marker for now (its presence means the connection is
-/// authenticated); it will grow to hold the account id and character slots.
-struct Session;
+/// One live session. Holds the connection's attachment: the actor its bare
+/// commands act through, set by `@play`. This attachment is session state
+/// (connections are ephemeral, so it cannot live in the world); it will grow to
+/// hold the account id and character slots.
+#[derive(Default)]
+struct Session {
+    actor: Option<EntityId>,
+}
 
 /// The floor for every connection. Owns the session table and handles the
 /// `@`-namespace. The connection<->actor binding lives in `Actors` (owned by the
@@ -36,7 +41,7 @@ pub struct Sessions {
 impl Sessions {
     /// Allocate a session for a freshly connected client and greet it.
     pub fn connect(&mut self, id: ConnectionId, emit: &mut impl FnMut(Outgoing)) {
-        self.map.insert(id, Session);
+        self.map.insert(id, Session::default());
         emit(Outgoing::Event(Event::to_connection(
             id,
             EventKind::System,
@@ -60,6 +65,31 @@ impl Sessions {
         self.map.len()
     }
 
+    /// The actor a connection currently drives, if it has attached via `@play`.
+    pub fn actor_of(&self, id: ConnectionId) -> Option<EntityId> {
+        self.map.get(&id).and_then(|s| s.actor)
+    }
+
+    /// Attach a connection to the actor its bare commands will drive.
+    fn attach(&mut self, id: ConnectionId, actor: EntityId) {
+        if let Some(s) = self.map.get_mut(&id) {
+            s.actor = Some(actor);
+        }
+    }
+
+    /// Build the audience index the action layer's resolver consumes: the
+    /// conn->actor view derived from the current attachments. Transient, rebuilt
+    /// per dispatch; the attachments here are the source of truth.
+    pub fn audience_index(&self) -> Actors {
+        let mut actors = Actors::default();
+        for (&id, session) in &self.map {
+            if let Some(actor) = session.actor {
+                actors.bind(id, actor);
+            }
+        }
+        actors
+    }
+
     /// Handle one `@`-namespaced account command (the leading `@` already
     /// stripped). These are the floor and stay reachable regardless of what sits
     /// on top of the input stack.
@@ -68,8 +98,7 @@ impl Sessions {
         id: ConnectionId,
         rest: &str,
         world: &World,
-        actors: &mut Actors,
-        bind_actor: BindActor,
+        choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) {
         let mut parts = rest.split_whitespace();
@@ -93,28 +122,28 @@ impl Sessions {
                     emit,
                 );
             }
-            "play" => self.play(id, world, actors, bind_actor, emit),
+            "play" => self.play(id, world, choose_actor, emit),
             other => {
                 feedback(id, &format!("Unknown command: @{other}"), emit);
             }
         }
     }
 
-    /// `@play`: bind this connection to an actor so its bare commands have
+    /// `@play`: attach this connection to an actor so its bare commands have
     /// something to act through. Which actor is the game's policy, injected as
-    /// `bind_actor`; the floor only renders the confirmation. The persisted
-    /// `Controls`/`Focus` embodiment replaces the binding's body later without
-    /// touching this floor.
+    /// `choose_actor`; the floor records the attachment (session state) and
+    /// renders the confirmation. Durable embodiment (`Controls`/`Focus`) will
+    /// back the choice later without touching this floor.
     fn play(
         &mut self,
         id: ConnectionId,
         world: &World,
-        actors: &mut Actors,
-        bind_actor: BindActor,
+        choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) {
-        match bind_actor(world, actors, id) {
+        match choose_actor(world) {
             Some(actor) => {
+                self.attach(id, actor);
                 let name =
                     musce_action::actor_name(world, actor).unwrap_or_else(|| "someone".into());
                 feedback(
@@ -143,21 +172,15 @@ mod tests {
     use musce_core::{Description, EntityId, Id, Player};
     use musce_proto::Audience;
 
-    /// An engine-only `@play` policy for tests: bind to the first `Player` in the
-    /// world. Stands in for a game's injected `bind_actor`.
-    fn first_player_bind(
-        world: &World,
-        actors: &mut Actors,
-        conn: ConnectionId,
-    ) -> Option<EntityId> {
-        let actor = world
+    /// An engine-only `@play` policy for tests: choose the first `Player` in the
+    /// world. Stands in for a game's injected `choose_actor`.
+    fn first_player_choose(world: &World) -> Option<EntityId> {
+        world
             .ecs
             .query::<(&Id, &Player)>()
             .iter()
             .next()
-            .map(|(id, _)| id.0)?;
-        actors.bind(conn, actor);
-        Some(actor)
+            .map(|(id, _)| id.0)
     }
 
     /// Spawn a lone described player avatar and return it.
@@ -185,19 +208,13 @@ mod tests {
     fn quit_emits_close() {
         let mut s = Sessions::default();
         let world = World::new();
-        let mut actors = Actors::default();
         let id = ConnectionId(7);
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(
-            id,
-            "quit",
-            &world,
-            &mut actors,
-            first_player_bind,
-            &mut |o| out.push(o),
-        );
+        s.account_command(id, "quit", &world, first_player_choose, &mut |o| {
+            out.push(o)
+        });
         assert!(matches!(
             out[0],
             Outgoing::Event(Event {
@@ -209,23 +226,17 @@ mod tests {
     }
 
     #[test]
-    fn play_binds_through_the_injected_policy() {
+    fn play_attaches_through_the_injected_policy() {
         let mut s = Sessions::default();
         let mut world = World::new();
         let avatar = spawn_avatar(&mut world);
-        let mut actors = Actors::default();
         let id = ConnectionId(3);
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(
-            id,
-            "play",
-            &world,
-            &mut actors,
-            first_player_bind,
-            &mut |o| out.push(o),
-        );
+        s.account_command(id, "play", &world, first_player_choose, &mut |o| {
+            out.push(o)
+        });
         assert!(matches!(
             out.as_slice(),
             [Outgoing::Event(Event {
@@ -233,26 +244,23 @@ mod tests {
                 ..
             })]
         ));
-        assert_eq!(actors.actor_of(id), Some(avatar));
+        // The attachment is recorded as session state, and surfaces in the
+        // audience index the resolver consumes.
+        assert_eq!(s.actor_of(id), Some(avatar));
+        assert!(s.audience_index().conns_for(avatar).any(|c| c == id));
     }
 
     #[test]
     fn unknown_at_command_feeds_back() {
         let mut s = Sessions::default();
         let world = World::new();
-        let mut actors = Actors::default();
         let id = ConnectionId(2);
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(
-            id,
-            "bogus",
-            &world,
-            &mut actors,
-            first_player_bind,
-            &mut |o| out.push(o),
-        );
+        s.account_command(id, "bogus", &world, first_player_choose, &mut |o| {
+            out.push(o)
+        });
         match &out[..] {
             [
                 Outgoing::Event(Event {
