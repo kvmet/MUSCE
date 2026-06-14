@@ -1,7 +1,7 @@
 # Actions and the Executor
 
-> Status: **not implemented, pending review before implementation.** This records
-> a proposed design and its rationale; nothing here is built yet.
+> Status: **design agreed; not yet implemented.** This records the reviewed
+> design and its rationale; building it is the next slice.
 
 ## Action is the only thing that mutates the world
 
@@ -14,13 +14,20 @@ actions; one *executor* applies them:
 - an effect or other system produces an `Action`
 
 ```
-execute(world, action, &mut events) -> Result<(), Failure>
+execute(world, action, &mut sink) -> Result<(), ExecError>
 ```
 
-This is the single place world-mutation rules live, so the take-an-item logic
-exists once whether a player, a script, or another system triggers it. An action
-handler also receives the event sink and emits perception events as a side effect
-of the mutation (a move emits "X arrives from the north").
+`execute` is **structural only**: it applies the typed mutator and enforces only
+the invariants that hold for every source (the entity exists, the relation stays
+acyclic), returning `ExecError` on a structural violation. It runs no gameplay
+rules and emits no events; the action set is just the typed reflection of the
+`World` mutators.
+
+Gameplay rules and perception prose live one layer up, in the verb handlers. "The
+take logic exists once" is achieved by shared rule/perception helpers (e.g. a
+`do_move` used by both the player `go` command and, later, AI and sequences), not
+by pushing rules into `execute`. Each engine primitive stays atomic and free of
+intent: `execute` owns the world, handlers own meaning.
 
 ## Command vs Action
 
@@ -31,9 +38,17 @@ channel.
 - A **Command** is a request with provenance. It may be rejected.
 - An **Action** is the authorized, validated mutation.
 
-The parser's whole job is `Command -> Action` (or a rejection event). Actions from
-a sequence still flow through the same `execute`, so a scripted NPC walking into a
-now-locked door fails exactly as a player would.
+The parser's whole job is `Command -> Action` (or a `Rejection`, rendered as a
+`Feedback` event). Two distinct error channels: a handler's pre-commit rule check
+produces a player-facing `Rejection`; `execute` produces a structural `ExecError`,
+which a correct handler has already ruled out, so it signals a bug rather than
+ordinary play.
+
+Scripted behavior reaches the same rules by going through the same verb helpers a
+player command does, not by emitting raw actions. A sequence step references a
+**verb/intent**, not a bare `Action`, so a scripted NPC walking into a now-locked
+door fails exactly as a player would; a raw `Action` would skip the gameplay rule
+and is reserved for the rule-bypassing admin path. (See `sequences.md`.)
 
 ## Dispatch: a command table the runtime invokes
 
@@ -122,9 +137,13 @@ EventKind = Speech | Emote | Narration | System | Feedback | ...
 ```
 
 - Showing text to a player is just emitting an Event addressed to them
-  (`to: Entity(player), kind: Narration`). No actor, no action. The net thread
-  routes room-addressed events to every connection puppeting an entity in that
-  room, entity-addressed events to that entity's connection.
+  (`to: Entity(player), kind: Narration`). No actor, no action. **Audience
+  resolution is sim-side:** turning `Room`/`Entity` into the connections that
+  should see it needs world state (who is in the room) and the
+  connection-to-entity map, so the sim expands those audiences into
+  `Connection`-addressed events before output reaches net. Net is a pure
+  `Connection` pipe and never resolves audiences. (See
+  [networking-and-sessions.md](networking-and-sessions.md).)
 - `Say`/`Emote`/`look` are commands whose handlers emit Events and mutate nothing.
   Just as take/drop/give collapse to one `Move`, speech/emote/narrate collapse to
   one emit. The difference: `Move` is an action (it mutates) and emit is not (it
@@ -135,8 +154,9 @@ EventKind = Speech | Emote | Narration | System | Feedback | ...
 - An NPC overhearing speech is the perception layer reading Events off the bus
   (deferred sense-propagation), not a dependency on speech being an action.
 
-So mutation funnels through `execute`; output flows out as Events; the event sink
-is handed to both action handlers and pure-output command handlers.
+So mutation funnels through `execute` (which emits nothing); output flows out as
+Events from the verb and command handlers; the sim resolves their audiences to
+connections on the way out.
 
 ## SetComponent granularity
 
@@ -212,16 +232,33 @@ rule changes and stays auditable. Speech changes no world state, so it is not in
 this journal; an optional chat/experience log would be a separate log over the
 Event stream.
 
+## Where it lives
+
+The action layer is its own crate, `musce_action`, depending on `musce_core` only
+and free of `tokio`, so it stays pure synchronous logic and fast to test. The
+commands-in / events-out vocabulary (`Command`, `Event`, `Audience`, `EventKind`,
+`ConnectionId`, ...) lives in a small `musce_proto` crate shared by `musce_action`,
+`musce_net`, and `musce_host`, so the action layer never depends on the transport.
+`musce_host` invokes the dispatcher and holds no command knowledge.
+
 ## MVP starting set
 
 Engine mutators are already built; leave them as `World` methods. Do not pre-build
-the `Action` enum; grow it from:
+the `Action` enum. The first slice is deliberately minimal:
 
-- `Move { entity, into }` (take, drop, give, put resolve to it)
-- `Create`, `Destroy`
-- `Say` / `Emote` commands that emit Events (not actions)
-- admin, once a builder is connected: `@create`, `@destroy`, `@dig`,
-  `@tel`/`@goto`/`@summon`, `@set` (`SetComponent`)
+- `Action::Move { entity, into }` only, with `execute` and `ExecError`.
+- Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, and `say` (Room-
+  addressed, no mutation). The account floor's `@quit`/`@who`/`@help` stay.
+- A stub `@play` binding the connection to an actor `EntityId` (session state),
+  standing in for embodiment so bare commands have an actor. The full `Controls`
+  relation + `Focus` component + `@play` flow is the next slice and replaces the
+  pointer without touching handlers.
+- A small code-seeded world (a few linked rooms, an item, a player avatar), built
+  with `World::spawn` when the DB loads empty, as ground truth for tests and play.
+
+The next increment adds `Create`/`Destroy`/`SetComponent` (with the registry's
+third per-tag function noted above) and the admin verbs `@create`/`@destroy`/
+`@dig`/`@tel`/`@goto`/`@summon`/`@set`.
 
 Open questions:
 

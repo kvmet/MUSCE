@@ -85,6 +85,10 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 2. WebSocket + SSH behind the same `Connection` abstraction.
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. Embodiment: the `Controls` relation, the `Focus` component, and the `@play` flow.
+   The action layer ([actions.md](actions.md)) lands first with a **stub `@play`**
+   that binds a connection to an actor `EntityId` as session state, so in-game
+   verbs have an actor; this step then replaces the pointer with the persisted
+   `Controls`/`Focus` world state without touching the verb handlers.
 5. Modal overlays: menus and editors, with input-mode switching.
 
 ### What the first slice actually built
@@ -98,8 +102,11 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 - Connection lifecycle rides the command channel as `Input::Connected` /
   `Line` / `Disconnected`, so the sim has one entry point for allocating, driving,
   and tearing down a session.
-- Only `Audience::Connection` is routed; `Entity`/`Room` need the embodiment
-  mapping and are deferred with the rest of step 4.
+- Net handles only `Audience::Connection`. Resolving `Entity`/`Room` to the
+  connections that should see an event is **sim-side** (it needs world state and
+  the connection-to-entity map), done by the action layer before output reaches
+  net; net never resolves audiences. Until that layer lands the router has nothing
+  else to route.
 - A single sim-side dispatcher (`musce_host`, `dispatch.rs`) is the one entry
   point the tick loop calls as it drains the inbox; it owns the input-stack
   routing above and takes `&mut World`. Only the session floor frame

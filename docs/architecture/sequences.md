@@ -30,8 +30,8 @@ entity.
 // Content: loaded at boot, shared, referenced by id.
 struct Sequence { steps: Vec<Step> }
 struct Step {
-    delay: u32,     // ticks to wait before THIS step fires
-    action: Action, // see actions.md
+    delay: u32,  // ticks to wait before THIS step fires
+    verb:  Verb, // a rule-checked intent, see actions.md
 }
 
 // Instance: a component on the entity. Persisted; resumes mid-play after a load.
@@ -44,13 +44,15 @@ struct Running {
 ```
 
 Each tick the sweep system queries running instances, and for any with
-`next_at <= tick` it runs `steps[cursor].action`, advances the cursor, and sets
+`next_at <= tick` it runs `steps[cursor].verb`, advances the cursor, and sets
 `next_at = tick + steps[cursor].delay`. Off the end it removes the instance, or
 resets to 0 if `repeat`. "Configurable delay between steps" is the per-step
 `delay`.
 
-A step's action is an `Action`, so it flows through the same executor as a player
-command and re-validates the same way.
+A step holds a **verb/intent**, not a raw `Action`, so it runs the same gameplay
+rules a player command does. `execute` is rule-free (see actions.md), so a step
+emitting a bare `Move` would skip the locked-door check; going through the verb
+helper keeps a scripted actor subject to the same rules as a player.
 
 ## Multiple concurrent sequences
 
@@ -85,8 +87,8 @@ system. Specific, authored, runtime-attached, varies per entity, is a sequence.
 
 ## Delay and tick resolution
 
-A step's action applies inline in the sweep, so 0-delay steps resolve in the same
-tick and an authored burst fires together. The one hazard is `repeat` plus an
+A step applies inline in the sweep, so 0-delay steps resolve in the same tick and
+an authored burst fires together. The one hazard is `repeat` plus an
 all-zero-delay cycle, which would loop forever inside a single tick. Guard it by
 requiring a repeating sequence to have positive total cycle delay (sum of step
 delays > 0), enforced when the sequence is attached, so the infinite loop is

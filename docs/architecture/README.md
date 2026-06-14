@@ -40,8 +40,8 @@ These hold across every subsystem:
 - [concurrency.md](concurrency.md) — the threading model, the tick pipeline, and
   why there is no auto-scheduler.
 - [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
-  the source-to-executor model, command dispatch as a registry, and the
-  mutator/action layering. *(Proposed; not implemented.)*
+  the structural-only executor, command dispatch as a registry, and where rules
+  and perception live. *(Design agreed; not implemented. Next slice.)*
 - [sequences.md](sequences.md) — timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
@@ -67,8 +67,9 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Game systems: the phase pipeline runs, but no systems yet (designed in
-  actions.md and sequences.md).
+- Game logic: the action/executor layer (`musce_action`) over a shared protocol
+  crate (`musce_proto`), then systems on the phase pipeline (designed in
+  actions.md and sequences.md). The next slice.
 - Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
   overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
   are built.
