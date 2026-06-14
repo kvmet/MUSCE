@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["musce_core", "musce_persistence"]
+
+[workspace.dependencies]
+crossbeam-channel = "0.5.15"
+hecs = "0.11.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "macros"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# internal
+musce_core = { path = "musce_core" }
