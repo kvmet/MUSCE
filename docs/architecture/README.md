@@ -41,12 +41,12 @@ These hold across every subsystem:
   why there is no auto-scheduler.
 - [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
   the structural-only executor, command dispatch as a registry, and where rules
-  and perception live. *(Structural vocabulary built: the full `Action` set, the
-  core verbs, stub `@play`, sim-side audience resolution; admin verbs deferred.)*
+  and perception live. *(Structural vocabulary built: the full `Action` set,
+  sim-side audience resolution, and the engine command surface; the core verbs
+  and seed now live in `musce_ref`; admin verbs deferred.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
-  and the in-repo reference game `musce_ref`. *(Agreed; not implemented. Next
-  slice.)*
+  and the in-repo reference game `musce_ref`. *(Built.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
@@ -63,28 +63,32 @@ Built:
 
 - `musce_core`: world, identity, relation layer, containment, JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
-- `musce_host`: the tick loop (fixed cadence, `TickCtx` carrying both clocks),
-  boot load, periodic + graceful-shutdown persistence, and a single command
-  dispatcher (currently just the session floor) draining the inbox each tick.
+- `musce_host`: the runtime as a library, parameterized by an injected `Game`
+  (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
+  carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
+  account floor (`@quit`/`@who`/`@help`/`@play`, the actor choice game-injected),
+  and a single command dispatcher draining the inbox each tick. Holds no game
+  content; library-only (no binary).
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
 - `musce_proto`: the shared command/event vocabulary (`Command`, `Event`,
   `Audience`, `EventKind`, `ConnectionId`, `Capabilities`), depended on by net,
   action, and host so the action layer never touches the transport.
-- `musce_action`: the structural executor (the full `Action` set:
+- `musce_action`: the engine's action layer, free of game content. The
+  structural executor (the full `Action` set:
   `Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`, returning the
-  action's subject), the verb dispatch table (`look`, `go`/bare direction,
-  `take`, `drop`, `say`), the stub `@play` actor binding, the sim-side audience
-  resolver, and the code-seeded starter world. Wired into `musce_host`'s
-  dispatcher as the embodiment frame.
+  action's subject), the `CommandTable` lookup and public `register`, `Ctx` and
+  its public emit API (the surface a game's verb handlers program against), the
+  stub `@play` actor binding (`Actors`), and the sim-side audience resolver.
+- `musce_ref`: the reference game and the worked example of standing a game up on
+  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`, `say`)
+  and their parsing, name resolution, the takeable rule, narration prose, the
+  code-seeded starter world, and the `@play` actor policy; builds the `Game` and
+  has `main` plus the end-to-end test. A real game forks this crate.
 
 Deferred (with seams in place where noted):
 
-- The engine/game split: the runtime becomes a library parameterized by a `Game`,
-  and the game content currently in `musce_action` (verbs, seed, name resolution)
-  moves to a reference crate `musce_ref` that owns `main` (designed in
-  engine-and-game.md). The next slice.
 - Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
   `@summon`/`@set`) that ride the now-built structural action set, then systems on
   the phase pipeline (designed in actions.md and sequences.md).

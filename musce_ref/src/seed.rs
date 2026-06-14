@@ -1,24 +1,20 @@
-//! A small code-built map, spawned when the database loads empty, so the engine
-//! has ground truth to play and test against before any builder tools exist. This
-//! is content, not engine: it leans only on `World::spawn` and the containment
-//! mutator. See `docs/architecture/actions.md`.
+//! The reference game's starting world and its `@play` actor policy. The seed is
+//! spawned into an empty database on first boot so there is ground truth to play
+//! and test against before any builder tools exist; `bind_actor` is the policy
+//! the runtime injects for `@play`, choosing which actor a connection comes to
+//! drive. Both are game content over the world API the engine exposes. See
+//! `docs/architecture/engine-and-game.md`.
 
+use musce_action::Actors;
 use musce_core::hecs::EntityBuilder;
 use musce_core::{Description, EntityId, Exit, Exits, Item, Player, Room, World};
-
-/// The handful of entities a freshly seeded world cares about, returned for the
-/// boot path and tests.
-pub struct Seeded {
-    /// The room a new player starts in.
-    pub start: EntityId,
-    /// The pre-made player avatar `@play` binds to in this stub.
-    pub avatar: EntityId,
-}
+use musce_proto::ConnectionId;
 
 /// Build the starter map into an empty world: a hall, a garden to its north, and
 /// a cellar below it; a takeable key in the garden; and a player avatar standing
-/// in the hall.
-pub fn seed(world: &mut World) -> Seeded {
+/// in the hall. Matches the `fn(&mut World)` shape the runtime's `Game.seed`
+/// expects.
+pub fn seed(world: &mut World) {
     let hall = room(world, "a stone hall, its flagstones worn smooth");
     let garden = room(world, "a quiet walled garden");
     let cellar = room(world, "a damp, low-ceilinged cellar");
@@ -32,11 +28,29 @@ pub fn seed(world: &mut World) -> Seeded {
 
     let avatar = avatar(world, "a weathered adventurer");
     world.move_entity(avatar, hall).expect("seed: place avatar");
+}
 
-    Seeded {
-        start: hall,
-        avatar,
-    }
+/// The `@play` policy: bind a connection to the seeded player avatar as session
+/// state, and return the actor so the floor can confirm it. The persisted
+/// `Controls`/`Focus` embodiment will replace the body of this hook later without
+/// changing the interface; the floor and the verb handlers, which already take
+/// the actor explicitly, are untouched.
+pub fn bind_actor(world: &World, actors: &mut Actors, conn: ConnectionId) -> Option<EntityId> {
+    let actor = find_player(world)?;
+    actors.bind(conn, actor);
+    Some(actor)
+}
+
+/// Find the player avatar in the world. Returns the first `Player` entity, of
+/// which the seed makes exactly one. The real flow will instead resolve the
+/// account's chosen character.
+fn find_player(world: &World) -> Option<EntityId> {
+    world
+        .ecs
+        .query::<(&musce_core::Id, &Player)>()
+        .iter()
+        .next()
+        .map(|(id, _)| id.0)
 }
 
 fn room(world: &mut World, desc: &str) -> EntityId {
@@ -81,18 +95,6 @@ fn set_exits(world: &mut World, room: EntityId, exits: &[(&str, EntityId)]) {
         .expect("seed: set exits");
 }
 
-/// Find the player avatar in the world. The stub `@play` binds to it; the real
-/// flow will instead resolve the account's chosen character. Returns the first
-/// `Player` entity, of which the seed makes exactly one.
-pub fn find_player(world: &World) -> Option<EntityId> {
-    world
-        .ecs
-        .query::<(&musce_core::Id, &Player)>()
-        .iter()
-        .next()
-        .map(|(id, _)| id.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,13 +102,13 @@ mod tests {
     #[test]
     fn seed_links_rooms_and_places_things() {
         let mut w = World::new();
-        let Seeded { start, avatar } = seed(&mut w);
+        seed(&mut w);
 
-        // The avatar starts in the hall, and the hall is what `find_player` lands on.
-        assert_eq!(w.enclosing_room(avatar), Some(start));
-        assert_eq!(find_player(&w), Some(avatar));
+        // The seed makes exactly one player avatar, standing in a room.
+        let avatar = find_player(&w).expect("seed places a player");
+        let start = w.enclosing_room(avatar).expect("avatar is in a room");
 
-        // North out of the hall reaches a room that leads back south.
+        // North out of the start room reaches a room that leads back south.
         let north = w
             .entity(start)
             .unwrap()
@@ -117,5 +119,17 @@ mod tests {
             .find(|e| e.direction == "north")
             .map(|e| e.to);
         assert!(north.is_some());
+    }
+
+    #[test]
+    fn bind_actor_binds_the_seeded_avatar() {
+        let mut w = World::new();
+        seed(&mut w);
+        let mut actors = Actors::default();
+        let conn = ConnectionId(1);
+
+        let actor = bind_actor(&w, &mut actors, conn);
+        assert!(actor.is_some());
+        assert_eq!(actors.actor_of(conn), actor);
     }
 }

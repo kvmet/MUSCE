@@ -1,5 +1,7 @@
-//! Name resolution: turn a player's typed noun into an `EntityId`. For now the
-//! `Description` doubles as the name (there is no `Name` component yet), matched
+//! Name resolution: turn a player's typed noun into an `EntityId`. This is
+//! opinionated, English-leaning game policy over the world queries the engine
+//! exposes, so it lives in the game, not the engine. For now the `Description`
+//! doubles as the name (there is no `Name` component yet), matched
 //! case-insensitively as a substring over what the actor can plausibly refer to:
 //! the things in their hands and the things in their room. First match wins.
 

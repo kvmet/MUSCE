@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     }
 
-    let report = run(store, Config::default(), shutdown).await?;
+    let report = run(store, Config::default(), shutdown, musce_ref::game()).await?;
     tracing::info!(ticks = report.ticks, saves = report.saves, "stopped");
     Ok(())
 }

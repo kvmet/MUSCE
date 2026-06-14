@@ -3,17 +3,22 @@
 //! commands route to it no matter what is overlaid on top. Auth is still stubbed
 //! (every connection is an anonymous guest).
 //!
-//! This slice grows the floor with the stub `@play`, which binds the connection
-//! to the seeded player avatar so bare commands have an actor to act through.
-//! That binding is session state (held in `musce_action::Actors`), not world
-//! state; the next increment replaces it with the persisted `Controls`/`Focus`
-//! flow. See `docs/architecture/networking-and-sessions.md`.
+//! The floor includes `@play`, which binds the connection to an actor so bare
+//! commands have something to act through. Which actor is game policy, injected
+//! as the game's `bind_actor`; the floor only renders the confirmation. The
+//! binding is session state (held in `musce_action::Actors`), not world state;
+//! the next increment replaces its body with the persisted `Controls`/`Focus`
+//! flow without touching this floor. See
+//! `docs/architecture/networking-and-sessions.md` and
+//! `docs/architecture/engine-and-game.md`.
 
 use std::collections::HashMap;
 
 use musce_action::Actors;
 use musce_core::World;
 use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
+
+use crate::BindActor;
 
 /// One live session. A marker for now (its presence means the connection is
 /// authenticated); it will grow to hold the account id and character slots.
@@ -64,6 +69,7 @@ impl Sessions {
         rest: &str,
         world: &World,
         actors: &mut Actors,
+        bind_actor: BindActor,
         emit: &mut impl FnMut(Outgoing),
     ) {
         let mut parts = rest.split_whitespace();
@@ -87,23 +93,27 @@ impl Sessions {
                     emit,
                 );
             }
-            "play" => self.play(id, world, actors, emit),
+            "play" => self.play(id, world, actors, bind_actor, emit),
             other => {
                 feedback(id, &format!("Unknown command: @{other}"), emit);
             }
         }
     }
 
-    /// The stub `@play`: bind this connection to the seeded player avatar so its
-    /// bare commands have an actor.
+    /// `@play`: bind this connection to an actor so its bare commands have
+    /// something to act through. Which actor is the game's policy, injected as
+    /// `bind_actor`; the floor only renders the confirmation. The persisted
+    /// `Controls`/`Focus` embodiment replaces the binding's body later without
+    /// touching this floor.
     fn play(
         &mut self,
         id: ConnectionId,
         world: &World,
         actors: &mut Actors,
+        bind_actor: BindActor,
         emit: &mut impl FnMut(Outgoing),
     ) {
-        match musce_action::play(world, actors, id) {
+        match bind_actor(world, actors, id) {
             Some(actor) => {
                 let name =
                     musce_action::actor_name(world, actor).unwrap_or_else(|| "someone".into());
@@ -129,7 +139,34 @@ fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use musce_core::hecs::EntityBuilder;
+    use musce_core::{Description, EntityId, Id, Player};
     use musce_proto::Audience;
+
+    /// An engine-only `@play` policy for tests: bind to the first `Player` in the
+    /// world. Stands in for a game's injected `bind_actor`.
+    fn first_player_bind(
+        world: &World,
+        actors: &mut Actors,
+        conn: ConnectionId,
+    ) -> Option<EntityId> {
+        let actor = world
+            .ecs
+            .query::<(&Id, &Player)>()
+            .iter()
+            .next()
+            .map(|(id, _)| id.0)?;
+        actors.bind(conn, actor);
+        Some(actor)
+    }
+
+    /// Spawn a lone described player avatar and return it.
+    fn spawn_avatar(world: &mut World) -> EntityId {
+        let mut b = EntityBuilder::new();
+        b.add(Player);
+        b.add(Description("a tester".into()));
+        world.spawn(b)
+    }
 
     #[test]
     fn connect_greets() {
@@ -153,7 +190,14 @@ mod tests {
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(id, "quit", &world, &mut actors, &mut |o| out.push(o));
+        s.account_command(
+            id,
+            "quit",
+            &world,
+            &mut actors,
+            first_player_bind,
+            &mut |o| out.push(o),
+        );
         assert!(matches!(
             out[0],
             Outgoing::Event(Event {
@@ -165,16 +209,23 @@ mod tests {
     }
 
     #[test]
-    fn play_binds_to_the_seeded_avatar() {
+    fn play_binds_through_the_injected_policy() {
         let mut s = Sessions::default();
         let mut world = World::new();
-        let seeded = musce_action::seed(&mut world);
+        let avatar = spawn_avatar(&mut world);
         let mut actors = Actors::default();
         let id = ConnectionId(3);
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(id, "play", &world, &mut actors, &mut |o| out.push(o));
+        s.account_command(
+            id,
+            "play",
+            &world,
+            &mut actors,
+            first_player_bind,
+            &mut |o| out.push(o),
+        );
         assert!(matches!(
             out.as_slice(),
             [Outgoing::Event(Event {
@@ -182,7 +233,7 @@ mod tests {
                 ..
             })]
         ));
-        assert_eq!(actors.actor_of(id), Some(seeded.avatar));
+        assert_eq!(actors.actor_of(id), Some(avatar));
     }
 
     #[test]
@@ -194,7 +245,14 @@ mod tests {
         s.connect(id, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(id, "bogus", &world, &mut actors, &mut |o| out.push(o));
+        s.account_command(
+            id,
+            "bogus",
+            &world,
+            &mut actors,
+            first_player_bind,
+            &mut |o| out.push(o),
+        );
         match &out[..] {
             [
                 Outgoing::Event(Event {

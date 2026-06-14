@@ -1,63 +1,35 @@
-//! The in-game verb handlers: the meaning layer over the structural executor.
-//! Each is shaped validate -> mutate -> emit. Fallible rule checks (reach, "you
-//! don't see that") run first and produce player-facing feedback (a Rejection);
-//! only then does the handler commit through `execute`, which cannot fail because
-//! the checks already ruled the structural error out. Output is emitted as
-//! semantic events; the dispatcher resolves their audiences afterward.
+//! The reference game's in-game verb handlers: the meaning layer over the
+//! engine's structural executor. Each is shaped validate -> mutate -> emit.
+//! Fallible rule checks (reach, "you don't see that") run first and produce
+//! player-facing feedback (a Rejection); only then does the handler commit
+//! through `execute`, which cannot fail because the checks already ruled the
+//! structural error out. Output is emitted through the engine's `Ctx` emit API;
+//! the dispatcher resolves audiences afterward. See
+//! `docs/architecture/actions.md`.
 
+use musce_action::{Action, CommandTable, Ctx, Gate, execute};
 use musce_core::{Description, EntityId, Exits, World};
-use musce_proto::{Event, EventKind};
+use musce_proto::EventKind;
 
-use crate::audience::Outbound;
-use crate::executor::{Action, execute};
 use crate::names::{self, Scope};
 
-/// The per-command context handed to a handler: the world it mutates, the actor
-/// it acts through, the connection that issued it, and the output buffer it emits
-/// into. The actor is explicit so handlers are callable directly in tests and,
-/// later, by AI and sequences. See `docs/architecture/actions.md`.
-pub struct Ctx<'a> {
-    pub world: &'a mut World,
-    pub actor: EntityId,
-    pub conn: musce_proto::ConnectionId,
-    out: &'a mut Vec<Outbound>,
-}
-
-impl<'a> Ctx<'a> {
-    pub fn new(
-        world: &'a mut World,
-        actor: EntityId,
-        conn: musce_proto::ConnectionId,
-        out: &'a mut Vec<Outbound>,
-    ) -> Self {
-        Ctx {
-            world,
-            actor,
-            conn,
-            out,
-        }
-    }
-
-    /// First-person output, straight to the acting connection.
-    fn emit_self(&mut self, kind: EventKind, text: impl Into<String>) {
-        self.out
-            .push(Outbound::new(Event::to_connection(self.conn, kind, text)));
-    }
-
-    /// Plain feedback to the acting connection. The dispatcher uses this for
-    /// parse-level replies (unknown verb, gated) before any handler runs.
-    pub fn feedback(&mut self, text: impl Into<String>) {
-        self.emit_self(EventKind::Feedback, text);
-    }
-
-    /// Third-person output to everyone in `room` except the actor, so the actor
-    /// does not see both their own first-person line and the room's view of it.
-    fn emit_room_except_self(&mut self, room: EntityId, kind: EventKind, text: impl Into<String>) {
-        self.out.push(Outbound::excluding(
-            Event::to_room(room, kind, text),
-            self.conn,
-        ));
-    }
+/// Build the reference game's command table. Movement is registered first so
+/// single-letter direction abbreviations win their prefix ties (`s` is south, so
+/// `say` needs `sa`).
+pub fn commands() -> CommandTable {
+    let mut t = CommandTable::new();
+    t.register("north", Gate::Open, |c, _| go(c, "north"));
+    t.register("south", Gate::Open, |c, _| go(c, "south"));
+    t.register("east", Gate::Open, |c, _| go(c, "east"));
+    t.register("west", Gate::Open, |c, _| go(c, "west"));
+    t.register("up", Gate::Open, |c, _| go(c, "up"));
+    t.register("down", Gate::Open, |c, _| go(c, "down"));
+    t.register("look", Gate::Open, look);
+    t.register("go", Gate::Open, go);
+    t.register("take", Gate::Open, take);
+    t.register("drop", Gate::Open, drop);
+    t.register("say", Gate::Open, say);
+    t
 }
 
 // --- verbs ---------------------------------------------------------------
@@ -219,7 +191,7 @@ pub fn say(ctx: &mut Ctx, args: &str) {
 /// Build a room's look text: its description, its exits, and the other things in
 /// it. Shared by `look` and the auto-look on arrival. `None` if the viewer is not
 /// in a room.
-pub(crate) fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
+fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     let room = world.enclosing_room(viewer)?;
 
     let mut s = description_or(world, room, "An indistinct space.");
@@ -297,6 +269,7 @@ fn display_name(world: &World, entity: EntityId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Exit, Item, Player, Room};
     use musce_proto::{Audience, ConnectionId};

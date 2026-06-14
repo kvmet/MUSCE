@@ -1,9 +1,11 @@
 # Engine and Game
 
-> Status: **agreed; not yet built.** This records the boundary between the engine
-> substrate and a game built on it, the `Game` the runtime is parameterized over,
-> and the role of the in-repo reference game (`musce_ref`). Building the split is
-> the next slice.
+> Status: **built.** The runtime (`musce_host`) is a library parameterized by an
+> injected `Game`; the engine crates carry no game content; the reference game
+> `musce_ref` owns the verbs, the seed world, name resolution, the `@play` actor
+> policy, `main`, and the end-to-end test. This records the boundary between the
+> engine substrate and a game built on it, the `Game` the runtime is
+> parameterized over, and the role of `musce_ref`.
 
 ## The substrate is not a game
 
@@ -16,7 +18,7 @@ prose, and what the rules are.
 
 The first action slice put a handful of verbs, a seed world, and name resolution
 inside `musce_action` to prove the plumbing end to end. That was scaffolding: game
-content living in an engine crate. It moves out.
+content living in an engine crate. It now lives in `musce_ref`.
 
 ## musce_ref: the reference game
 
@@ -133,6 +135,6 @@ over the world queries the engine already exposes (`contents`, `container_of`,
 4. `musce_action` and `musce_host` now carry zero game content. Update the docs
    that described those verbs as living there to point here.
 
-The crate and binary-target wiring (a new `musce_ref` member, moving the binary
-target off `musce_host`) is manifest work to settle when the slice is built, not
-part of this design.
+The crate and binary-target wiring is settled: `musce_ref` is a workspace member
+with both a library and a binary (its `main`); `musce_host` is library-only (its
+`main` moved to `musce_ref`), and the end-to-end test lives in `musce_ref` too.

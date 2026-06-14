@@ -1,13 +1,16 @@
 # Actions and the Executor
 
-> Status: **structural vocabulary built.** The full structural executor
+> Status: **structural vocabulary built; engine/game split done.** The engine
+> owns the structural executor
 > (`Action::Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
-> `execute` + `ExecError`), the verb dispatch table, the verbs `look`, `go`/bare
-> direction, `take`, `drop`, and `say`, the stub `@play` actor binding, the
-> sim-side audience resolver, and the code-seeded starter world are implemented
-> in `musce_proto` (shared vocabulary) and `musce_action`, and wired into
-> `musce_host`. The admin verbs that ride the new primitives remain proposed; the
-> rest of this document records that design.
+> `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
+> its emit API, and the sim-side audience resolver (`musce_action`), plus the
+> shared vocabulary (`musce_proto`). The game content (the verbs `look`, `go`/bare
+> direction, `take`, `drop`, `say`, name resolution, the seed world, the takeable
+> rule, and the `@play` actor policy) lives in the reference game `musce_ref`,
+> which builds the `Game` the runtime is parameterized over (see
+> [engine-and-game.md](engine-and-game.md)). The admin verbs that ride the new
+> primitives remain proposed; the rest of this document records that design.
 
 ## Action is the only thing that mutates the world
 
@@ -245,12 +248,11 @@ Event stream.
 
 ## Where it lives
 
-The verbs, the seed world, and name resolution currently live in `musce_action`
-as the first-slice scaffolding that proved the plumbing; they are game content and
-move to the reference game crate `musce_ref`, leaving `musce_action` pure engine
-mechanism (the executor, the `CommandTable` lookup and registration, `Ctx` and its
-emit API, the audience resolver). See
-[engine-and-game.md](engine-and-game.md).
+The verbs, the seed world, and name resolution are game content and live in the
+reference game crate `musce_ref`, over the world queries and the public command
+surface the engine exposes. `musce_action` is pure engine mechanism: the
+executor, the `CommandTable` lookup and registration, `Ctx` and its emit API, and
+the audience resolver. See [engine-and-game.md](engine-and-game.md).
 
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to

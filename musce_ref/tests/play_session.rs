@@ -1,7 +1,7 @@
 //! End-to-end ground truth for the action slice: a real TCP client drives a real
 //! sim through the full path (transport -> dispatcher -> verb handlers -> audience
 //! resolver -> rendered output). connect -> @play -> look -> go north -> take, with
-//! the seeded starter world as the world under test.
+//! the reference game (`musce_ref`) driven through the real engine runtime.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,7 +63,12 @@ async fn connect_play_look_go_take() {
         save_every: 10_000, // keep saves out of the way for this test
         listen_addr: Some(addr),
     };
-    let handle = tokio::spawn(run(store.clone(), config, shutdown.clone()));
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
 
     // The listener is up once `run` has bound; retry-connect briefly to absorb
     // the gap between port probe and rebind.

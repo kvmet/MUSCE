@@ -1,14 +1,16 @@
 //! The single command entry point the tick loop calls as it drains the inbox.
 //! It owns input-stack routing: the `@`-namespace always goes to the account
 //! floor; a bare command goes to the active in-game frame (the embodiment frame),
-//! which this slice realizes as the stub actor binding plus the action layer's
+//! which this slice realizes as the stub actor binding plus the injected game's
 //! command table. Keeping this seam means the loop holds no command knowledge: it
-//! drains the inbox and calls `handle`. See `docs/architecture/actions.md`.
+//! drains the inbox and calls `handle`. See `docs/architecture/actions.md` and
+//! `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Actors, CommandTable, dispatch_bare};
+use musce_action::{Actors, dispatch_bare};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
 
+use crate::Game;
 use crate::session::Sessions;
 
 pub struct Dispatch {
@@ -17,16 +19,18 @@ pub struct Dispatch {
     /// Stub connection<->actor bindings; the embodiment frame and the audience
     /// resolver both read these.
     actors: Actors,
-    /// The in-game verb registry, built once and shared read-only.
-    table: CommandTable,
+    /// The injected game: its command table drives bare commands and its
+    /// `bind_actor` policy backs the floor's `@play`. The runtime holds no game
+    /// content beyond this value.
+    game: Game,
 }
 
 impl Dispatch {
-    pub fn new() -> Self {
+    pub fn new(game: Game) -> Self {
         Self {
             floor: Sessions::default(),
             actors: Actors::default(),
-            table: CommandTable::default(),
+            game,
         }
     }
 
@@ -57,10 +61,24 @@ impl Dispatch {
         }
 
         if let Some(rest) = line.strip_prefix('@') {
-            self.floor
-                .account_command(id, rest, world, &mut self.actors, emit);
+            self.floor.account_command(
+                id,
+                rest,
+                world,
+                &mut self.actors,
+                self.game.bind_actor,
+                emit,
+            );
         } else if let Some(actor) = self.actors.actor_of(id) {
-            dispatch_bare(&self.table, world, &self.actors, actor, id, line, emit);
+            dispatch_bare(
+                &self.game.commands,
+                world,
+                &self.actors,
+                actor,
+                id,
+                line,
+                emit,
+            );
         } else {
             emit(Outgoing::Event(Event::to_connection(
                 id,
@@ -71,16 +89,67 @@ impl Dispatch {
     }
 }
 
-impl Default for Dispatch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use musce_action::{CommandTable, Ctx, Gate};
+    use musce_core::hecs::EntityBuilder;
+    use musce_core::{Description, EntityId, Id, Player, Room};
     use musce_proto::{Audience, Capabilities};
+
+    /// An engine-only `Game` so the router can be exercised without depending on
+    /// a real game. Its seed makes one described room with a player avatar in it,
+    /// `bind_actor` binds the connection to that avatar, and `look` echoes the
+    /// avatar's room description, so the routing is observable end to end.
+    fn test_game() -> Game {
+        fn seed(world: &mut World) {
+            let room = {
+                let mut b = EntityBuilder::new();
+                b.add(Room);
+                b.add(Description("a test chamber".into()));
+                world.spawn(b)
+            };
+            let avatar = {
+                let mut b = EntityBuilder::new();
+                b.add(Player);
+                b.add(Description("a tester".into()));
+                world.spawn(b)
+            };
+            world.move_entity(avatar, room).unwrap();
+        }
+
+        fn bind_actor(world: &World, actors: &mut Actors, conn: ConnectionId) -> Option<EntityId> {
+            let actor = world
+                .ecs
+                .query::<(&Id, &Player)>()
+                .iter()
+                .next()
+                .map(|(id, _)| id.0)?;
+            actors.bind(conn, actor);
+            Some(actor)
+        }
+
+        fn look(ctx: &mut Ctx, _args: &str) {
+            let text = ctx
+                .world
+                .enclosing_room(ctx.actor)
+                .and_then(|r| {
+                    ctx.world
+                        .entity(r)
+                        .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
+                })
+                .unwrap_or_else(|| "nowhere".into());
+            ctx.emit_self(EventKind::Narration, text);
+        }
+
+        let mut commands = CommandTable::new();
+        commands.register("look", Gate::Open, look);
+        Game {
+            commands,
+            seed,
+            bind_actor,
+        }
+    }
 
     fn caps() -> Capabilities {
         Capabilities {
@@ -120,7 +189,7 @@ mod tests {
     /// The `@`-namespace still reaches the floor: connect then `@quit` closes.
     #[test]
     fn at_command_routes_to_floor() {
-        let mut d = Dispatch::new();
+        let mut d = Dispatch::new(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -135,7 +204,7 @@ mod tests {
     /// A bare command before `@play` reports having no character.
     #[test]
     fn bare_without_actor_reports_no_character() {
-        let mut d = Dispatch::new();
+        let mut d = Dispatch::new(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -150,12 +219,14 @@ mod tests {
         ));
     }
 
-    /// End to end through the router: @play then look renders the seeded room.
+    /// End to end through the router: @play then a bare command acts through the
+    /// injected game's table against the injected game's seeded world.
     #[test]
-    fn play_then_look_renders_room() {
-        let mut d = Dispatch::new();
+    fn play_then_bare_command_acts_through_the_game() {
+        let game = test_game();
         let mut world = World::new();
-        musce_action::seed(&mut world);
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -173,6 +244,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(rendered.iter().any(|t| t.contains("stone hall")));
+        assert!(rendered.iter().any(|t| t.contains("a test chamber")));
     }
 }

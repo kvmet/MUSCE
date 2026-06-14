@@ -12,9 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
+use musce_action::{Actors, CommandTable};
 use musce_core::{EntityId, Snapshot, World};
 use musce_persistence::{Loaded, Persistence, SqliteStore};
-use musce_proto::{Command, Outgoing};
+use musce_proto::{Command, ConnectionId, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -53,6 +54,27 @@ pub struct RunReport {
     pub saves: u64,
 }
 
+/// Builds the starting world when the database loads empty; a loaded world is
+/// left untouched.
+pub type Seed = fn(&mut World);
+
+/// The `@play` policy: which actor a connection comes to drive. Binds the
+/// connection in `Actors` and returns the chosen actor (or `None` if the game
+/// has no character to give it).
+pub type BindActor = fn(&World, &mut Actors, ConnectionId) -> Option<EntityId>;
+
+/// The whole of what the runtime needs from a game: its in-game verb registry,
+/// its world seed, and its `@play` actor policy. A plain struct of values plus fn
+/// pointers; the runtime never depends on a particular game, only on this. The
+/// account floor (`@quit`/`@who`/`@help`) stays engine; only `@play`'s actor
+/// choice is game policy, which is why `bind_actor` is the one floor concern the
+/// game injects. See `docs/architecture/engine-and-game.md`.
+pub struct Game {
+    pub commands: CommandTable,
+    pub seed: Seed,
+    pub bind_actor: BindActor,
+}
+
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
 /// sim time, the default for game logic) and `now` (wall-clock, for real-world
 /// scheduling). Captured once per tick so every system sees the same instant.
@@ -74,6 +96,7 @@ pub async fn run(
     store: SqliteStore,
     config: Config,
     shutdown: Arc<AtomicBool>,
+    game: Game,
 ) -> Result<RunReport, Box<dyn std::error::Error + Send + Sync>> {
     store.init().await?;
     let loaded = store.load().await?; // boot load, before any tick
@@ -100,7 +123,7 @@ pub async fn run(
         .name("musce-sim".into())
         .spawn(move || {
             sim_loop(
-                loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, done_tx,
+                loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, game, done_tx,
             )
         })
         .expect("spawn sim thread");
@@ -140,20 +163,21 @@ fn sim_loop(
     event_tx: UnboundedSender<Outgoing>,
     shutdown: Arc<AtomicBool>,
     config: Config,
+    game: Game,
     done_tx: oneshot::Sender<RunReport>,
 ) {
     let mut world = World::new();
     if let Err(e) = world.load(&loaded.entities, loaded.next_id) {
         tracing::error!(error = %e, "failed to load world; starting empty");
     }
-    // First boot against an empty database: lay down the starter map so there is
-    // ground truth to play. A loaded world is left untouched.
+    // First boot against an empty database: lay down the game's starter world so
+    // there is ground truth to play. A loaded world is left untouched.
     if loaded.entities.is_empty() {
-        let seeded = musce_action::seed(&mut world);
-        tracing::info!(start = ?seeded.start, avatar = ?seeded.avatar, "seeded starter world");
+        (game.seed)(&mut world);
+        tracing::info!("seeded starter world");
     }
 
-    let mut dispatch = Dispatch::new();
+    let mut dispatch = Dispatch::new(game);
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -247,6 +271,17 @@ mod tests {
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Item, Room, World};
 
+    /// An engine-only `Game`: no verbs, a no-op seed, and a `bind_actor` that
+    /// binds nothing. The runtime, not game content, is what this crate tests, so
+    /// the lifecycle test needs only a `Game`-shaped value to hand `run`.
+    fn test_game() -> Game {
+        Game {
+            commands: CommandTable::new(),
+            seed: |_| {},
+            bind_actor: |_, _, _| None,
+        }
+    }
+
     #[tokio::test]
     async fn boot_tick_save_shutdown_lifecycle() {
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
@@ -279,7 +314,9 @@ mod tests {
             save_every: 2,
             listen_addr: None, // headless: no real socket in the lifecycle test
         };
-        let report = run(store.clone(), config, shutdown).await.unwrap();
+        let report = run(store.clone(), config, shutdown, test_game())
+            .await
+            .unwrap();
 
         // Shutdown always saves at least once, regardless of timing.
         assert!(report.saves >= 1);

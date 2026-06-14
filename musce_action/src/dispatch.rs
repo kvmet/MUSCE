@@ -1,19 +1,22 @@
 //! The command table: a registry of in-game verbs the dispatcher looks up by
 //! name, plus the single entry point the host calls for a bare (embodied)
-//! command. Verbs register here rather than into a growing `match`, and lookup
-//! resolves abbreviations (`n` -> `north`, `dr` -> `drop`) so adding a verb is a
-//! local change. See `docs/architecture/actions.md`.
+//! command. A game registers its verbs here rather than into a growing `match`,
+//! and lookup resolves abbreviations (`n` -> `north`, `dr` -> `drop`) so adding a
+//! verb is a local change. The table, registration, and lookup are engine
+//! mechanism; the verbs themselves are game content. See
+//! `docs/architecture/actions.md`.
 
 use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Outgoing};
 
 use crate::audience::{self, Outbound};
 use crate::bindings::Actors;
-use crate::verbs::{self, Ctx};
+use crate::ctx::Ctx;
 
 /// A verb's parse-and-act function. Receives the command context and the
-/// argument tail (everything after the verb word).
-type Handler = fn(&mut Ctx, &str);
+/// argument tail (everything after the verb word). A game writes these and
+/// registers them; the engine only invokes them.
+pub type Handler = fn(&mut Ctx, &str);
 
 /// Permission required to run a verb. Only `Open` exists this slice (every
 /// in-game verb is ungated); the admin verbs introduced next add staff tiers
@@ -39,18 +42,22 @@ struct Verb {
 
 /// The registry of in-game verbs. Ordered: lookup prefers an exact name, then the
 /// first registered verb the input is a prefix of, so registration order is the
-/// abbreviation tie-break (movement before `say`, so `s` is south and `sa` is
-/// say). Built once and shared read-only across ticks.
+/// abbreviation tie-break (register movement before `say`, so `s` is south and
+/// `sa` is say). A game builds one at boot and the runtime shares it read-only
+/// across ticks.
 pub struct CommandTable {
     verbs: Vec<Verb>,
 }
 
 impl CommandTable {
-    fn empty() -> Self {
+    /// A fresh, empty table. A game fills it by `register`ing its verbs.
+    pub fn new() -> Self {
         CommandTable { verbs: Vec::new() }
     }
 
-    fn register(&mut self, name: &'static str, gate: Gate, handler: Handler) {
+    /// Register a verb: its name, its permission gate, and its handler. Order
+    /// matters for abbreviation ties (see the type docs).
+    pub fn register(&mut self, name: &'static str, gate: Gate, handler: Handler) {
         self.verbs.push(Verb {
             name,
             gate,
@@ -67,22 +74,8 @@ impl CommandTable {
 }
 
 impl Default for CommandTable {
-    /// The MVP verb set. Movement is registered first so single-letter direction
-    /// abbreviations win their prefix ties.
     fn default() -> Self {
-        let mut t = CommandTable::empty();
-        t.register("north", Gate::Open, |c, _| verbs::go(c, "north"));
-        t.register("south", Gate::Open, |c, _| verbs::go(c, "south"));
-        t.register("east", Gate::Open, |c, _| verbs::go(c, "east"));
-        t.register("west", Gate::Open, |c, _| verbs::go(c, "west"));
-        t.register("up", Gate::Open, |c, _| verbs::go(c, "up"));
-        t.register("down", Gate::Open, |c, _| verbs::go(c, "down"));
-        t.register("look", Gate::Open, verbs::look);
-        t.register("go", Gate::Open, verbs::go);
-        t.register("take", Gate::Open, verbs::take);
-        t.register("drop", Gate::Open, verbs::drop);
-        t.register("say", Gate::Open, verbs::say);
-        t
+        Self::new()
     }
 }
 
@@ -125,49 +118,36 @@ pub fn dispatch_bare(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Exit, Exits, Player, Room};
-    use musce_proto::{Audience, Event};
+    use musce_core::{Player, Room};
+    use musce_proto::{Audience, Event, EventKind};
+
+    /// Two test verbs over the public emit API, standing in for game content so
+    /// the engine routing is exercised without depending on a real game. `ping`
+    /// is registered before `pet` so the `p` prefix resolves to `ping`.
+    fn table() -> CommandTable {
+        let mut t = CommandTable::new();
+        t.register("ping", Gate::Open, |c, _| c.feedback("pong"));
+        t.register("pet", Gate::Open, |c, _| c.feedback("purr"));
+        t
+    }
 
     fn world_with_player() -> (World, Actors, EntityId, ConnectionId) {
         let mut world = World::new();
-
-        let hall = {
+        let room = {
             let mut b = EntityBuilder::new();
             b.add(Room);
-            b.add(Description("a stone hall".into()));
             world.spawn(b)
         };
-        let garden = {
-            let mut b = EntityBuilder::new();
-            b.add(Room);
-            b.add(Description("a quiet garden".into()));
-            world.spawn(b)
-        };
-        // hall --north--> garden
-        let he = world.index().get(hall).unwrap();
-        world
-            .ecs
-            .insert_one(
-                he,
-                Exits(vec![Exit {
-                    direction: "north".into(),
-                    to: garden,
-                }]),
-            )
-            .unwrap();
-
         let actor = {
             let mut b = EntityBuilder::new();
             b.add(Player);
-            b.add(Description("an adventurer".into()));
             world.spawn(b)
         };
-        world.move_entity(actor, hall).unwrap();
+        world.move_entity(actor, room).unwrap();
 
         let conn = ConnectionId(1);
         let mut actors = Actors::default();
         actors.bind(conn, actor);
-
         (world, actors, actor, conn)
     }
 
@@ -178,7 +158,7 @@ mod tests {
         conn: ConnectionId,
         line: &str,
     ) -> Vec<String> {
-        let table = CommandTable::default();
+        let table = table();
         let mut out = Vec::new();
         dispatch_bare(&table, world, actors, actor, conn, line, &mut |o| {
             out.push(o)
@@ -196,11 +176,20 @@ mod tests {
     }
 
     #[test]
-    fn bare_direction_abbreviation_moves() {
+    fn exact_name_beats_prefix() {
         let (mut world, actors, actor, conn) = world_with_player();
-        // "n" resolves to north and traverses the exit.
-        let out = texts(&mut world, &actors, actor, conn, "n");
-        assert!(out.iter().any(|t| t.contains("a quiet garden")));
+        // "pet" matches exactly even though "ping" also starts with "pe"... it
+        // does not, but "pet" is exact so it wins regardless of order.
+        let out = texts(&mut world, &actors, actor, conn, "pet");
+        assert!(out.iter().any(|t| t.contains("purr")));
+    }
+
+    #[test]
+    fn prefix_resolves_in_registration_order() {
+        let (mut world, actors, actor, conn) = world_with_player();
+        // "p" is a prefix of both; "ping" was registered first, so it wins.
+        let out = texts(&mut world, &actors, actor, conn, "p");
+        assert!(out.iter().any(|t| t.contains("pong")));
     }
 
     #[test]
@@ -208,5 +197,25 @@ mod tests {
         let (mut world, actors, actor, conn) = world_with_player();
         let out = texts(&mut world, &actors, actor, conn, "frobnicate");
         assert!(out.iter().any(|t| t.contains("I don't understand")));
+    }
+
+    #[test]
+    fn emit_kind_carries_through() {
+        let (mut world, actors, actor, conn) = world_with_player();
+        let mut t = CommandTable::new();
+        t.register("yell", Gate::Open, |c, _| {
+            c.emit_self(EventKind::Narration, "loud")
+        });
+        let mut out = Vec::new();
+        dispatch_bare(&t, &mut world, &actors, actor, conn, "yell", &mut |o| {
+            out.push(o)
+        });
+        assert!(matches!(
+            out.as_slice(),
+            [Outgoing::Event(Event {
+                kind: EventKind::Narration,
+                ..
+            })]
+        ));
     }
 }

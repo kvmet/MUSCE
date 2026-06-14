@@ -767,7 +767,6 @@ dependencies = [
  "musce_proto",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -799,6 +798,20 @@ version = "0.1.0"
 dependencies = [
  "musce_core",
  "serde",
+]
+
+[[package]]
+name = "musce_ref"
+version = "0.1.0"
+dependencies = [
+ "musce_action",
+ "musce_core",
+ "musce_host",
+ "musce_persistence",
+ "musce_proto",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
