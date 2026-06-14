@@ -141,6 +141,33 @@ Implementation implications, grounded in `component.rs`:
   so the registry can recognize and reject them, directing the change to
   `Move`/`Relate` instead. The generic setter is for plain-data components only.
 
+## Atomicity: validate, then commit
+
+Every handler is shaped validate -> mutate -> emit, and the boundary between
+validate and mutate is the commit point. **All fallible checks precede the first
+mutation, and the mutate phase is infallible by construction.** On the single sim
+thread with exclusive `&mut World` this makes an action atomic for free: no
+concurrency can interleave it, and there is no failure point partway through to
+unwind. The engine therefore needs no transactions, rollback, or two-phase commit
+inside a tick, and we deliberately do not add them. This is a standing decision,
+not a missing feature; see the README principle.
+
+`relate` in `world.rs` already embodies this: it returns `Err` for missing
+entities and cycles up front, and only then runs `remove_source` / `insert_one` /
+`add_source`, none of which can bail.
+
+Two consequences:
+
+- **Reactions respond, they do not veto.** A trap firing on entry does not
+  un-move the entity; it reacts to a move that already committed, possibly by
+  issuing a new Move to throw it back out. "You cannot enter" must be a pre-commit
+  rule, not a post-event reaction. The veto/react split is exactly the
+  validate/mutate line.
+- **Compound actions front-load every check.** `@dig` creates a room and two exit
+  links. No concurrency can split it, but a precondition that fails after the room
+  exists would leave a half-dug room. Validate the whole compound before the first
+  mutation, then the mutation sequence runs clean.
+
 ## No command buffer needed
 
 ECS command buffers (Bevy `Commands`, flecs deferred mode) are exactly the mutator

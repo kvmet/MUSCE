@@ -14,6 +14,13 @@ These hold across every subsystem:
 - **One authoritative sim thread.** A single thread owns the world and the tick
   loop. Everything else (networking, persistence) runs on other threads and
   communicates by message: commands in, events out.
+- **Atomic mutation, no rollback.** A mutation either passes all its checks and
+  commits, or it is rejected before changing anything; once it begins mutating it
+  cannot fail. The single sim thread gives this for free, so the engine never
+  needs transactions, rollback, or two-phase commit within a tick. Do not reach
+  for that machinery: the absence of it is a design choice, not a gap. Validation
+  is the only veto point; reactions respond to what happened, they never unwind
+  it.
 - **Message-shaped interaction.** Entities affect each other through messages
   addressed by `EntityId`, never by synchronously reaching into another
   entity's components. This is what keeps later sharding reachable.
