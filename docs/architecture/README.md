@@ -38,6 +38,9 @@ These hold across every subsystem:
 - [sequences.md](sequences.md) — timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
+- [networking-and-sessions.md](networking-and-sessions.md) — transports behind one
+  `Connection`, input modes, and the session/control model (embodiment vs modal
+  overlay, the account floor, staff multi-puppet). *(Proposed; not implemented.)*
 - [sharding.md](sharding.md) — the deferred sharding plan and the seams kept now
   to make it possible.
 
@@ -47,12 +50,15 @@ Built:
 
 - `musce_core`: world, identity, relation layer, containment, JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
+- `musce_host`: the tick loop (fixed cadence, `TickCtx` carrying both clocks),
+  boot load, periodic + graceful-shutdown persistence.
 
 Deferred (with seams in place where noted):
 
-- Systems and the tick pipeline (designed in concurrency.md, actions.md, and
-  sequences.md; not built).
-- Networking: connections, sessions, accounts, puppets.
+- Game systems: the phase pipeline runs, but no systems yet (designed in
+  actions.md and sequences.md).
+- Networking: transports, sessions, accounts, puppets (designed in
+  networking-and-sessions.md).
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

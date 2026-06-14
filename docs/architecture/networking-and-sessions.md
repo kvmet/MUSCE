@@ -1,0 +1,83 @@
+# Networking and Sessions
+
+> Status: **proposed, not implemented.** This records the design and rationale.
+
+## Three layers, and the thread boundary
+
+Keep three concerns from bleeding together:
+
+- **Transport** (TCP / WebSocket / SSH / telnet): how bytes are framed.
+- **Session**: an authenticated connection (account identity, capabilities, input mode).
+- **Control**: what your input actually drives (embodiment) and what's overlaid on it (modal UI).
+
+The thread split from [concurrency.md](concurrency.md) holds: **net is a mostly-dumb pipe**, the sim owns the logic. Net turns a transport into `Command { connection_id, input }` for the sim and renders `Event`s back. The interesting routing happens sim-side where the state lives. The one thing net holds locally is **per-connection presentation state** (input mode, color/size capabilities), because it controls framing; the sim updates that via outbound events.
+
+## Transports: one `Connection`, many backends
+
+Every transport reduces to a bidirectional stream plus capability flags (line- vs char-capable, color, terminal size and resize events). Each transport implements a common `Connection`; the sim never knows which one a player is on, so adding transports is additive.
+
+- **Raw TCP line-mode** — the dumb dev transport, built first to make the loop interactive. A plain client talks to it in line mode.
+- **WebSocket** — first-class, for the web client. Does char- or line-mode trivially (the client chooses framing).
+- **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-game VI, WASD movement. (`russh` for an in-process server.)
+- **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
+
+Output renders `Event`s to the connection's format (ANSI text first). Keep events semantic where reasonable so a web client can render richly later.
+
+## Input mode: a connection state, not a separate port
+
+Line vs char/raw is a **switchable property of the connection, driven by the active controller**, not a second endpoint.
+
+- Normal play is **line-mode**: the client echoes locally and sends on Enter. This matters because per-keystroke server echo is a network round-trip per character (the reason telnet line-mode exists).
+- When a controller needs keystrokes (in-game VI, a WASD movement mode, a menu), it **declares it wants char/raw mode**. The sim emits a mode-change event; net flips the connection. On exit, the controller beneath asks for line-mode again.
+
+So "real-time echo-back" is just the active controller asking for keystrokes. VI, WASD, menus, a fullscreen map all fall out of one mechanism. SSH/PTY and WebSocket support it natively; telnet via negotiation; a line-only client simply can't enter those modes (graceful degradation).
+
+## Sessions and control
+
+The **input stack is never empty**: its bottom frame is always the account/session floor. What can be empty is the *control (embodiment) stack* on top of it. First login = empty control stack, so only the floor is active.
+
+Input handling, top to bottom:
+
+1. **Modal overlay** (menu/editor) if open. Captures input, offers an exit.
+2. **Embodiment** if puppeting. Bare in-game commands act through the focused entity (the `Command -> Action -> execute` path in [actions.md](actions.md)).
+3. **Account/session floor**, always present once authenticated: `@quit`, `@who`, character list, `@play <char>`, `@create`, staff puppet management.
+
+The `@`-namespace always routes to the floor regardless of what's on top; bare commands go to the active frame. So `@quit` works whether you're a fresh login, deep in a possessed drone, or mid-edit.
+
+### Two kinds of control state (different homes, different durability)
+
+The distinction that matters: embodied control is a *fact about the world*, not UI.
+
+- **Embodiment / possession is world state, persisted.** "C pilots R" is a `Controls` relation (one-to-many: a controlled entity has one controller; cascade is `Detach`, so a controller's death reverts the controlled entity to its own AI rather than destroying or reparenting it). A chain is just relations: C → R → D. A per-controller `Focus(EntityId)` on the world entity marks where you currently are in the chain. Both persist, so a character piloting a robot survives a reboot still piloting it.
+- **Modal UI overlay is session state, ephemeral.** Menus, an editor's cursor and undo buffer, the input mode. Even in-game VI splits this way: the *file* is a world entity (persisted), the *editing session* is the overlay (ephemeral).
+
+### Durability tiers
+
+- **World control chain + `Focus`**: survives disconnect *and* reboot (persisted world state).
+- **Session** (overlays, input mode, connection↔account, character attachments): survives disconnect (kept server-side, keyed by account), rebuilt on reboot.
+- **Connection**: ephemeral.
+
+A reboot dropping your open menu is fine; a reboot dropping the fact you're piloting the robot is not.
+
+### The account, and the root of the control chain
+
+The **account is not a world entity.** It is a persisted DB record (auth, owned characters, permissions, settings) plus a live session, which is the floor.
+
+- Login establishes the session floor; no world attachment yet.
+- `@play <char>` attaches the session to a character entity (a session→world `EntityId` pointer), re-established each login.
+- In-world control extends from that character via `Controls`.
+- On reboot, char→robot and the character's `Focus` persist; on next login only the cheap session→char attachment is rebuilt, and you resume where you left off.
+
+### Staff multi-puppet
+
+A session holds several character attachments (the `p1`/`p2`/... slots), each a session→entity pointer. A command prefix (`p2 say hi`) selects the slot; that character's `Focus` resolves the active driven entity. The slots are session state; everything they point at is world state. The targeted entities may live in different zones/shards, and the locator routes the resulting action accordingly.
+
+## Build order
+
+1. Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
+2. WebSocket + SSH behind the same `Connection` abstraction.
+3. Auth/accounts and the session floor (`@`-commands).
+4. Embodiment: the `Controls` relation, the `Focus` component, and the `@play` flow.
+5. Modal overlays: menus and editors, with input-mode switching.
+
+New engine pieces this needs: a `Controls` relation (a new instance of the relation layer, cascade `Detach`) and a `Focus` component. Both are small additions to `musce_core`.
