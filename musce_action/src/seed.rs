@@ -33,7 +33,10 @@ pub fn seed(world: &mut World) -> Seeded {
     let avatar = avatar(world, "a weathered adventurer");
     world.move_entity(avatar, hall).expect("seed: place avatar");
 
-    Seeded { start: hall, avatar }
+    Seeded {
+        start: hall,
+        avatar,
+    }
 }
 
 fn room(world: &mut World, desc: &str) -> EntityId {
@@ -66,10 +69,16 @@ fn spawn(world: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
 fn set_exits(world: &mut World, room: EntityId, exits: &[(&str, EntityId)]) {
     let exits = exits
         .iter()
-        .map(|(dir, to)| Exit { direction: (*dir).into(), to: *to })
+        .map(|(dir, to)| Exit {
+            direction: (*dir).into(),
+            to: *to,
+        })
         .collect();
     let e = world.index().get(room).expect("seed: room just spawned");
-    world.ecs.insert_one(e, Exits(exits)).expect("seed: set exits");
+    world
+        .ecs
+        .insert_one(e, Exits(exits))
+        .expect("seed: set exits");
 }
 
 /// Find the player avatar in the world. The stub `@play` binds to it; the real

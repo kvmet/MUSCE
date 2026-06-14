@@ -74,7 +74,11 @@ impl Sessions {
                 emit(Outgoing::Close(id));
             }
             "who" => {
-                feedback(id, &format!("{} connection(s) online.", self.online_count()), emit);
+                feedback(
+                    id,
+                    &format!("{} connection(s) online.", self.online_count()),
+                    emit,
+                );
             }
             "help" => {
                 feedback(
@@ -101,8 +105,13 @@ impl Sessions {
     ) {
         match musce_action::play(world, actors, id) {
             Some(actor) => {
-                let name = musce_action::actor_name(world, actor).unwrap_or_else(|| "someone".into());
-                feedback(id, &format!("You are now {name}. Type 'look' to see where you are."), emit);
+                let name =
+                    musce_action::actor_name(world, actor).unwrap_or_else(|| "someone".into());
+                feedback(
+                    id,
+                    &format!("You are now {name}. Type 'look' to see where you are."),
+                    emit,
+                );
             }
             None => feedback(id, "There is no character to play yet.", emit),
         }
@@ -110,7 +119,11 @@ impl Sessions {
 }
 
 fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
-    emit(Outgoing::Event(Event::to_connection(id, EventKind::Feedback, text)));
+    emit(Outgoing::Event(Event::to_connection(
+        id,
+        EventKind::Feedback,
+        text,
+    )));
 }
 
 #[cfg(test)]
@@ -141,7 +154,13 @@ mod tests {
 
         let mut out = Vec::new();
         s.account_command(id, "quit", &world, &mut actors, &mut |o| out.push(o));
-        assert!(matches!(out[0], Outgoing::Event(Event { kind: EventKind::Feedback, .. })));
+        assert!(matches!(
+            out[0],
+            Outgoing::Event(Event {
+                kind: EventKind::Feedback,
+                ..
+            })
+        ));
         assert!(matches!(out[1], Outgoing::Close(c) if c == id));
     }
 
@@ -156,7 +175,13 @@ mod tests {
 
         let mut out = Vec::new();
         s.account_command(id, "play", &world, &mut actors, &mut |o| out.push(o));
-        assert!(matches!(out.as_slice(), [Outgoing::Event(Event { kind: EventKind::Feedback, .. })]));
+        assert!(matches!(
+            out.as_slice(),
+            [Outgoing::Event(Event {
+                kind: EventKind::Feedback,
+                ..
+            })]
+        ));
         assert_eq!(actors.actor_of(id), Some(seeded.avatar));
     }
 
@@ -171,7 +196,13 @@ mod tests {
         let mut out = Vec::new();
         s.account_command(id, "bogus", &world, &mut actors, &mut |o| out.push(o));
         match &out[..] {
-            [Outgoing::Event(Event { kind: EventKind::Feedback, text, .. })] => {
+            [
+                Outgoing::Event(Event {
+                    kind: EventKind::Feedback,
+                    text,
+                    ..
+                }),
+            ] => {
                 assert!(text.contains("bogus"));
             }
             other => panic!("expected one feedback event, got {other:?}"),

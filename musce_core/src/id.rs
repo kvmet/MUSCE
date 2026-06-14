@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Global, location-independent entity identity. Distinct from `hecs::Entity`
 /// (which is local to one World) so it can survive persistence and, later,
 /// crossing shard boundaries.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityId(pub u64);
 
 /// Per-world map from global `EntityId` to the local `hecs::Entity` handle.

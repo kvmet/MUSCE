@@ -49,7 +49,10 @@ pub struct Command {
 #[derive(Debug, Clone)]
 pub enum Input {
     /// Net opened a connection; carries the advertised capabilities.
-    Connected { caps: Capabilities, peer: Option<SocketAddr> },
+    Connected {
+        caps: Capabilities,
+        peer: Option<SocketAddr>,
+    },
     /// One line of input (the trailing newline already stripped).
     Line(String),
     /// Net lost the connection (client closed, or net closed it after `Close`).
@@ -79,13 +82,21 @@ pub struct Event {
 impl Event {
     /// Convenience for the common case: text aimed at one connection.
     pub fn to_connection(id: ConnectionId, kind: EventKind, text: impl Into<String>) -> Self {
-        Event { to: Audience::Connection(id), kind, text: text.into() }
+        Event {
+            to: Audience::Connection(id),
+            kind,
+            text: text.into(),
+        }
     }
 
     /// Text aimed at everyone in a room. The sim-side audience resolver expands
     /// this into per-connection events; net never sees it.
     pub fn to_room(room: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
-        Event { to: Audience::Room(room), kind, text: text.into() }
+        Event {
+            to: Audience::Room(room),
+            kind,
+            text: text.into(),
+        }
     }
 }
 

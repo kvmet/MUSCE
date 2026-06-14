@@ -21,11 +21,17 @@ pub struct Outbound {
 
 impl Outbound {
     pub fn new(event: Event) -> Self {
-        Outbound { event, exclude: None }
+        Outbound {
+            event,
+            exclude: None,
+        }
     }
 
     pub fn excluding(event: Event, conn: musce_proto::ConnectionId) -> Self {
-        Outbound { event, exclude: Some(conn) }
+        Outbound {
+            event,
+            exclude: Some(conn),
+        }
     }
 }
 
@@ -108,7 +114,10 @@ mod tests {
         let conns: Vec<ConnectionId> = events
             .iter()
             .map(|o| match o {
-                Outgoing::Event(Event { to: Audience::Connection(c), .. }) => *c,
+                Outgoing::Event(Event {
+                    to: Audience::Connection(c),
+                    ..
+                }) => *c,
                 other => panic!("expected connection event, got {other:?}"),
             })
             .collect();

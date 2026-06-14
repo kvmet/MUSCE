@@ -98,7 +98,11 @@ pub async fn run(
 
     let sim = std::thread::Builder::new()
         .name("musce-sim".into())
-        .spawn(move || sim_loop(loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, done_tx))
+        .spawn(move || {
+            sim_loop(
+                loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, done_tx,
+            )
+        })
         .expect("spawn sim thread");
 
     let report = done_rx.await?; // fires after the final save is acked

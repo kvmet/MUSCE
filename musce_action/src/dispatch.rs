@@ -51,7 +51,11 @@ impl CommandTable {
     }
 
     fn register(&mut self, name: &'static str, gate: Gate, handler: Handler) {
-        self.verbs.push(Verb { name, gate, handler });
+        self.verbs.push(Verb {
+            name,
+            gate,
+            handler,
+        });
     }
 
     fn lookup(&self, word: &str) -> Option<&Verb> {
@@ -143,7 +147,13 @@ mod tests {
         let he = world.index().get(hall).unwrap();
         world
             .ecs
-            .insert_one(he, Exits(vec![Exit { direction: "north".into(), to: garden }]))
+            .insert_one(
+                he,
+                Exits(vec![Exit {
+                    direction: "north".into(),
+                    to: garden,
+                }]),
+            )
             .unwrap();
 
         let actor = {
@@ -161,13 +171,25 @@ mod tests {
         (world, actors, actor, conn)
     }
 
-    fn texts(world: &mut World, actors: &Actors, actor: EntityId, conn: ConnectionId, line: &str) -> Vec<String> {
+    fn texts(
+        world: &mut World,
+        actors: &Actors,
+        actor: EntityId,
+        conn: ConnectionId,
+        line: &str,
+    ) -> Vec<String> {
         let table = CommandTable::default();
         let mut out = Vec::new();
-        dispatch_bare(&table, world, actors, actor, conn, line, &mut |o| out.push(o));
+        dispatch_bare(&table, world, actors, actor, conn, line, &mut |o| {
+            out.push(o)
+        });
         out.into_iter()
             .map(|o| match o {
-                Outgoing::Event(Event { text, to: Audience::Connection(_), .. }) => text,
+                Outgoing::Event(Event {
+                    text,
+                    to: Audience::Connection(_),
+                    ..
+                }) => text,
                 other => panic!("expected connection event, got {other:?}"),
             })
             .collect()

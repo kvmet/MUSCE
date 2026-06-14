@@ -57,7 +57,8 @@ impl Dispatch {
         }
 
         if let Some(rest) = line.strip_prefix('@') {
-            self.floor.account_command(id, rest, world, &mut self.actors, emit);
+            self.floor
+                .account_command(id, rest, world, &mut self.actors, emit);
         } else if let Some(actor) = self.actors.actor_of(id) {
             dispatch_bare(&self.table, world, &self.actors, actor, id, line, emit);
         } else {
@@ -82,12 +83,22 @@ mod tests {
     use musce_proto::{Audience, Capabilities};
 
     fn caps() -> Capabilities {
-        Capabilities { color: false, line_mode_only: true, size: None }
+        Capabilities {
+            color: false,
+            line_mode_only: true,
+            size: None,
+        }
     }
 
     fn connect(d: &mut Dispatch, world: &mut World, id: ConnectionId) {
         d.handle(
-            Command { connection: id, input: Input::Connected { caps: caps(), peer: None } },
+            Command {
+                connection: id,
+                input: Input::Connected {
+                    caps: caps(),
+                    peer: None,
+                },
+            },
             world,
             &mut |_| {},
         );
@@ -96,7 +107,10 @@ mod tests {
     fn line(d: &mut Dispatch, world: &mut World, id: ConnectionId, s: &str) -> Vec<Outgoing> {
         let mut out = Vec::new();
         d.handle(
-            Command { connection: id, input: Input::Line(s.into()) },
+            Command {
+                connection: id,
+                input: Input::Line(s.into()),
+            },
             world,
             &mut |o| out.push(o),
         );
@@ -112,7 +126,10 @@ mod tests {
         connect(&mut d, &mut world, id);
 
         let out = line(&mut d, &mut world, id, "@quit");
-        assert!(out.iter().any(|o| matches!(o, Outgoing::Close(c) if *c == id)));
+        assert!(
+            out.iter()
+                .any(|o| matches!(o, Outgoing::Close(c) if *c == id))
+        );
     }
 
     /// A bare command before `@play` reports having no character.
@@ -126,7 +143,10 @@ mod tests {
         let out = line(&mut d, &mut world, id, "look");
         assert!(matches!(
             out.as_slice(),
-            [Outgoing::Event(Event { kind: EventKind::Feedback, .. })]
+            [Outgoing::Event(Event {
+                kind: EventKind::Feedback,
+                ..
+            })]
         ));
     }
 
@@ -145,7 +165,11 @@ mod tests {
         let rendered: Vec<String> = out
             .iter()
             .filter_map(|o| match o {
-                Outgoing::Event(Event { text, to: Audience::Connection(_), .. }) => Some(text.clone()),
+                Outgoing::Event(Event {
+                    text,
+                    to: Audience::Connection(_),
+                    ..
+                }) => Some(text.clone()),
                 _ => None,
             })
             .collect();

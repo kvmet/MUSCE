@@ -37,7 +37,10 @@ pub fn resolve(world: &World, actor: EntityId, scope: Scope, query: &str) -> Opt
 fn matches_name(world: &World, entity: EntityId, needle: &str) -> bool {
     world
         .entity(entity)
-        .and_then(|er| er.get::<&Description>().map(|d| d.0.to_lowercase().contains(needle)))
+        .and_then(|er| {
+            er.get::<&Description>()
+                .map(|d| d.0.to_lowercase().contains(needle))
+        })
         .unwrap_or(false)
 }
 
@@ -60,8 +63,24 @@ mod tests {
 
     fn world_with_actor() -> (World, EntityId, EntityId) {
         let mut w = World::new();
-        let room = spawn(&mut w, described(|b| { b.add(Room); }, "a hall"));
-        let actor = spawn(&mut w, described(|b| { b.add(Player); }, "an adventurer"));
+        let room = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Room);
+                },
+                "a hall",
+            ),
+        );
+        let actor = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Player);
+                },
+                "an adventurer",
+            ),
+        );
         w.move_entity(actor, room).unwrap();
         (w, room, actor)
     }
@@ -69,7 +88,15 @@ mod tests {
     #[test]
     fn finds_item_in_room() {
         let (mut w, room, actor) = world_with_actor();
-        let key = spawn(&mut w, described(|b| { b.add(Item); }, "a brass key"));
+        let key = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Item);
+                },
+                "a brass key",
+            ),
+        );
         w.move_entity(key, room).unwrap();
 
         assert_eq!(resolve(&w, actor, Scope::Room, "brass"), Some(key));
@@ -79,7 +106,15 @@ mod tests {
     #[test]
     fn finds_item_in_inventory() {
         let (mut w, _room, actor) = world_with_actor();
-        let coin = spawn(&mut w, described(|b| { b.add(Item); }, "a gold coin"));
+        let coin = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Item);
+                },
+                "a gold coin",
+            ),
+        );
         w.move_entity(coin, actor).unwrap();
 
         assert_eq!(resolve(&w, actor, Scope::Inventory, "coin"), Some(coin));

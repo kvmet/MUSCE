@@ -58,7 +58,8 @@ impl World {
             // The DB primary key and the entity's own Id component must agree;
             // a mismatch means a corrupt or wrongly-keyed blob.
             debug_assert_eq!(
-                self.entity(blob.id).and_then(|er| er.get::<&Id>().map(|i| i.0)),
+                self.entity(blob.id)
+                    .and_then(|er| er.get::<&Id>().map(|i| i.0)),
                 Some(blob.id),
                 "blob.id {:?} disagrees with its Id component",
                 blob.id,

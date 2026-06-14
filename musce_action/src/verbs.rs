@@ -30,12 +30,18 @@ impl<'a> Ctx<'a> {
         conn: musce_proto::ConnectionId,
         out: &'a mut Vec<Outbound>,
     ) -> Self {
-        Ctx { world, actor, conn, out }
+        Ctx {
+            world,
+            actor,
+            conn,
+            out,
+        }
     }
 
     /// First-person output, straight to the acting connection.
     fn emit_self(&mut self, kind: EventKind, text: impl Into<String>) {
-        self.out.push(Outbound::new(Event::to_connection(self.conn, kind, text)));
+        self.out
+            .push(Outbound::new(Event::to_connection(self.conn, kind, text)));
     }
 
     /// Plain feedback to the acting connection. The dispatcher uses this for
@@ -47,8 +53,10 @@ impl<'a> Ctx<'a> {
     /// Third-person output to everyone in `room` except the actor, so the actor
     /// does not see both their own first-person line and the room's view of it.
     fn emit_room_except_self(&mut self, room: EntityId, kind: EventKind, text: impl Into<String>) {
-        self.out
-            .push(Outbound::excluding(Event::to_room(room, kind, text), self.conn));
+        self.out.push(Outbound::excluding(
+            Event::to_room(room, kind, text),
+            self.conn,
+        ));
     }
 }
 
@@ -82,11 +90,24 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
     let who = display_name(ctx.world, ctx.actor);
     // Departure narration to the room being left. Resolved after the move
     // commits, so the actor (now elsewhere) is naturally not among its hearers.
-    ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} leaves {direction}."));
+    ctx.emit_room_except_self(
+        room,
+        EventKind::Narration,
+        format!("{who} leaves {direction}."),
+    );
 
     // Moving a being into a room cannot close a containment cycle, so this is
     // infallible in practice; the guard is a structural backstop, not a rule.
-    if execute(ctx.world, Action::Move { entity: ctx.actor, into: dest }, &mut |_| {}).is_err() {
+    if execute(
+        ctx.world,
+        Action::Move {
+            entity: ctx.actor,
+            into: dest,
+        },
+        &mut |_| {},
+    )
+    .is_err()
+    {
         ctx.emit_self(EventKind::Feedback, "Something blocks the way.");
         return;
     }
@@ -119,7 +140,16 @@ pub fn take(ctx: &mut Ctx, args: &str) {
     // The one structural way this fails is taking a container the actor stands
     // inside (a containment cycle); the executor rejects it and "you can't take
     // that" is the right thing for the player to hear.
-    if execute(ctx.world, Action::Move { entity: target, into: ctx.actor }, &mut |_| {}).is_err() {
+    if execute(
+        ctx.world,
+        Action::Move {
+            entity: target,
+            into: ctx.actor,
+        },
+        &mut |_| {},
+    )
+    .is_err()
+    {
         ctx.emit_self(EventKind::Feedback, "You can't take that.");
         return;
     }
@@ -149,7 +179,16 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
     let who = display_name(ctx.world, ctx.actor);
 
     // Dropping a held item into its enclosing room cannot cycle; backstop only.
-    if execute(ctx.world, Action::Move { entity: target, into: room }, &mut |_| {}).is_err() {
+    if execute(
+        ctx.world,
+        Action::Move {
+            entity: target,
+            into: room,
+        },
+        &mut |_| {},
+    )
+    .is_err()
+    {
         ctx.emit_self(EventKind::Feedback, "You can't drop that.");
         return;
     }
@@ -186,7 +225,10 @@ pub(crate) fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     let mut s = description_or(world, room, "An indistinct space.");
 
     s.push_str("\nExits: ");
-    match world.entity(room).and_then(|er| er.get::<&Exits>().map(|e| e.0.clone())) {
+    match world
+        .entity(room)
+        .and_then(|er| er.get::<&Exits>().map(|e| e.0.clone()))
+    {
         Some(exits) if !exits.is_empty() => {
             let dirs: Vec<&str> = exits.iter().map(|e| e.direction.as_str()).collect();
             s.push_str(&dirs.join(", "));
@@ -219,7 +261,11 @@ fn find_exit(world: &World, room: EntityId, query: &str) -> Option<(String, Enti
     exits
         .iter()
         .find(|e| e.direction.eq_ignore_ascii_case(&q))
-        .or_else(|| exits.iter().find(|e| e.direction.to_lowercase().starts_with(&q)))
+        .or_else(|| {
+            exits
+                .iter()
+                .find(|e| e.direction.to_lowercase().starts_with(&q))
+        })
         .map(|e| (e.direction.clone(), e.to))
 }
 
@@ -232,7 +278,10 @@ fn is_takeable(world: &World, entity: EntityId) -> bool {
 }
 
 fn description(world: &World, entity: EntityId) -> Option<String> {
-    world.entity(entity)?.get::<&Description>().map(|d| d.0.clone())
+    world
+        .entity(entity)?
+        .get::<&Description>()
+        .map(|d| d.0.clone())
 }
 
 fn description_or(world: &World, entity: EntityId, fallback: &str) -> String {
@@ -265,18 +314,36 @@ mod tests {
     fn fixture() -> Fixture {
         let mut world = World::new();
 
-        let hall = spawn(&mut world, |b| { b.add(Room); b.add(Description("a stone hall".into())); });
-        let garden = spawn(&mut world, |b| { b.add(Room); b.add(Description("a quiet garden".into())); });
+        let hall = spawn(&mut world, |b| {
+            b.add(Room);
+            b.add(Description("a stone hall".into()));
+        });
+        let garden = spawn(&mut world, |b| {
+            b.add(Room);
+            b.add(Description("a quiet garden".into()));
+        });
         link(&mut world, hall, garden, "north");
         link(&mut world, garden, hall, "south");
 
-        let actor = spawn(&mut world, |b| { b.add(Player); b.add(Description("a brave adventurer".into())); });
+        let actor = spawn(&mut world, |b| {
+            b.add(Player);
+            b.add(Description("a brave adventurer".into()));
+        });
         world.move_entity(actor, hall).unwrap();
 
-        let key = spawn(&mut world, |b| { b.add(Item); b.add(Description("a brass key".into())); });
+        let key = spawn(&mut world, |b| {
+            b.add(Item);
+            b.add(Description("a brass key".into()));
+        });
         world.move_entity(key, garden).unwrap();
 
-        Fixture { world, actor, hall, garden, key }
+        Fixture {
+            world,
+            actor,
+            hall,
+            garden,
+            key,
+        }
     }
 
     fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
@@ -291,7 +358,10 @@ mod tests {
             .and_then(|er| er.get::<&Exits>().map(|e| e.0.clone()))
             .unwrap_or_default();
         let mut exits = existing;
-        exits.push(Exit { direction: dir.into(), to });
+        exits.push(Exit {
+            direction: dir.into(),
+            to,
+        });
         let e = w.index().get(from).unwrap();
         w.ecs.insert_one(e, Exits(exits)).unwrap();
     }
@@ -341,8 +411,16 @@ mod tests {
         assert_eq!(f.world.container_of(f.key), Some(f.actor));
 
         // Both channels fired: first-person feedback and third-person room narration.
-        assert!(self_feedback(&out).iter().any(|t| t.contains("You take a brass key")));
-        assert!(room_narration(&out).iter().any(|t| t.contains("takes a brass key")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("You take a brass key"))
+        );
+        assert!(
+            room_narration(&out)
+                .iter()
+                .any(|t| t.contains("takes a brass key"))
+        );
     }
 
     #[test]
@@ -352,7 +430,11 @@ mod tests {
         let out = run(&mut f.world, f.actor, |c| take(c, "key"));
 
         assert_eq!(f.world.container_of(f.key), Some(f.garden)); // unmoved
-        assert!(self_feedback(&out).iter().any(|t| t.contains("don't see that here")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("don't see that here"))
+        );
         assert!(room_narration(&out).is_empty());
     }
 
@@ -363,7 +445,11 @@ mod tests {
 
         assert_eq!(f.world.enclosing_room(f.actor), Some(f.garden));
         // The auto-look on arrival shows the destination.
-        assert!(self_feedback(&out).iter().any(|t| t.contains("a quiet garden")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("a quiet garden"))
+        );
     }
 
     #[test]
@@ -372,7 +458,11 @@ mod tests {
         let out = run(&mut f.world, f.actor, |c| go(c, "west"));
 
         assert_eq!(f.world.enclosing_room(f.actor), Some(f.hall)); // didn't move
-        assert!(self_feedback(&out).iter().any(|t| t.contains("can't go that way")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("can't go that way"))
+        );
     }
 
     #[test]
@@ -383,8 +473,16 @@ mod tests {
         let out = run(&mut f.world, f.actor, |c| drop(c, "key"));
 
         assert_eq!(f.world.container_of(f.key), Some(f.hall));
-        assert!(self_feedback(&out).iter().any(|t| t.contains("You drop a brass key")));
-        assert!(room_narration(&out).iter().any(|t| t.contains("drops a brass key")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("You drop a brass key"))
+        );
+        assert!(
+            room_narration(&out)
+                .iter()
+                .any(|t| t.contains("drops a brass key"))
+        );
     }
 
     #[test]
@@ -394,7 +492,15 @@ mod tests {
         let out = run(&mut f.world, f.actor, |c| say(c, "hello"));
 
         assert_eq!(f.world.enclosing_room(f.actor), before);
-        assert!(self_feedback(&out).iter().any(|t| t.contains("You say, \"hello\"")));
-        assert!(room_narration(&out).iter().any(|t| t.contains("says, \"hello\"")));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("You say, \"hello\""))
+        );
+        assert!(
+            room_narration(&out)
+                .iter()
+                .any(|t| t.contains("says, \"hello\""))
+        );
     }
 }

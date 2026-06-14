@@ -23,11 +23,9 @@ async fn line_in_event_out() {
     // crossbeam recv is blocking; bounce it off a blocking task so the runtime
     // stays free.
     let recv = |rx: crossbeam_channel::Receiver<Command>| async move {
-        tokio::task::spawn_blocking(move || {
-            (rx.recv_timeout(Duration::from_secs(2)).unwrap(), rx)
-        })
-        .await
-        .unwrap()
+        tokio::task::spawn_blocking(move || (rx.recv_timeout(Duration::from_secs(2)).unwrap(), rx))
+            .await
+            .unwrap()
     };
 
     let (first, inbox_rx) = recv(inbox_rx).await;
@@ -40,7 +38,11 @@ async fn line_in_event_out() {
 
     // Event out -> rendered line at the client.
     outbox_tx
-        .send(Outgoing::Event(Event::to_connection(id, EventKind::Feedback, "hi there")))
+        .send(Outgoing::Event(Event::to_connection(
+            id,
+            EventKind::Feedback,
+            "hi there",
+        )))
         .unwrap();
 
     let mut reader = BufReader::new(client);
@@ -66,11 +68,9 @@ async fn close_drops_connection() {
     let client = TcpStream::connect(addr).await.unwrap();
 
     let recv = |rx: crossbeam_channel::Receiver<Command>| async move {
-        tokio::task::spawn_blocking(move || {
-            (rx.recv_timeout(Duration::from_secs(2)).unwrap(), rx)
-        })
-        .await
-        .unwrap()
+        tokio::task::spawn_blocking(move || (rx.recv_timeout(Duration::from_secs(2)).unwrap(), rx))
+            .await
+            .unwrap()
     };
 
     let (connected, inbox_rx) = recv(inbox_rx).await;

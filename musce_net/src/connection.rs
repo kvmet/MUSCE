@@ -16,14 +16,18 @@ use musce_proto::{Capabilities, Command, ConnectionId, Event, Input, Outgoing};
 /// The newline framing is the transport's concern (a WebSocket frame is already
 /// a "line"); the layers above only ever see whole lines.
 pub trait LineReader: Send + 'static {
-    fn next_line(&mut self) -> impl std::future::Future<Output = io::Result<Option<String>>> + Send;
+    fn next_line(&mut self)
+    -> impl std::future::Future<Output = io::Result<Option<String>>> + Send;
 }
 
 /// A writer half: renders are done above; this just puts bytes on the wire.
 /// Transport-specific framing (WebSocket envelopes, telnet IAC) lives in the
 /// impl, below this method.
 pub trait LineWriter: Send + 'static {
-    fn write_line(&mut self, line: &str) -> impl std::future::Future<Output = io::Result<()>> + Send;
+    fn write_line(
+        &mut self,
+        line: &str,
+    ) -> impl std::future::Future<Output = io::Result<()>> + Send;
 }
 
 /// A transport-agnostic established connection. A transport implements this to
@@ -73,7 +77,10 @@ pub async fn serve_connection<C: Connection>(
     let (mut reader, mut writer) = conn.split();
 
     // The sim allocates a session off this; it is the first thing it hears.
-    let _ = inbox.send(Command { connection: id, input: Input::Connected { caps, peer } });
+    let _ = inbox.send(Command {
+        connection: id,
+        input: Input::Connected { caps, peer },
+    });
 
     loop {
         tokio::select! {
@@ -102,7 +109,10 @@ pub async fn serve_connection<C: Connection>(
     }
 
     registry.lock().unwrap().remove(&id);
-    let _ = inbox.send(Command { connection: id, input: Input::Disconnected });
+    let _ = inbox.send(Command {
+        connection: id,
+        input: Input::Disconnected,
+    });
 }
 
 /// Drain the sim's outbox and fan each message into the right connection mailbox.

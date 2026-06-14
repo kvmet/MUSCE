@@ -54,7 +54,11 @@ impl Connection for TcpConnection {
     fn capabilities(&self) -> Capabilities {
         // A raw TCP client is line-only and of unknown color/size. SSH and
         // WebSocket will report richer capabilities.
-        Capabilities { color: false, line_mode_only: true, size: None }
+        Capabilities {
+            color: false,
+            line_mode_only: true,
+            size: None,
+        }
     }
 
     fn split(self) -> (Self::Reader, Self::Writer) {

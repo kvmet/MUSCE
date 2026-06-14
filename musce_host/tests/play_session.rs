@@ -24,7 +24,10 @@ async fn free_port() -> std::net::SocketAddr {
 
 /// Write one command line (newline-terminated) and flush it.
 async fn send(writer: &mut OwnedWriteHalf, line: &str) {
-    writer.write_all(format!("{line}\n").as_bytes()).await.unwrap();
+    writer
+        .write_all(format!("{line}\n").as_bytes())
+        .await
+        .unwrap();
     writer.flush().await.unwrap();
 }
 
@@ -37,10 +40,10 @@ async fn read_burst(reader: &mut OwnedReadHalf) -> String {
     let mut chunk = [0u8; 2048];
     loop {
         match tokio::time::timeout(Duration::from_millis(300), reader.read(&mut chunk)).await {
-            Ok(Ok(0)) => break,                              // EOF
+            Ok(Ok(0)) => break, // EOF
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
             Ok(Err(_)) => break,
-            Err(_) => break,                                 // gap: burst over
+            Err(_) => break, // gap: burst over
         }
     }
     String::from_utf8_lossy(&buf).into_owned()
@@ -81,24 +84,42 @@ async fn connect_play_look_go_take() {
 
     // Banner on connect.
     let welcome = read_burst(&mut reader).await;
-    assert!(welcome.contains("Welcome to MUSCE"), "welcome banner, got: {welcome:?}");
+    assert!(
+        welcome.contains("Welcome to MUSCE"),
+        "welcome banner, got: {welcome:?}"
+    );
 
     send(&mut writer, "@play").await;
     let played = read_burst(&mut reader).await;
-    assert!(played.contains("You are now"), "@play confirmation, got: {played:?}");
+    assert!(
+        played.contains("You are now"),
+        "@play confirmation, got: {played:?}"
+    );
 
     send(&mut writer, "look").await;
     let looked = read_burst(&mut reader).await;
-    assert!(looked.contains("stone hall"), "look shows the start room, got: {looked:?}");
-    assert!(looked.contains("north"), "look lists the north exit, got: {looked:?}");
+    assert!(
+        looked.contains("stone hall"),
+        "look shows the start room, got: {looked:?}"
+    );
+    assert!(
+        looked.contains("north"),
+        "look lists the north exit, got: {looked:?}"
+    );
 
     send(&mut writer, "go north").await;
     let moved = read_burst(&mut reader).await;
-    assert!(moved.contains("walled garden"), "arrival auto-look shows the garden, got: {moved:?}");
+    assert!(
+        moved.contains("walled garden"),
+        "arrival auto-look shows the garden, got: {moved:?}"
+    );
 
     send(&mut writer, "take key").await;
     let took = read_burst(&mut reader).await;
-    assert!(took.contains("You take a brass key"), "take feedback, got: {took:?}");
+    assert!(
+        took.contains("You take a brass key"),
+        "take feedback, got: {took:?}"
+    );
 
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
