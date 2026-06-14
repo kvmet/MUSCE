@@ -36,3 +36,10 @@ A doc describing unbuilt design carries a `> Status:` blockquote directly under
 its title (e.g. `> Status: not implemented, pending review before
 implementation.`). Keep it honest: it is how a reader tells proposed design from
 shipped reality.
+
+## Formatting
+
+The codebase is `cargo fmt` clean. Run `cargo fmt` before committing, and format
+only the files your change touches (not a workspace-wide sweep that churns
+unrelated code). The enforcing gate is `cargo fmt --check` in CI once CI exists;
+until then this convention is the gate.
