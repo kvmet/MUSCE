@@ -41,8 +41,8 @@ These hold across every subsystem:
   why there is no auto-scheduler.
 - [actions.md](actions.md) — the `Action` vocabulary as the single mutation path,
   the structural-only executor, command dispatch as a registry, and where rules
-  and perception live. *(First slice built: `Move` executor, the core verbs, stub
-  `@play`, sim-side audience resolution; admin verbs deferred.)*
+  and perception live. *(Structural vocabulary built: the full `Action` set, the
+  core verbs, stub `@play`, sim-side audience resolution; admin verbs deferred.)*
 - [sequences.md](sequences.md) — timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Proposed; not
   implemented.)*
@@ -68,16 +68,18 @@ Built:
 - `musce_proto`: the shared command/event vocabulary (`Command`, `Event`,
   `Audience`, `EventKind`, `ConnectionId`, `Capabilities`), depended on by net,
   action, and host so the action layer never touches the transport.
-- `musce_action`: the structural executor (`Action::Move`), the verb dispatch
-  table (`look`, `go`/bare direction, `take`, `drop`, `say`), the stub `@play`
-  actor binding, the sim-side audience resolver, and the code-seeded starter
-  world. Wired into `musce_host`'s dispatcher as the embodiment frame.
+- `musce_action`: the structural executor (the full `Action` set:
+  `Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`, returning the
+  action's subject), the verb dispatch table (`look`, `go`/bare direction,
+  `take`, `drop`, `say`), the stub `@play` actor binding, the sim-side audience
+  resolver, and the code-seeded starter world. Wired into `musce_host`'s
+  dispatcher as the embodiment frame.
 
 Deferred (with seams in place where noted):
 
-- Game logic: the rest of the action layer (`Create`/`Destroy`/`SetComponent` and
-  the admin verbs), then systems on the phase pipeline (designed in actions.md and
-  sequences.md). The next slice.
+- Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
+  `@summon`/`@set`) that ride the now-built structural action set, then systems on
+  the phase pipeline (designed in actions.md and sequences.md). The next slice.
 - Networking: WebSocket/SSH transports, real accounts/auth, embodiment, and modal
   overlays (designed in networking-and-sessions.md). Raw TCP and the session floor
   are built.

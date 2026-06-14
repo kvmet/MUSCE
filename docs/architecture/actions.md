@@ -1,12 +1,13 @@
 # Actions and the Executor
 
-> Status: **first slice built.** The structural executor (`Action::Move` +
+> Status: **structural vocabulary built.** The full structural executor
+> (`Action::Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the verb dispatch table, the verbs `look`, `go`/bare
 > direction, `take`, `drop`, and `say`, the stub `@play` actor binding, the
 > sim-side audience resolver, and the code-seeded starter world are implemented
 > in `musce_proto` (shared vocabulary) and `musce_action`, and wired into
-> `musce_host`. `Create`/`Destroy`/`SetComponent` and the admin verbs remain
-> proposed; the rest of this document records that design.
+> `musce_host`. The admin verbs that ride the new primitives remain proposed; the
+> rest of this document records that design.
 
 ## Action is the only thing that mutates the world
 
@@ -279,16 +280,17 @@ actor excluded), and the audience resolver expands `Room`/`Entity` into the
 connections that should see it before anything reaches net. Net is left a pure
 `Connection` pipe.
 
-The next increment is engine-only: it completes the structural action vocabulary
-(`Create`/`Destroy`/`SetComponent`/`RemoveComponent`) and the one reflection
-operation it needs, recorded under "Completing the structural vocabulary" below.
-The admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/`@summon`/`@set`) that
-ride those primitives are game/dispatch surface and come after.
+The structural action vocabulary (`Create`/`Destroy`/`SetComponent`/
+`RemoveComponent`) and the one reflection operation it needs are built, recorded
+under "Completing the structural vocabulary" below. The admin verbs
+(`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/`@summon`/`@set`) that ride those
+primitives are game/dispatch surface and come next.
 
 ## Completing the structural vocabulary
 
-> Status: **agreed; not yet built.** The next slice, and engine-only: no verbs,
-> no dispatch or permission changes.
+> Status: **built.** Engine-only: the structural action set and the reflection
+> operation it needs exist in `musce_core` and `musce_action`. The admin verbs
+> that ride these primitives remain deferred.
 
 `Action` grows from `Move` to the full bucket-1 set, the typed reflection of the
 `World` mutators: `Create { components }`, `Destroy { entity }`,

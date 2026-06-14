@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use serde_json::Value;
+
 use crate::component::{
     ComponentRegistry, Container, Creature, Description, Exits, Id, Item, NamedComponent, Player,
-    Room,
+    RegistryError, Room,
 };
 use crate::containment::Containment;
 use crate::id::{EntityId, EntityIndex};
@@ -73,6 +75,9 @@ impl World {
     pub fn register_relation<R: Relation>(&mut self) {
         // The forward link is a persisted component; the reverse list is not.
         self.register_component::<RelTarget<R>>();
+        // The live mutation paths must refuse forward-link tags; they bypass the
+        // cycle check and reverse-index bookkeeping that `relate` owns.
+        self.components.mark_relation_tag(R::TARGET_TAG);
         self.relations.despawn.push(despawn_relation::<R>);
         self.relations.rebuild.push(rebuild_relation::<R>);
     }
@@ -128,6 +133,72 @@ impl World {
 
     pub fn entity(&self, id: EntityId) -> Option<hecs::EntityRef<'_>> {
         self.ecs.entity(self.index.get(id)?).ok()
+    }
+
+    // --- type-erased component mutation (the reflection layer) -----------
+    //
+    // These mirror how `move_entity` wraps `relate`: the work needs the private
+    // registry and ecs, so it lives here. They are the live counterparts of the
+    // load path's `deserialize_into`, which is exempt from the relation guard
+    // because `rebuild_relations` runs after it; these have no rebuild pass.
+
+    /// Build a root entity from a tag->value blob and spawn it. Location-less: it
+    /// never places the entity (placement is a separate `Move`). Refuses any
+    /// relation forward-link tag in the blob, which would need `Move`/`Relate`.
+    pub fn create(&mut self, components: &Value) -> Result<EntityId, MutateError> {
+        let obj = components.as_object().ok_or(RegistryError::NotObject)?;
+        for tag in obj.keys() {
+            if self.components.is_relation_tag(tag) {
+                return Err(MutateError::RelationTag(tag.clone()));
+            }
+        }
+        let mut b = hecs::EntityBuilder::new();
+        self.components.deserialize_into(components, &mut b)?;
+        Ok(self.spawn(b))
+    }
+
+    /// Deserialize one component from `value` and overwrite it on a live entity.
+    /// Refuses relation forward-link tags (use `Move`/`Relate`) and the identity
+    /// tag (`Id` must track the `EntityIndex`).
+    pub fn set_component(
+        &mut self,
+        id: EntityId,
+        tag: &str,
+        value: Value,
+    ) -> Result<(), MutateError> {
+        let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
+        self.guard_tag(tag)?;
+        self.components
+            .insert_component(&mut self.ecs, e, tag, value)?;
+        Ok(())
+    }
+
+    /// Remove one component by tag from a live entity. Same guards as
+    /// `set_component`.
+    pub fn remove_component(&mut self, id: EntityId, tag: &str) -> Result<(), MutateError> {
+        let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
+        self.guard_tag(tag)?;
+        self.components.remove_component(&mut self.ecs, e, tag)?;
+        Ok(())
+    }
+
+    /// Serialize just one named component back to JSON; `None` if absent. The read
+    /// half of merge-patch; the engine implements neither the merge nor the verb.
+    pub fn component_value(&self, id: EntityId, tag: &str) -> Option<Value> {
+        let er = self.entity(id)?;
+        self.components.component_value(er, tag).ok().flatten()
+    }
+
+    /// Reject the identity tag and relation forward-link tags on the live
+    /// set/remove paths.
+    fn guard_tag(&self, tag: &str) -> Result<(), MutateError> {
+        if tag == Id::TAG {
+            return Err(MutateError::IdentityTag(tag.to_string()));
+        }
+        if self.components.is_relation_tag(tag) {
+            return Err(MutateError::RelationTag(tag.to_string()));
+        }
+        Ok(())
     }
 
     // --- generic relation ops -------------------------------------------
@@ -289,6 +360,24 @@ impl World {
             h(self);
         }
     }
+}
+
+/// A structural failure from the type-erased mutation paths (`create`,
+/// `set_component`, `remove_component`). Thin: it wraps the registry's existing
+/// failures and adds the two guards these paths enforce.
+#[derive(Debug, thiserror::Error)]
+pub enum MutateError {
+    #[error("no such entity: {0:?}")]
+    NoSuchEntity(EntityId),
+    /// A relation forward-link tag was passed to a live mutation path; it must go
+    /// through `Move`/`Relate` so the cycle check and reverse index stay correct.
+    #[error("relation tag {0} cannot be set directly; use Move/Relate")]
+    RelationTag(String),
+    /// The identity tag was passed to `set`/`remove`; `Id` must track the index.
+    #[error("the identity tag {0} cannot be mutated")]
+    IdentityTag(String),
+    #[error(transparent)]
+    Registry(#[from] RegistryError),
 }
 
 // --- per-relation handlers (monomorphized into fn pointers) --------------

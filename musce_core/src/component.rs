@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -62,6 +62,9 @@ marker!(Player, "player");
 
 type SerFn = for<'a> fn(hecs::EntityRef<'a>, &mut Map<String, Value>);
 type DeserFn = fn(&mut hecs::EntityBuilder, Value) -> Result<(), serde_json::Error>;
+type InsertFn = fn(&mut hecs::World, hecs::Entity, Value) -> Result<(), serde_json::Error>;
+type RemoveFn = fn(&mut hecs::World, hecs::Entity);
+type GetFn = for<'a> fn(hecs::EntityRef<'a>) -> Option<Value>;
 
 fn ser_one<C: NamedComponent>(er: hecs::EntityRef, map: &mut Map<String, Value>) {
     if let Some(c) = er.get::<&C>() {
@@ -81,6 +84,28 @@ fn deser_one<C: NamedComponent>(
     Ok(())
 }
 
+/// Deserialize one component and overwrite it on a live entity.
+fn insert_one<C: NamedComponent>(
+    ecs: &mut hecs::World,
+    e: hecs::Entity,
+    v: Value,
+) -> Result<(), serde_json::Error> {
+    let c: C = serde_json::from_value(v)?;
+    let _ = ecs.insert_one(e, c);
+    Ok(())
+}
+
+/// Remove one component from a live entity (no-op if absent).
+fn remove_one<C: NamedComponent>(ecs: &mut hecs::World, e: hecs::Entity) {
+    let _ = ecs.remove_one::<C>(e);
+}
+
+/// Serialize just one named component back to JSON; `None` if absent.
+fn get_one<C: NamedComponent>(er: hecs::EntityRef) -> Option<Value> {
+    er.get::<&C>()
+        .map(|c| serde_json::to_value(&*c).expect("component serialization is infallible"))
+}
+
 /// Drives per-entity JSON (de)serialization from a set of registered component
 /// types. Only registered types are written; everything else is invisible to
 /// persistence.
@@ -88,12 +113,74 @@ fn deser_one<C: NamedComponent>(
 pub struct ComponentRegistry {
     sers: Vec<SerFn>,
     desers: HashMap<&'static str, DeserFn>,
+    inserts: HashMap<&'static str, InsertFn>,
+    removes: HashMap<&'static str, RemoveFn>,
+    gets: HashMap<&'static str, GetFn>,
+    relation_tags: HashSet<&'static str>,
 }
 
 impl ComponentRegistry {
     pub fn register<C: NamedComponent>(&mut self) {
         self.sers.push(ser_one::<C>);
         self.desers.insert(C::TAG, deser_one::<C>);
+        self.inserts.insert(C::TAG, insert_one::<C>);
+        self.removes.insert(C::TAG, remove_one::<C>);
+        self.gets.insert(C::TAG, get_one::<C>);
+    }
+
+    /// Mark a tag as a relation forward-link. The live mutation paths refuse it,
+    /// routing the caller to `Move`/`Relate`. Populated by `register_relation`.
+    pub fn mark_relation_tag(&mut self, tag: &'static str) {
+        self.relation_tags.insert(tag);
+    }
+
+    pub fn is_relation_tag(&self, tag: &str) -> bool {
+        self.relation_tags.contains(tag)
+    }
+
+    /// Deserialize one component from `v` and overwrite it on a live entity.
+    pub fn insert_component(
+        &self,
+        ecs: &mut hecs::World,
+        e: hecs::Entity,
+        tag: &str,
+        v: Value,
+    ) -> Result<(), RegistryError> {
+        let f = self
+            .inserts
+            .get(tag)
+            .ok_or_else(|| RegistryError::UnknownComponent(tag.to_string()))?;
+        f(ecs, e, v)?;
+        Ok(())
+    }
+
+    /// Remove one component by tag from a live entity.
+    pub fn remove_component(
+        &self,
+        ecs: &mut hecs::World,
+        e: hecs::Entity,
+        tag: &str,
+    ) -> Result<(), RegistryError> {
+        let f = self
+            .removes
+            .get(tag)
+            .ok_or_else(|| RegistryError::UnknownComponent(tag.to_string()))?;
+        f(ecs, e);
+        Ok(())
+    }
+
+    /// Serialize just one named component back to JSON; `None` if absent on the
+    /// entity. Errors only when the tag is not registered.
+    pub fn component_value(
+        &self,
+        er: hecs::EntityRef,
+        tag: &str,
+    ) -> Result<Option<Value>, RegistryError> {
+        let f = self
+            .gets
+            .get(tag)
+            .ok_or_else(|| RegistryError::UnknownComponent(tag.to_string()))?;
+        Ok(f(er))
     }
 
     pub fn serialize_entity(&self, er: hecs::EntityRef) -> Value {
