@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::component::{
     ComponentRegistry, Container, Creature, Description, Exits, Id, Item, NamedComponent, Player,
     Room,
@@ -24,7 +26,9 @@ pub struct World {
     next_id: u64,
     relations: RelationRegistry,
     components: ComponentRegistry,
-    /// EntityIds despawned since the last snapshot, for the persistence delete set.
+    /// EntityIds despawned but not yet confirmed durably deleted. A snapshot
+    /// copies (does not drain) this; it clears only once persistence acks via
+    /// `confirm_saved`, so a failed save can't lose a pending delete.
     despawned: Vec<EntityId>,
 }
 
@@ -232,6 +236,14 @@ impl World {
         let _ = self.ecs.insert_one(te, RelSources::<R>::new(vec![source]));
     }
 
+    /// Overwrite a target's reverse list wholesale. Used by relation rebuild,
+    /// where sources are unique by construction (no dedup needed).
+    pub(crate) fn set_sources<R: Relation>(&mut self, target: EntityId, sources: Vec<EntityId>) {
+        if let Some(te) = self.index.get(target) {
+            let _ = self.ecs.insert_one(te, RelSources::<R>::new(sources));
+        }
+    }
+
     fn remove_source<R: Relation>(&mut self, target: EntityId, source: EntityId) {
         if let Some(te) = self.index.get(target)
             && let Ok(mut s) = self.ecs.get::<&mut RelSources<R>>(te)
@@ -246,8 +258,20 @@ impl World {
         &self.components
     }
 
-    pub(crate) fn take_despawned(&mut self) -> Vec<EntityId> {
-        std::mem::take(&mut self.despawned)
+    /// Pending deletes to include in a snapshot. Does not clear them; see
+    /// `confirm_saved`.
+    pub(crate) fn pending_deletes(&self) -> Vec<EntityId> {
+        self.despawned.clone()
+    }
+
+    /// Drop the given deletes from the pending set once they're durably saved.
+    /// Deletes accumulated since the snapshot are preserved.
+    pub fn confirm_saved(&mut self, saved: &[EntityId]) {
+        if saved.is_empty() {
+            return;
+        }
+        let set: HashSet<EntityId> = saved.iter().copied().collect();
+        self.despawned.retain(|id| !set.contains(id));
     }
 
     pub(crate) fn set_next_id(&mut self, next_id: u64) {
@@ -305,13 +329,16 @@ fn despawn_relation<R: Relation>(world: &mut World, id: EntityId) {
 }
 
 fn rebuild_relation<R: Relation>(world: &mut World) {
-    let pairs: Vec<(EntityId, EntityId)> = world
-        .ecs
-        .query::<(&Id, &RelTarget<R>)>()
-        .iter()
-        .map(|(id, t)| (id.0, t.0))
-        .collect();
-    for (s, t) in pairs {
-        world.add_source::<R>(t, s);
+    // Group sources by target, then write each list once. O(n) overall: a
+    // source has exactly one RelTarget, so it appears exactly once.
+    let mut by_target: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+    {
+        let mut q = world.ecs.query::<(&Id, &RelTarget<R>)>();
+        for (id, t) in q.iter() {
+            by_target.entry(t.0).or_default().push(id.0);
+        }
+    }
+    for (target, sources) in by_target {
+        world.set_sources::<R>(target, sources);
     }
 }

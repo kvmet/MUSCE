@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::component::RegistryError;
+use crate::component::{Id, RegistryError};
 use crate::id::EntityId;
 use crate::world::World;
 
@@ -26,8 +26,6 @@ impl World {
     /// Serialize every live entity. Forward relation links are included; reverse
     /// lists and the index are derived and omitted.
     pub fn snapshot(&mut self) -> Snapshot {
-        use crate::component::Id;
-
         let entities_h: Vec<hecs::Entity> = self.ecs.query::<hecs::Entity>().iter().collect();
 
         let mut entities = Vec::with_capacity(entities_h.len());
@@ -44,7 +42,7 @@ impl World {
 
         Snapshot {
             entities,
-            deletes: self.take_despawned(),
+            deletes: self.pending_deletes(),
             next_id: self.next_id(),
         }
     }
@@ -57,6 +55,14 @@ impl World {
             let mut b = hecs::EntityBuilder::new();
             self.components().deserialize_into(&blob.data, &mut b)?;
             self.insert_loaded(blob.id, b.build());
+            // The DB primary key and the entity's own Id component must agree;
+            // a mismatch means a corrupt or wrongly-keyed blob.
+            debug_assert_eq!(
+                self.entity(blob.id).and_then(|er| er.get::<&Id>().map(|i| i.0)),
+                Some(blob.id),
+                "blob.id {:?} disagrees with its Id component",
+                blob.id,
+            );
         }
         self.set_next_id(next_id);
         self.rebuild_relations();

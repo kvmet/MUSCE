@@ -139,6 +139,37 @@ mod tests {
     }
 
     #[test]
+    fn deletes_persist_until_confirmed() {
+        let mut w = World::new();
+        let a = item(&mut w, "a");
+        w.despawn(a);
+
+        // Snapshot copies the delete but does not drop it.
+        let s1 = w.snapshot();
+        assert_eq!(s1.deletes, vec![a]);
+
+        // A second snapshot (e.g. after the first save failed) still has it.
+        assert_eq!(w.snapshot().deletes, vec![a]);
+
+        // Only an explicit confirm clears it.
+        w.confirm_saved(&s1.deletes);
+        assert!(w.snapshot().deletes.is_empty());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "disagrees with its Id component")]
+    fn load_rejects_mismatched_id() {
+        let mut w = World::new();
+        let _ = item(&mut w, "x");
+        let mut snap = w.snapshot();
+        snap.entities[0].id = EntityId(99_999); // disagree with the Id in data
+
+        let mut w2 = World::new();
+        let _ = w2.load(&snap.entities, snap.next_id);
+    }
+
+    #[test]
     fn snapshot_roundtrip() {
         let mut w = World::new();
         let hall = room(&mut w, "hall");
