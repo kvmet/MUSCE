@@ -116,11 +116,9 @@ impl Sessions {
                 );
             }
             "help" => {
-                feedback(
-                    id,
-                    "Commands: @play, @quit, @who, @help. In-world: look, go <dir>, take, drop, say.",
-                    emit,
-                );
+                // The floor documents only its own account commands; in-game
+                // verbs are the game's surface, not the engine's to enumerate.
+                feedback(id, "Commands: @play, @quit, @who, @help.", emit);
             }
             "play" => self.play(id, world, choose_actor, emit),
             other => {
@@ -146,11 +144,7 @@ impl Sessions {
                 self.attach(id, actor);
                 let name =
                     musce_action::actor_name(world, actor).unwrap_or_else(|| "someone".into());
-                feedback(
-                    id,
-                    &format!("You are now {name}. Type 'look' to see where you are."),
-                    emit,
-                );
+                feedback(id, &format!("You are now {name}."), emit);
             }
             None => feedback(id, "There is no character to play yet.", emit),
         }

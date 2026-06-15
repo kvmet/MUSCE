@@ -29,6 +29,7 @@ pub fn commands() -> CommandTable {
     t.register("take", Gate::Open, take);
     t.register("drop", Gate::Open, drop);
     t.register("say", Gate::Open, say);
+    t.register("help", Gate::Open, help);
     t
 }
 
@@ -184,6 +185,16 @@ pub fn say(ctx: &mut Ctx, args: &str) {
     let who = display_name(ctx.world, ctx.actor);
     ctx.emit_self(EventKind::Feedback, format!("You say, \"{msg}\""));
     ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} says, \"{msg}\""));
+}
+
+/// `help`: list the in-world verbs. This is the game's surface, so the game
+/// documents it; the engine floor's `@help` covers only the account commands.
+pub fn help(ctx: &mut Ctx, _args: &str) {
+    ctx.emit_self(
+        EventKind::Feedback,
+        "You can: look, go <direction> (or just a direction), take <item>, \
+         drop <item>, say <message>, help.",
+    );
 }
 
 // --- shared helpers ------------------------------------------------------
@@ -456,6 +467,17 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("drops a brass key"))
         );
+    }
+
+    #[test]
+    fn help_lists_in_world_verbs() {
+        let mut f = fixture();
+        let out = run(&mut f.world, f.actor, |c| help(c, ""));
+
+        let text = &self_feedback(&out)[0];
+        assert!(text.contains("look"));
+        assert!(text.contains("say"));
+        assert!(room_narration(&out).is_empty()); // pure feedback, no broadcast
     }
 
     #[test]

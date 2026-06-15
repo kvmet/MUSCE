@@ -6,8 +6,9 @@
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
 > its emit API, and the sim-side audience resolver (`musce_action`), plus the
 > shared vocabulary (`musce_proto`). The game content (the verbs `look`, `go`/bare
-> direction, `take`, `drop`, `say`, name resolution, the seed world, the takeable
-> rule, and the `@play` actor policy) lives in the reference game `musce_ref`,
+> direction, `take`, `drop`, `say`, `help`, name resolution, the seed world, the
+> takeable rule, and the `@play` actor policy) lives in the reference game
+> `musce_ref`,
 > which builds the `Game` the runtime is parameterized over (see
 > [engine-and-game.md](engine-and-game.md)). The admin verbs that ride the new
 > primitives remain proposed; the rest of this document records that design.
@@ -270,10 +271,11 @@ minimal:
 
 - `Action::Move { entity, into }` only, with `execute` and `ExecError`. `execute`
   carries a structural-event sink for reactions; `Move` emits nothing into it yet.
-- Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, and `say` (Room-
-  addressed, no mutation), in a `CommandTable` looked up by exact name then first
-  registered prefix (movement registered before `say`, so `s` is south and `sa`
-  is say). The account floor's `@quit`/`@who`/`@help` stay.
+- Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, `say`, and `help`
+  (the game documents its own in-world surface), in a `CommandTable` looked up by
+  exact name then first registered prefix (movement registered before `say`, so
+  `s` is south and `sa` is say). The account floor's `@quit`/`@who`/`@help` stay,
+  and `@help` lists only those account commands, not the game's verbs.
 - `@play` records a connection's actor `EntityId` as a session attachment on the
   floor (session state), so bare commands have an actor; the audience resolver
   reads a conn->actor index derived from those attachments

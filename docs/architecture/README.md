@@ -83,10 +83,10 @@ Built:
   conn->actor audience index (`Actors`, derived from the floor's session
   attachments), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
-  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`, `say`)
-  and their parsing, name resolution, the takeable rule, narration prose, the
-  code-seeded starter world, and the `@play` actor policy; builds the `Game` and
-  has `main` plus the end-to-end test. A real game forks this crate.
+  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`, `say`,
+  `help`) and their parsing, name resolution, the takeable rule, narration prose,
+  the code-seeded starter world, and the `@play` actor policy; builds the `Game`
+  and has `main` plus the end-to-end test. A real game forks this crate.
 
 Deferred (with seams in place where noted):
 
