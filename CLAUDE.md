@@ -43,3 +43,7 @@ The codebase is `cargo fmt` clean. Run `cargo fmt` before committing, and format
 only the files your change touches (not a workspace-wide sweep that churns
 unrelated code). The enforcing gate is `cargo fmt --check` in CI once CI exists;
 until then this convention is the gate.
+
+## Hygiene
+
+- Run `bb bb/hygiene.clj ./` to check file hygiene rules across the whole project before any commit.
