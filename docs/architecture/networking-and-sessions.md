@@ -61,7 +61,11 @@ One sim-side **dispatcher** implements this routing and is the single entry poin
 
 The distinction that matters: embodied control is a *fact about the world*, not UI.
 
-- **Embodiment / possession is world state, persisted.** "C pilots R" is a `Controls` relation (one-to-many: a controlled entity has one controller; cascade is `Detach`, so a controller's death reverts the controlled entity to its own AI rather than destroying or reparenting it). A chain is just relations: C → R → D. A per-controller `Focus(EntityId)` on the world entity marks where you currently are in the chain. Both persist, so a character piloting a robot survives a reboot still piloting it.
+- **Embodiment / possession is world state, persisted**, and it is two separate facts that are easy to conflate:
+  - **`Controls` is the capability wiring**: which entities a character is plugged into and *may* drive. A relation, with **source = the controlled entity** (it has one controller) and **target = the controller** (it has many sources); `ACYCLIC` (chains, never loops); cascade `Detach`, so a controller's death reverts each controlled entity to its own AI rather than destroying or reparenting it. A chain is just edges: character → mech → drone. This is a persistent capability: it holds whether or not you are currently driving any of them.
+  - **`Focus(EntityId)` is the cursor**: which single node in that chain your keystrokes are live on *right now*. One per controller, stored on the character, persisted. Absence of `Focus` means "drive yourself" (the character); a present `Focus` means you are piloting that entity. Lowering `Focus` back to yourself tears down no `Controls` edge, so you step out of the mech and back in without re-establishing control.
+
+  Both persist, so a character piloting a robot survives a reboot still piloting it. The distinction only becomes *visible* with nested control (a cursor needs a chain to walk) or with stepping out of a puppet while keeping the ability to re-enter; in the flat single-puppet case the two look identical, which is why they are worth naming apart before that case arrives.
 - **Modal UI overlay is session state, ephemeral.** Menus, an editor's cursor and undo buffer, the input mode. Even in-game VI splits this way: the *file* is a world entity (persisted), the *editing session* is the overlay (ephemeral).
 
 ### Durability tiers
@@ -81,6 +85,37 @@ The **account is not a world entity.** It is a persisted DB record (auth, owned 
 - In-world control extends from that character via `Controls`.
 - On reboot, char→robot and the character's `Focus` persist; on next login only the cheap session→char attachment is rebuilt, and you resume where you left off.
 
+So there are two roots of two different trees, split exactly on the world / non-world line: the **account** is the root of ownership and session (it owns characters and is not a world entity), and the **character** is the root of the control chain (the `Controls` relation between world entities, with its `Focus`). `@play` is the bridge between them, and a session may hold several control-chain roots (the `p1`/`p2` characters) while the account sits above all of them and never enters the world.
+
+### Resolving a command to an actor
+
+Putting the layers together, a bare command on a connection resolves to the entity it drives by walking from the ephemeral edge down into persisted world state:
+
+```
+connection  →  session  →  character  →  Focus  →  actor
+(ephemeral)    (session,    (session      (world,    (the entity the
+               keyed by     attachment,   persisted)  command acts through)
+               account)     a slot)
+```
+
+1. **connection → session**: the live transport; re-established on every connect.
+2. **session → character**: the `@play` attachment (a slot, `p1` by default). Session state: survives disconnect, rebuilt on login.
+3. **character → `Focus` → actor**: `actor = focus_of(character).unwrap_or(character)`. World state, read live, so a `pilot` command that changes `Focus` redirects subsequent commands at once.
+
+The audience resolver consumes the same mapping in reverse (actor → the connections that perceive it), derived from the session attachments and `Focus`, never stored as its own truth.
+
+**Invalidation when the puppet dies.** Destroying the focused entity commits like any other action; nothing un-commits it. Per the standing rule that reactions respond rather than veto (see [actions.md](actions.md)), the consequence belongs to a *reaction* to that despawn: it resets the now-stale `Focus` back to the character and notifies the player ("your puppet collapses; you are yourself again"). The reset is engine mechanism (keeping world state consistent); the prose is the game's, emitted through the structural-event sink. Because `Focus` only ever targets something in your own `Controls` chain, the despawn of a controlled entity already knows its controller, so the reset rides the same path that cleans up the `Controls` edge; no extra reverse index is needed. The reaction layer this wants is deferred (see [sequences.md](sequences.md)); until it lands the engine despawn path resets `Focus` directly. A resolution-time guard that refuses to hand a verb a dead actor stays as a **defensive backstop only**, and logs if it ever fires, since that means a despawn skipped the reset; it is not the mechanism, and it must not silently paper over the dangling pointer.
+
+### Establishing control: the target design and the first slice
+
+> Status: **the target design below is the canonical end state; the first slice is an intermediate that exercises the primitives without it.** When that slice lands it carries its own `> Status:` marker and the build order says which parts are bootstrap and what replaces them, exactly as the verbs-in-`musce_action` scaffolding did. This intermediate is explicitly *not* the final design.
+
+Creating a `Controls` edge at runtime is itself a command. In the **target design** it is a staff `@possess <target>` / `@release` pair in the account/admin table (the `@`-namespace, the rule-bypassing admin bucket of [actions.md](actions.md)): `@possess` creates the `Controls` edge and sets `Focus`; `@release` lowers `Focus` and, where wanted, drops the edge. A later gameplay possession (you may pilot this *if* you hold the key) is a game verb with a game-supplied gate, the way the takeable rule is game policy.
+
+That admin table does not exist yet (the floor still hardcodes `@quit`/`@who`/`@help`/`@play`), so the **first embodiment slice deliberately does not build dynamic possession.** Instead it pre-wires one `Controls` edge in the reference seed (a character that controls a robot) and adds `pilot` / `release` *game* verbs to `musce_ref` that only move `Focus` along that pre-wired chain. That exercises the whole embodiment loop end to end through infrastructure that already exists (the game `CommandTable`, no admin table): pilot the robot, drive it, reboot and find yourself still piloting it (the persisted `Focus` over the persisted `Controls`), release back to yourself. Seeding the edge is scaffolding, not the mechanism; runtime control establishment is the admin-verbs slice, and `@possess` replaces the seeded edge without touching the resolution path or the verb handlers.
+
+The engine/game split holds throughout: `Controls` and `Focus` are engine primitives (`musce_core`); the resolution path and, later, the admin `@possess` mechanism are engine; which entities are possessable, the `pilot`/`release` verbs, and any gameplay gate are game policy in the reference game.
+
 ### Staff multi-puppet
 
 A session holds several character attachments (the `p1`/`p2`/... slots), each a session→entity pointer. A command prefix (`p2 say hi`) selects the slot; that character's `Focus` resolves the active driven entity. The slots are session state; everything they point at is world state. The targeted entities may live in different zones/shards, and the locator routes the resulting action accordingly.
@@ -90,20 +125,25 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
 2. WebSocket + SSH behind the same `Connection` abstraction.
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
-4. **Session attachment built; durable embodiment deferred.** `@play` records
-   which actor a connection drives as **session state** on the floor (the actor
-   the connection's bare commands act through); the audience resolver consumes a
-   conn->actor index derived from those attachments. Which actor `@play` chooses
-   is game policy, injected into the runtime by the `Game`'s `choose_actor` (see
-   [engine-and-game.md](engine-and-game.md)); the floor itself
-   (`@quit`/`@who`/`@help`) stays engine. The attachment is the right home for an
-   ephemeral conn->entity pointer; what is **deferred** is durable embodiment:
-   the persisted `Controls` relation and `Focus` component (world state) that let
-   a character pilot a robot and resume after a reboot. Those are a cursor (Focus)
-   into a control chain (Controls), so they land together with the verb that
-   establishes control, not before it. They will back the attachment's actor
-   choice without touching the verb handlers, which already take the actor
-   explicitly.
+4. **Embodiment**, in sub-steps (the model is spelled out under "Sessions and
+   control" above):
+   - **Built.** The session attachment: `@play` records which actor a connection
+     drives as **session state** on the floor; the audience resolver derives its
+     conn->actor index from those attachments. Which actor `@play` chooses is game
+     policy, injected by the `Game`'s `choose_actor` (see
+     [engine-and-game.md](engine-and-game.md)); the floor (`@quit`/`@who`/`@help`)
+     stays engine.
+   - **Next (the first embodiment slice).** The `Controls` relation and `Focus`
+     component in `musce_core`; the resolution path rerouted through `Focus`
+     (`actor = focus_of(character).unwrap_or(character)`, read live); a seeded
+     control edge plus `pilot`/`release` game verbs in `musce_ref`; and `Focus`
+     reset on puppet despawn. This makes durable embodiment real end to end
+     without the admin table. See "Establishing control" and "Resolving a command
+     to an actor" above.
+   - **Deferred.** Dynamic possession (`@possess`/`@release` in the account/admin
+     table, which arrives with the admin-verbs slice), the gameplay possess-gate,
+     and the `p1`/`p2` multi-puppet slots. These back or extend the attachment
+     without touching the verb handlers, which already take the actor explicitly.
 5. Modal overlays: menus and editors, with input-mode switching.
 
 ### What the first slice actually built
