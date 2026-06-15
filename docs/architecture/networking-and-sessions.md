@@ -1,17 +1,21 @@
 # Networking and Sessions
 
-> Status: **first slice built, plus the session attachment.** The raw TCP
-> line-mode transport, the transport-agnostic `Connection` abstraction, the
-> commands-in/events-out pipe (`musce_net`/`musce_proto`), and the session floor
+> Status: **first slice built, plus the session attachment and durable
+> embodiment.** The raw TCP line-mode transport, the transport-agnostic
+> `Connection` abstraction, the commands-in/events-out pipe
+> (`musce_net`/`musce_proto`), and the session floor
 > (`@quit`/`@who`/`@help`/`@play`, auth stubbed) are implemented and wired into the
 > tick loop. The dispatcher routes bare commands to an embodiment frame through
-> the connection's **session attachment**: `@play` records which actor the
-> connection drives as session state on the floor, and the audience resolver
-> consumes a conn->actor index derived from those attachments (see
-> [actions.md](actions.md)). WebSocket/SSH transports, char/raw input-mode
-> switching, real accounts/auth, durable embodiment (the persisted
-> `Controls`/`Focus` world state), and modal overlays remain proposed; the rest of
-> this document records that design.
+> the connection's **session attachment**: `@play` records which *character* the
+> connection drives as session state on the floor, and the driven actor is
+> resolved live from that character's `Focus` (`actor =
+> focus_of(character).unwrap_or(character)`); the audience resolver consumes a
+> conn->actor index derived the same way (see [actions.md](actions.md)). The
+> persisted `Controls` and `Focus` relations make embodiment durable: a character
+> piloting a robot survives a reboot still piloting it. WebSocket/SSH transports,
+> char/raw input-mode switching, real accounts/auth, dynamic possession (the
+> `@possess` admin verb), and modal overlays remain proposed; the rest of this
+> document records that design.
 
 ## Three layers, and the thread boundary
 
@@ -63,7 +67,7 @@ The distinction that matters: embodied control is a *fact about the world*, not 
 
 - **Embodiment / possession is world state, persisted**, and it is two separate facts that are easy to conflate:
   - **`Controls` is the capability wiring**: which entities a character is plugged into and *may* drive. A relation, with **source = the controlled entity** (it has one controller) and **target = the controller** (it has many sources); `ACYCLIC` (chains, never loops); cascade `Detach`, so a controller's death reverts each controlled entity to its own AI rather than destroying or reparenting it. A chain is just edges: character → mech → drone. This is a persistent capability: it holds whether or not you are currently driving any of them.
-  - **`Focus(EntityId)` is the cursor**: which single node in that chain your keystrokes are live on *right now*. One per controller, stored on the character, persisted. Absence of `Focus` means "drive yourself" (the character); a present `Focus` means you are piloting that entity. Lowering `Focus` back to yourself tears down no `Controls` edge, so you step out of the mech and back in without re-establishing control.
+  - **`Focus` is the cursor**: a relation whose source is the controller and whose target is the single node in that chain your keystrokes are live on *right now*. One per controller (a source has one target), stored as the forward link on the character, persisted. Absence of `Focus` means "drive yourself" (the character); a present `Focus` means you are piloting that entity. Lowering `Focus` back to yourself tears down no `Controls` edge, so you step out of the mech and back in without re-establishing control. Making it a relation rather than a lone component is what lets a focused entity's despawn clear the cursor through the ordinary `Detach` cascade: the engine tracks focus -> target directly and never has to infer the focuser from the control wiring.
 
   Both persist, so a character piloting a robot survives a reboot still piloting it. The distinction only becomes *visible* with nested control (a cursor needs a chain to walk) or with stepping out of a puppet while keeping the ability to re-enter; in the flat single-puppet case the two look identical, which is why they are worth naming apart before that case arrives.
 - **Modal UI overlay is session state, ephemeral.** Menus, an editor's cursor and undo buffer, the input mode. Even in-game VI splits this way: the *file* is a world entity (persisted), the *editing session* is the overlay (ephemeral).
@@ -104,11 +108,11 @@ connection  →  session  →  character  →  Focus  →  actor
 
 The audience resolver consumes the same mapping in reverse (actor → the connections that perceive it), derived from the session attachments and `Focus`, never stored as its own truth.
 
-**Invalidation when the puppet dies.** Destroying the focused entity commits like any other action; nothing un-commits it. Per the standing rule that reactions respond rather than veto (see [actions.md](actions.md)), the consequence belongs to a *reaction* to that despawn: it resets the now-stale `Focus` back to the character and notifies the player ("your puppet collapses; you are yourself again"). The reset is engine mechanism (keeping world state consistent); the prose is the game's, emitted through the structural-event sink. Because `Focus` only ever targets something in your own `Controls` chain, the despawn of a controlled entity already knows its controller, so the reset rides the same path that cleans up the `Controls` edge; no extra reverse index is needed. The reaction layer this wants is deferred (see [sequences.md](sequences.md)); until it lands the engine despawn path resets `Focus` directly. A resolution-time guard that refuses to hand a verb a dead actor stays as a **defensive backstop only**, and logs if it ever fires, since that means a despawn skipped the reset; it is not the mechanism, and it must not silently paper over the dangling pointer.
+**Invalidation when the puppet dies.** Destroying the focused entity commits like any other action; nothing un-commits it. Because `Focus` is a relation with the focused entity as its target, that despawn clears the focuser's cursor through the ordinary `Detach` cascade, the same machinery that reverts a dead controller's puppets: the structural reset is automatic, and the relation layer already keeps the reverse index it needs, so there is no bespoke despawn path and no inference from the `Controls` wiring. Per the standing rule that reactions respond rather than veto (see [actions.md](actions.md)), the *prose* ("your puppet collapses; you are yourself again") belongs to a reaction on that despawn; the cursor reset itself is the cascade. That reaction layer is deferred (see [sequences.md](sequences.md)); until it lands the cascade keeps world state consistent and the player simply finds themselves back in their own body without narration. A resolution-time guard that refuses to hand a verb a dead actor stays as a **defensive backstop only**, and logs if it ever fires: with the cascade in place a `Focus` aimed at a despawned entity means corrupt or partially loaded state, not ordinary play. It is not the mechanism, and it must not silently paper over the dangling pointer.
 
 ### Establishing control: the target design and the first slice
 
-> Status: **the target design below is the canonical end state; the first slice is an intermediate that exercises the primitives without it.** When that slice lands it carries its own `> Status:` marker and the build order says which parts are bootstrap and what replaces them, exactly as the verbs-in-`musce_action` scaffolding did. This intermediate is explicitly *not* the final design.
+> Status: **the first slice described here is built; the target design above it is the canonical end state it grows into.** The slice ships the seeded `Controls` edge and the `pilot`/`release` game verbs in `musce_ref`, over the `Controls`/`Focus` relations and the `Focus`-resolved actor path. Dynamic possession (`@possess`/`@release`) is the deferred admin-verbs work that replaces the seeded edge without touching the resolution path or the verb handlers, exactly as the verbs-in-`musce_action` scaffolding was replaced.
 
 Creating a `Controls` edge at runtime is itself a command. In the **target design** it is a staff `@possess <target>` / `@release` pair in the account/admin table (the `@`-namespace, the rule-bypassing admin bucket of [actions.md](actions.md)): `@possess` creates the `Controls` edge and sets `Focus`; `@release` lowers `Focus` and, where wanted, drops the edge. A later gameplay possession (you may pilot this *if* you hold the key) is a game verb with a game-supplied gate, the way the takeable rule is game policy.
 
@@ -133,13 +137,14 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
      policy, injected by the `Game`'s `choose_actor` (see
      [engine-and-game.md](engine-and-game.md)); the floor (`@quit`/`@who`/`@help`)
      stays engine.
-   - **Next (the first embodiment slice).** The `Controls` relation and `Focus`
-     component in `musce_core`; the resolution path rerouted through `Focus`
+   - **Built (the first embodiment slice).** The `Controls` and `Focus` relations
+     in `musce_core`; the resolution path rerouted through `Focus`
      (`actor = focus_of(character).unwrap_or(character)`, read live); a seeded
-     control edge plus `pilot`/`release` game verbs in `musce_ref`; and `Focus`
-     reset on puppet despawn. This makes durable embodiment real end to end
-     without the admin table. See "Establishing control" and "Resolving a command
-     to an actor" above.
+     control edge plus `pilot`/`release` game verbs in `musce_ref`; and the
+     `Focus` `Detach` cascade that clears a controller's cursor when its puppet
+     despawns. This makes durable embodiment real end to end without the admin
+     table. See "Establishing control" and "Resolving a command to an actor"
+     above.
    - **Deferred.** Dynamic possession (`@possess`/`@release` in the account/admin
      table, which arrives with the admin-verbs slice), the gameplay possess-gate,
      and the `p1`/`p2` multi-puppet slots. These back or extend the attachment
@@ -172,6 +177,7 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
   Durable `Controls`/`Focus` embodiment will back the attachment behind this same
   entry point without touching the floor or the verb handlers.
 
-When durable embodiment lands it adds two small `musce_core` pieces: a `Controls`
-relation (a new instance of the relation layer, cascade `Detach`) and a `Focus`
-component.
+Durable embodiment added two `musce_core` pieces, both new instances of the
+relation layer with cascade `Detach`: the `Controls` relation (the capability
+wiring; source the controlled entity, target the controller) and the `Focus`
+relation (the cursor; source the controller, target the focused entity).

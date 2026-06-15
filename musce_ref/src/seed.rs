@@ -6,12 +6,19 @@
 //! `docs/architecture/engine-and-game.md`.
 
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Description, EntityId, Exit, Exits, Item, Player, Room, World};
+use musce_core::{
+    Controls, Creature, Description, EntityId, Exit, Exits, Item, Player, Room, World,
+};
 
 /// Build the starter map into an empty world: a hall, a garden to its north, and
-/// a cellar below it; a takeable key in the garden; and a player avatar standing
-/// in the hall. Matches the `fn(&mut World)` shape the runtime's `Game.seed`
-/// expects.
+/// a cellar below it; a takeable key in the garden; a player avatar standing in
+/// the hall; and a patrol drone beside it that the avatar controls, to exercise
+/// `pilot`/`release`. Matches the `fn(&mut World)` shape the runtime's
+/// `Game.seed` expects.
+///
+/// The seeded `Controls` edge is scaffolding for the first embodiment slice,
+/// standing in for the deferred `@possess` admin verb that will establish control
+/// at runtime. See `docs/architecture/networking-and-sessions.md`.
 pub fn seed(world: &mut World) {
     let hall = room(world, "a stone hall, its flagstones worn smooth");
     let garden = room(world, "a quiet walled garden");
@@ -26,6 +33,12 @@ pub fn seed(world: &mut World) {
 
     let avatar = avatar(world, "a weathered adventurer");
     world.move_entity(avatar, hall).expect("seed: place avatar");
+
+    let drone = creature(world, "a battered patrol drone, idling on its treads");
+    world.move_entity(drone, hall).expect("seed: place drone");
+    world
+        .relate::<Controls>(drone, avatar)
+        .expect("seed: wire control");
 }
 
 /// The `@play` policy: choose which actor a connection comes to drive. The floor
@@ -64,6 +77,13 @@ fn item(world: &mut World, desc: &str) -> EntityId {
 fn avatar(world: &mut World, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Player);
+        b.add(Description(desc.into()));
+    })
+}
+
+fn creature(world: &mut World, desc: &str) -> EntityId {
+    spawn(world, |b| {
+        b.add(Creature);
         b.add(Description(desc.into()));
     })
 }
@@ -121,5 +141,19 @@ mod tests {
         seed(&mut w);
         assert_eq!(choose_actor(&w), find_player(&w));
         assert!(choose_actor(&w).is_some());
+    }
+
+    #[test]
+    fn seed_wires_a_controllable_drone() {
+        let mut w = World::new();
+        seed(&mut w);
+        let avatar = find_player(&w).expect("seed places a player");
+
+        // The avatar controls exactly one thing, in the same room as the avatar.
+        let controlled = w.sources_of::<Controls>(avatar);
+        assert_eq!(controlled.len(), 1);
+        let drone = controlled[0];
+        assert_eq!(w.target_of::<Controls>(drone), Some(avatar));
+        assert_eq!(w.enclosing_room(drone), w.enclosing_room(avatar));
     }
 }

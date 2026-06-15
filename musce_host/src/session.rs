@@ -3,12 +3,13 @@
 //! commands route to it no matter what is overlaid on top. Auth is still stubbed
 //! (every connection is an anonymous guest).
 //!
-//! The floor includes `@play`, which binds the connection to an actor so bare
-//! commands have something to act through. Which actor is game policy, injected
-//! as the game's `bind_actor`; the floor only renders the confirmation. The
-//! binding is session state (held in `musce_action::Actors`), not world state;
-//! the next increment replaces its body with the persisted `Controls`/`Focus`
-//! flow without touching this floor. See
+//! The floor includes `@play`, which binds the connection to a character so bare
+//! commands have something to act through. Which character is game policy,
+//! injected as the game's `choose_actor`; the floor only renders the
+//! confirmation. The binding is session state, not world state; the driven actor
+//! is resolved live from the character's `Focus` (`actor =
+//! focus_of(character).unwrap_or(character)`), so durable `Controls`/`Focus`
+//! embodiment backs the binding without the floor knowing. See
 //! `docs/architecture/networking-and-sessions.md` and
 //! `docs/architecture/engine-and-game.md`.
 
@@ -20,13 +21,39 @@ use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
 
 use crate::ChooseActor;
 
-/// One live session. Holds the connection's attachment: the actor its bare
-/// commands act through, set by `@play`. This attachment is session state
-/// (connections are ephemeral, so it cannot live in the world); it will grow to
-/// hold the account id and character slots.
+/// One live session. Holds the connection's attachment: the character it drives,
+/// set by `@play`. The driven actor is resolved live from that character's
+/// `Focus` (see [`resolve_actor`]), so piloting redirects bare commands without
+/// changing this attachment. It is session state (connections are ephemeral, so
+/// it cannot live in the world); it will grow to hold the account id and the
+/// character slots.
 #[derive(Default)]
 struct Session {
-    actor: Option<EntityId>,
+    character: Option<EntityId>,
+}
+
+/// Resolve the entity a character's bare commands drive: the entity it is
+/// piloting (its `Focus`) if that is live, otherwise the character itself. Read
+/// live so a `pilot` that moves `Focus` redirects subsequent commands at once.
+///
+/// The liveness check is a **defensive backstop only**: a focused entity's
+/// despawn clears the cursor through the `Focus` `Detach` cascade, so a `Focus`
+/// aimed at a despawned entity means corrupt or partially loaded state, not
+/// ordinary play. We log it rather than hand a verb a dead actor, and never
+/// silently paper over the dangling pointer.
+pub(crate) fn resolve_actor(world: &World, character: EntityId) -> EntityId {
+    match world.focus_of(character) {
+        Some(focus) if world.entity(focus).is_some() => focus,
+        Some(dangling) => {
+            tracing::warn!(
+                ?character,
+                ?dangling,
+                "focus aimed at a despawned entity; resolving to the character"
+            );
+            character
+        }
+        None => character,
+    }
 }
 
 /// The floor for every connection. Owns the session table and handles the
@@ -65,26 +92,28 @@ impl Sessions {
         self.map.len()
     }
 
-    /// The actor a connection currently drives, if it has attached via `@play`.
-    pub fn actor_of(&self, id: ConnectionId) -> Option<EntityId> {
-        self.map.get(&id).and_then(|s| s.actor)
+    /// The character a connection drives, if it has attached via `@play`. The
+    /// live actor is derived from this through [`resolve_actor`].
+    pub fn character_of(&self, id: ConnectionId) -> Option<EntityId> {
+        self.map.get(&id).and_then(|s| s.character)
     }
 
-    /// Attach a connection to the actor its bare commands will drive.
-    fn attach(&mut self, id: ConnectionId, actor: EntityId) {
+    /// Attach a connection to the character its bare commands will drive.
+    fn attach(&mut self, id: ConnectionId, character: EntityId) {
         if let Some(s) = self.map.get_mut(&id) {
-            s.actor = Some(actor);
+            s.character = Some(character);
         }
     }
 
     /// Build the audience index the action layer's resolver consumes: the
-    /// conn->actor view derived from the current attachments. Transient, rebuilt
-    /// per dispatch; the attachments here are the source of truth.
-    pub fn audience_index(&self) -> Actors {
+    /// conn->actor view derived from the current attachments, each resolved
+    /// through its character's `Focus`. Transient, rebuilt per dispatch; the
+    /// attachments plus `Focus` are the source of truth.
+    pub fn audience_index(&self, world: &World) -> Actors {
         let mut actors = Actors::default();
         for (&id, session) in &self.map {
-            if let Some(actor) = session.actor {
-                actors.bind(id, actor);
+            if let Some(character) = session.character {
+                actors.bind(id, resolve_actor(world, character));
             }
         }
         actors
@@ -239,9 +268,10 @@ mod tests {
             })]
         ));
         // The attachment is recorded as session state, and surfaces in the
-        // audience index the resolver consumes.
-        assert_eq!(s.actor_of(id), Some(avatar));
-        assert!(s.audience_index().conns_for(avatar).any(|c| c == id));
+        // audience index the resolver consumes. With no Focus, the actor is the
+        // character itself.
+        assert_eq!(s.character_of(id), Some(avatar));
+        assert!(s.audience_index(&world).conns_for(avatar).any(|c| c == id));
     }
 
     #[test]
@@ -267,5 +297,55 @@ mod tests {
             }
             other => panic!("expected one feedback event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolve_actor_without_focus_is_the_character() {
+        let mut world = World::new();
+        let character = spawn_avatar(&mut world);
+        assert_eq!(resolve_actor(&world, character), character);
+    }
+
+    #[test]
+    fn resolve_actor_follows_live_focus() {
+        let mut world = World::new();
+        let character = spawn_avatar(&mut world);
+        let robot = spawn_avatar(&mut world);
+        world.set_focus(character, robot).unwrap();
+        assert_eq!(resolve_actor(&world, character), robot);
+    }
+
+    /// The defensive backstop: a `Focus` pointing at an entity that is not in the
+    /// world (a corrupt or partially loaded snapshot, since a normal despawn would
+    /// have cleared it via the cascade) resolves to the character, never the dead
+    /// actor. Built by loading a blob whose `focus` link references an absent id.
+    #[test]
+    fn resolve_actor_backstop_falls_back_on_dangling_focus() {
+        use musce_core::{EntityBlob, Map, Value};
+
+        let character = EntityId(1);
+        let ghost = EntityId(9999);
+
+        let mut data = Map::new();
+        data.insert("id".into(), Value::from(1u64));
+        data.insert("player".into(), Value::Null);
+        data.insert("description".into(), Value::from("a pilot"));
+        data.insert("focus".into(), Value::from(9999u64));
+
+        let mut world = World::new();
+        world
+            .load(
+                &[EntityBlob {
+                    id: character,
+                    zone: None,
+                    data: Value::Object(data),
+                }],
+                10_000,
+            )
+            .unwrap();
+
+        assert_eq!(world.focus_of(character), Some(ghost));
+        assert!(world.entity(ghost).is_none());
+        assert_eq!(resolve_actor(&world, character), character);
     }
 }

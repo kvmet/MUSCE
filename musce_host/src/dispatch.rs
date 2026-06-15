@@ -57,10 +57,12 @@ impl Dispatch {
         if let Some(rest) = line.strip_prefix('@') {
             self.floor
                 .account_command(id, rest, world, self.game.choose_actor, emit);
-        } else if let Some(actor) = self.floor.actor_of(id) {
-            // The resolver needs the conn<->actor view; the attachments on the
-            // floor are the source of truth, so derive a fresh index from them.
-            let actors = self.floor.audience_index();
+        } else if let Some(character) = self.floor.character_of(id) {
+            // The character is session state; the driven actor is derived live
+            // from its `Focus` (so piloting redirects bare commands). The resolver
+            // needs the conn<->actor view, derived the same way per dispatch.
+            let actor = crate::session::resolve_actor(world, character);
+            let actors = self.floor.audience_index(world);
             dispatch_bare(&self.game.commands, world, &actors, actor, id, line, emit);
         } else {
             emit(Outgoing::Event(Event::to_connection(

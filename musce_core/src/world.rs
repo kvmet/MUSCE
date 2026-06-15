@@ -7,6 +7,7 @@ use crate::component::{
     RegistryError, Room,
 };
 use crate::containment::Containment;
+use crate::control::{Controls, Focus};
 use crate::id::{EntityId, EntityIndex};
 use crate::relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 
@@ -64,6 +65,8 @@ impl World {
         self.register_component::<Container>();
         self.register_component::<Player>();
         self.register_relation::<Containment>();
+        self.register_relation::<Controls>();
+        self.register_relation::<Focus>();
     }
 
     // --- registration ----------------------------------------------------

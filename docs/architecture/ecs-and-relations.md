@@ -84,6 +84,24 @@ Rooms, containers, and inventories are all containers. See
 - Helpers: `contents` (one level), `container_of` (immediate parent),
   `enclosing_room` (walk up to the nearest `Room`).
 
+## Control and focus
+
+The embodiment primitives are the second and third relation instances: how a
+session resolves a driven actor (see
+[networking-and-sessions.md](networking-and-sessions.md)). See
+[control.rs](../../musce_core/src/control.rs).
+
+- **`Controls`** is the capability wiring: source = the controlled entity (one
+  controller), target = the controller (many sources). Acyclic chains
+  (character -> mech -> drone) with a `Detach` cascade, so a controller's death
+  reverts each controlled entity to its own AI rather than destroying it.
+- **`Focus`** is the cursor: source = the controller, target = the single entity
+  its input is live on. One per controller, persisted; absence means "drive
+  yourself". It is a relation rather than a lone component precisely so a focused
+  entity's despawn clears the cursor through the same `Detach` cascade, instead of
+  a bespoke despawn path that would have to infer the focuser from `Controls`.
+- Helpers: `focus_of`, `set_focus`, `clear_focus`.
+
 ## Queries
 
 Two kinds, and the split drives what machinery exists:

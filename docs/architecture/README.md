@@ -52,8 +52,8 @@ These hold across every subsystem:
   implemented.)*
 - [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
-  overlay, the account floor, staff multi-puppet). *(First slice built: raw TCP +
-  session floor; the rest proposed.)*
+  overlay, the account floor, staff multi-puppet). *(Built: raw TCP, session
+  floor, and durable `Controls`/`Focus` embodiment; the rest proposed.)*
 - [sharding.md](sharding.md): the deferred sharding plan and the seams kept now
   to make it possible.
 
@@ -61,7 +61,8 @@ These hold across every subsystem:
 
 Built:
 
-- `musce_core`: world, identity, relation layer, containment, JSON snapshot.
+- `musce_core`: world, identity, relation layer, containment and control (the
+  `Controls` and `Focus` relations behind durable embodiment), JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
@@ -81,22 +82,23 @@ Built:
   action's subject), the `CommandTable` lookup and public `register`, `Ctx` and
   its public emit API (the surface a game's verb handlers program against), the
   conn->actor audience index (`Actors`, derived from the floor's session
-  attachments), and the sim-side audience resolver.
+  attachments resolved through `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
-  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`, `say`,
-  `help`) and their parsing, name resolution, the takeable rule, narration prose,
-  the code-seeded starter world, and the `@play` actor policy; builds the `Game`
-  and has `main` plus the end-to-end test. A real game forks this crate.
+  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`,
+  `pilot`, `release`, `say`, `help`) and their parsing, name resolution, the
+  takeable rule and the control rule, narration prose, the code-seeded starter
+  world (with a controllable drone), and the `@play` actor policy; builds the
+  `Game` and has `main` plus the end-to-end test. A real game forks this crate.
 
 Deferred (with seams in place where noted):
 
 - Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
   `@summon`/`@set`) that ride the now-built structural action set, then systems on
   the phase pipeline (designed in actions.md and sequences.md).
-- Networking: WebSocket/SSH transports, real accounts/auth, durable embodiment
-  (the persisted `Controls`/`Focus` world state behind `@play`), and modal
-  overlays (designed in networking-and-sessions.md). Raw TCP, the session floor,
-  and the session attachment that `@play` sets are built.
+- Networking: WebSocket/SSH transports, real accounts/auth, dynamic possession
+  (the `@possess`/`@release` admin verbs), and modal overlays (designed in
+  networking-and-sessions.md). Raw TCP, the session floor, the session attachment
+  that `@play` sets, and durable `Controls`/`Focus` embodiment are built.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

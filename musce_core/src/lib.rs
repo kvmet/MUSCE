@@ -3,6 +3,7 @@
 
 pub mod component;
 pub mod containment;
+pub mod control;
 pub mod id;
 pub mod relation;
 pub mod snapshot;
@@ -19,6 +20,7 @@ pub use component::{
     Room,
 };
 pub use containment::Containment;
+pub use control::{Controls, Focus};
 pub use id::{EntityId, EntityIndex};
 pub use relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 pub use snapshot::{EntityBlob, Snapshot};

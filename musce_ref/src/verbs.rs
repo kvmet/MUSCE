@@ -8,7 +8,7 @@
 //! `docs/architecture/actions.md`.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{Description, EntityId, Exits, World};
+use musce_core::{Controls, Description, EntityId, Exits, World};
 use musce_proto::EventKind;
 
 use crate::names::{self, Scope};
@@ -28,6 +28,8 @@ pub fn commands() -> CommandTable {
     t.register("go", Gate::Open, go);
     t.register("take", Gate::Open, take);
     t.register("drop", Gate::Open, drop);
+    t.register("pilot", Gate::Open, pilot);
+    t.register("release", Gate::Open, release);
     t.register("say", Gate::Open, say);
     t.register("help", Gate::Open, help);
     t
@@ -170,6 +172,75 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
     ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} drops {name}."));
 }
 
+/// `pilot <thing>`: aim the character's control cursor at something it controls,
+/// so bare commands drive that thing. The rule is game policy: you may only pilot
+/// what you control. (Establishing control itself is the deferred `@possess`
+/// admin verb; here the controllable thing is seeded.)
+pub fn pilot(ctx: &mut Ctx, args: &str) {
+    if args.trim().is_empty() {
+        ctx.emit_self(EventKind::Feedback, "Pilot what?");
+        return;
+    }
+    let character = character_of(ctx.world, ctx.actor);
+    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, args) else {
+        ctx.emit_self(EventKind::Feedback, "You don't see that here.");
+        return;
+    };
+    // The control rule: you may only pilot what you control.
+    if ctx.world.target_of::<Controls>(target) != Some(character) {
+        ctx.emit_self(EventKind::Feedback, "You can't pilot that.");
+        return;
+    }
+
+    let name = display_name(ctx.world, target);
+    let who = display_name(ctx.world, character);
+    let room = ctx.world.enclosing_room(character);
+
+    // Aiming the cursor is a single hop from the root, so it cannot cycle; the
+    // guard is a structural backstop, not a rule.
+    if ctx.world.set_focus(character, target).is_err() {
+        ctx.emit_self(EventKind::Feedback, "You can't pilot that.");
+        return;
+    }
+
+    ctx.emit_self(EventKind::Feedback, format!("You take control of {name}."));
+    if let Some(room) = room {
+        ctx.emit_room_except_self(
+            room,
+            EventKind::Narration,
+            format!("{who} goes still, eyes distant."),
+        );
+    }
+}
+
+/// `release`: drop the character's cursor back to itself, so bare commands drive
+/// you again. Tears down no `Controls` edge, so you can step back in.
+pub fn release(ctx: &mut Ctx, _args: &str) {
+    let character = character_of(ctx.world, ctx.actor);
+    let Some(piloted) = ctx.world.focus_of(character) else {
+        ctx.emit_self(EventKind::Feedback, "You aren't piloting anything.");
+        return;
+    };
+
+    let name = display_name(ctx.world, piloted);
+    let who = display_name(ctx.world, character);
+    let room = ctx.world.enclosing_room(character);
+
+    ctx.world.clear_focus(character);
+
+    ctx.emit_self(
+        EventKind::Feedback,
+        format!("You release {name} and return to yourself."),
+    );
+    if let Some(room) = room {
+        ctx.emit_room_except_self(
+            room,
+            EventKind::Narration,
+            format!("{who} stirs and looks around."),
+        );
+    }
+}
+
 /// `say <message>`: speak to the room. Mutates nothing; pure output.
 pub fn say(ctx: &mut Ctx, args: &str) {
     let msg = args.trim();
@@ -193,7 +264,7 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
     ctx.emit_self(
         EventKind::Feedback,
         "You can: look, go <direction> (or just a direction), take <item>, \
-         drop <item>, say <message>, help.",
+         drop <item>, pilot <thing>, release, say <message>, help.",
     );
 }
 
@@ -252,6 +323,18 @@ fn find_exit(world: &World, room: EntityId, query: &str) -> Option<(String, Enti
         .map(|e| (e.direction.clone(), e.to))
 }
 
+/// The root of an actor's control stack: the entity controlled by no one, where
+/// `Focus` lives. When the actor is itself (no puppet) that is the actor; when
+/// piloting, it is the controlling character. Walks `Controls` to the root, so it
+/// stays correct at any chain depth even though this slice only seeds depth one.
+fn character_of(world: &World, actor: EntityId) -> EntityId {
+    world
+        .ancestors::<Controls>(actor)
+        .last()
+        .copied()
+        .unwrap_or(actor)
+}
+
 /// Takeable means a movable object, not a fixture or a being: rooms and players
 /// and creatures stay put. This is the gameplay rule, kept here in the handler,
 /// not in `execute`.
@@ -282,7 +365,7 @@ mod tests {
     use super::*;
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Exit, Item, Player, Room};
+    use musce_core::{Creature, Exit, Item, Player, Room};
     use musce_proto::{Audience, ConnectionId};
 
     struct Fixture {
@@ -496,6 +579,72 @@ mod tests {
             room_narration(&out)
                 .iter()
                 .any(|t| t.contains("says, \"hello\""))
+        );
+    }
+
+    /// Wire a drone the actor controls into the actor's room, returning it.
+    fn controlled_drone(f: &mut Fixture) -> EntityId {
+        let drone = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Description("a patrol drone".into()));
+        });
+        f.world.move_entity(drone, f.hall).unwrap();
+        f.world.relate::<Controls>(drone, f.actor).unwrap();
+        drone
+    }
+
+    #[test]
+    fn pilot_aims_focus_at_a_controlled_thing() {
+        let mut f = fixture();
+        let drone = controlled_drone(&mut f);
+
+        let out = run(&mut f.world, f.actor, |c| pilot(c, "drone"));
+
+        assert_eq!(f.world.focus_of(f.actor), Some(drone));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("You take control of a patrol drone"))
+        );
+    }
+
+    #[test]
+    fn pilot_refuses_a_thing_you_do_not_control() {
+        let mut f = fixture();
+        // A drone in the room, but with no Controls edge to the actor.
+        let drone = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Description("a wild drone".into()));
+        });
+        f.world.move_entity(drone, f.hall).unwrap();
+
+        let out = run(&mut f.world, f.actor, |c| pilot(c, "drone"));
+
+        assert_eq!(f.world.focus_of(f.actor), None);
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("can't pilot"))
+        );
+    }
+
+    #[test]
+    fn release_returns_focus_to_self() {
+        let mut f = fixture();
+        let drone = controlled_drone(&mut f);
+        f.world.set_focus(f.actor, drone).unwrap();
+        assert_eq!(f.world.focus_of(f.actor), Some(drone));
+
+        // Released from inside the puppet: `character_of` walks back to the
+        // controller, so the cursor clears even though the acting actor is the
+        // drone.
+        let out = run(&mut f.world, drone, |c| release(c, ""));
+
+        assert_eq!(f.world.focus_of(f.actor), None);
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("return to yourself"))
         );
     }
 }
