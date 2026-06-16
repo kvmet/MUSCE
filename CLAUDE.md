@@ -27,7 +27,10 @@ Touch the doc when you touch the code:
 | snapshot and `musce_persistence` | `persistence.md` |
 | sim thread, tick loop, scheduling | `concurrency.md` |
 | actions, command dispatch, the executor | `actions.md` |
+| admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
 | sequences, effects, timers | `sequences.md` |
+| transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
+| the engine/game boundary, the injected `Game` | `engine-and-game.md` |
 | zones, locator, entity handoff | `sharding.md` |
 
 ## Status markers
