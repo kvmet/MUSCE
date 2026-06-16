@@ -63,14 +63,20 @@ pub type Seed = fn(&mut World);
 /// has no character to give.
 pub type ChooseActor = fn(&World) -> Option<EntityId>;
 
-/// The whole of what the runtime needs from a game: its in-game verb registry,
-/// its world seed, and its `@play` actor-choice policy. A plain struct of values
-/// plus fn pointers; the runtime never depends on a particular game, only on
-/// this. The account floor (`@quit`/`@who`/`@help`) stays engine; only `@play`'s
-/// choice of actor is game policy, which is why `choose_actor` is the one floor
-/// concern the game injects. See `docs/architecture/engine-and-game.md`.
+/// The whole of what the runtime needs from a game: its bare and admin verb
+/// registries, its world seed, and its `@play` actor-choice policy. A plain struct
+/// of values plus fn pointers; the runtime never depends on a particular game,
+/// only on this. The account floor (`@quit`/`@who`/`@help`) stays engine; only
+/// `@play`'s choice of actor is game policy, which is why `choose_actor` is the
+/// one floor concern the game injects. `CommandTable`, `Gate`, and dispatch are
+/// engine mechanism; the game owns which verbs each table holds and their prose.
+/// See `docs/architecture/engine-and-game.md`.
 pub struct Game {
+    /// Bare in-game verbs, driven through the embodiment frame.
     pub commands: CommandTable,
+    /// `@`-namespace admin/builder verbs, staff-gated, driven through the admin
+    /// frame. Empty for a game with no builder surface.
+    pub admin: CommandTable,
     pub seed: Seed,
     pub choose_actor: ChooseActor,
 }
@@ -277,6 +283,7 @@ mod tests {
     fn test_game() -> Game {
         Game {
             commands: CommandTable::new(),
+            admin: CommandTable::new(),
             seed: |_| {},
             choose_actor: |_| None,
         }

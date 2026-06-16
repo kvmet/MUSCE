@@ -7,7 +7,7 @@
 
 use musce_core::hecs::EntityBuilder;
 use musce_core::{
-    Controls, Creature, Description, EntityId, Exit, Exits, Item, Player, Room, World,
+    Controls, Creature, Description, EntityId, Exit, Exits, Item, Player, Room, Staff, World,
 };
 
 /// Build the starter map into an empty world: a hall, a garden to its north, and
@@ -77,6 +77,9 @@ fn item(world: &mut World, desc: &str) -> EntityId {
 fn avatar(world: &mut World, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Player);
+        // The reference avatar is staff so the admin verbs are playable out of the
+        // box; a real game gates staff through accounts, not the seed.
+        b.add(Staff);
         b.add(Description(desc.into()));
     })
 }

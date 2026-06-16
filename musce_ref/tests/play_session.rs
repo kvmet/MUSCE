@@ -40,6 +40,17 @@ async fn connect(addr: std::net::SocketAddr) -> (OwnedReadHalf, OwnedWriteHalf) 
         .into_split()
 }
 
+/// Extract the first `#<id>` from server output (the id a creation verb reports).
+fn first_id(s: &str) -> u64 {
+    let after = s.split('#').nth(1).expect("an #id in the output");
+    after
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .expect("digits after #")
+}
+
 /// Write one command line (newline-terminated) and flush it.
 async fn send(writer: &mut OwnedWriteHalf, line: &str) {
     writer
@@ -198,6 +209,75 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
     assert!(
         back.contains("stone hall"),
         "back to self in the hall, got: {back:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
+/// The admin frame end to end: the seeded avatar is staff, so `@create`/`@set`/
+/// `@dig` reach the admin table and mutate the world. Verified by chaining on the
+/// id `@create` reports and reading the result back through a bare `look`.
+#[tokio::test]
+async fn admin_verbs_build_the_world() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // Create a thing; the verb reports its new id so we can reference it.
+    send(&mut writer, "@create torch").await;
+    let created = read_burst(&mut reader).await;
+    assert!(
+        created.contains("Created") && created.contains('#'),
+        "@create reports the new id, got: {created:?}"
+    );
+    let torch = first_id(&created);
+
+    // Reference it by that id: retune its description (whole-component @set).
+    send(
+        &mut writer,
+        &format!("@set #{torch}.description \"a magic torch\""),
+    )
+    .await;
+    let setted = read_burst(&mut reader).await;
+    assert!(
+        setted.contains("Set description"),
+        "@set confirmation, got: {setted:?}"
+    );
+
+    // Dig a new room in a free direction (the hall already has north/down).
+    send(&mut writer, "@dig east a hidden vault").await;
+    let dug = read_burst(&mut reader).await;
+    assert!(dug.contains("Dug east"), "@dig confirmation, got: {dug:?}");
+
+    // A bare look proves all three landed in the world: the new east exit and the
+    // created-then-renamed torch are both in the room.
+    send(&mut writer, "look").await;
+    let looked = read_burst(&mut reader).await;
+    assert!(
+        looked.contains("east"),
+        "look shows the dug exit, got: {looked:?}"
+    );
+    assert!(
+        looked.contains("a magic torch"),
+        "look shows the created, renamed torch, got: {looked:?}"
     );
 
     shutdown.store(true, Ordering::Relaxed);

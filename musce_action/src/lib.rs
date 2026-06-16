@@ -8,9 +8,10 @@
 //!
 //! Three pieces fit together:
 //! - `execute` applies a typed [`Action`] to the world, structurally only.
-//! - the [`CommandTable`] looks a game's registered verbs up and `dispatch_bare`
-//!   runs them through a [`Ctx`] whose emit API is the surface handlers program
-//!   against.
+//! - the [`CommandTable`] looks a game's registered verbs up and
+//!   `dispatch_command` runs them through a [`Ctx`] whose emit API is the surface
+//!   handlers program against; the host points it at the embodiment or admin
+//!   table per the input-stack frame.
 //! - the audience resolver expands room/entity-addressed output into the
 //!   connections that should see it, before anything reaches net.
 
@@ -25,7 +26,7 @@ use musce_core::{EntityId, World};
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use ctx::Ctx;
-pub use dispatch::{CommandTable, Gate, Handler, dispatch_bare};
+pub use dispatch::{CommandTable, Gate, Handler, dispatch_command};
 pub use executor::{Action, ExecError, execute};
 
 /// The actor's own description, for floor confirmations like "You are now X."

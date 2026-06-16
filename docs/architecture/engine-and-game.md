@@ -66,6 +66,10 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
 
 - **`commands: CommandTable`** the in-game verb registry the embodiment frame
   dispatches against.
+- **`admin: CommandTable`** the `@`-namespace builder verbs, staff-gated and
+  rule-bypassing, dispatched through the admin frame. Same `CommandTable`
+  mechanism as `commands`; the gate (`Gate::Staff`) carries the difference. Empty
+  for a game with no builder surface.
 - **`seed: fn(&mut World)`** builds the starting world when the database loads
   empty; a loaded world is left untouched.
 - **`bind_actor`** the `@play` policy: which actor a connection comes to drive. The
@@ -89,9 +93,10 @@ programs against. This is the real design work the split forces; the rest is
 moving files.
 
 - **`CommandTable` registration.** A public way to register a verb: a name, a
-  permission `Gate`, a handler. The lookup (exact name, then first registered
-  prefix) and the gate check stay engine mechanism; the verbs and their parsing
-  are the game's.
+  permission `Gate` (`Open` for in-game verbs, `Staff` for admin/builder verbs), a
+  handler. The lookup (exact name, then first registered prefix), the gate check,
+  and `dispatch_command` (which both the embodiment and admin frames run through)
+  stay engine mechanism; the verbs and their parsing are the game's.
 - **`Ctx` and a public emit API.** The handler context (`&mut World`, the actor,
   the connection) plus a small public emit surface: a first-person line to the
   actor and a third-person line to the room with the actor excluded. Handlers are
@@ -118,6 +123,8 @@ over the world queries the engine already exposes (`contents`, `container_of`,
 | audience resolver, `Outbound`, `Actors` | `musce_action` (engine) |
 | the runtime, `run`, the `Game` type, the floor | `musce_host` (engine) |
 | verbs (`look`/`go`/`take`/`drop`/`say`) + parsing | `musce_ref` (game) |
+| admin/builder verbs (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) | `musce_ref` (game) |
+| `Gate` tiers, `dispatch_command`, the admin frame | `musce_action`/`musce_host` (engine) |
 | name resolution | `musce_ref` (game) |
 | the seed world | `musce_ref` (game) |
 | narration prose, the takeable rule | `musce_ref` (game) |

@@ -121,7 +121,9 @@ impl Sessions {
 
     /// Handle one `@`-namespaced account command (the leading `@` already
     /// stripped). These are the floor and stay reachable regardless of what sits
-    /// on top of the input stack.
+    /// on top of the input stack. Returns whether the floor recognized the verb;
+    /// the floor is the single authority on its own verbs, so an unrecognized one
+    /// returns `false` and the caller routes it onward (to the admin table).
     pub fn account_command(
         &mut self,
         id: ConnectionId,
@@ -129,7 +131,7 @@ impl Sessions {
         world: &World,
         choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
-    ) {
+    ) -> bool {
         let mut parts = rest.split_whitespace();
         let verb = parts.next().unwrap_or("");
         match verb {
@@ -145,15 +147,14 @@ impl Sessions {
                 );
             }
             "help" => {
-                // The floor documents only its own account commands; in-game
-                // verbs are the game's surface, not the engine's to enumerate.
+                // The floor documents only its own account commands; in-game and
+                // admin verbs are the game's surface, not the engine's to enumerate.
                 feedback(id, "Commands: @play, @quit, @who, @help.", emit);
             }
             "play" => self.play(id, world, choose_actor, emit),
-            other => {
-                feedback(id, &format!("Unknown command: @{other}"), emit);
-            }
+            _ => return false,
         }
+        true
     }
 
     /// `@play`: attach this connection to an actor so its bare commands have
@@ -275,28 +276,30 @@ mod tests {
     }
 
     #[test]
-    fn unknown_at_command_feeds_back() {
+    fn unknown_at_command_is_unhandled_and_silent() {
         let mut s = Sessions::default();
         let world = World::new();
         let id = ConnectionId(2);
         s.connect(id, &mut |_| {});
 
+        // The floor does not recognize it: it reports "unhandled" and emits
+        // nothing, leaving the caller to route it to the admin table.
         let mut out = Vec::new();
-        s.account_command(id, "bogus", &world, first_player_choose, &mut |o| {
+        let handled = s.account_command(id, "bogus", &world, first_player_choose, &mut |o| {
             out.push(o)
         });
-        match &out[..] {
-            [
-                Outgoing::Event(Event {
-                    kind: EventKind::Feedback,
-                    text,
-                    ..
-                }),
-            ] => {
-                assert!(text.contains("bogus"));
-            }
-            other => panic!("expected one feedback event, got {other:?}"),
-        }
+        assert!(!handled);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_command_is_handled() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let id = ConnectionId(2);
+        s.connect(id, &mut |_| {});
+        let handled = s.account_command(id, "who", &world, first_player_choose, &mut |_| {});
+        assert!(handled);
     }
 
     #[test]

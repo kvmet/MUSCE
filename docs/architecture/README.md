@@ -40,10 +40,13 @@ These hold across every subsystem:
 - [concurrency.md](concurrency.md): the threading model, the tick pipeline, and
   why there is no auto-scheduler.
 - [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
-  the structural-only executor, command dispatch as a registry, and where rules
-  and perception live. *(Structural vocabulary built: the full `Action` set,
-  sim-side audience resolution, and the engine command surface; the core verbs
-  and seed now live in `musce_ref`; admin verbs deferred.)*
+  the structural-only executor, command dispatch as a registry, atomicity, and
+  where rules and perception live. *(Built: the executor, dispatch, and the
+  sim-side audience resolver; the core verbs and seed live in `musce_ref`.)*
+- [admin-verbs.md](admin-verbs.md): the admin/builder `@`-verbs and the
+  type-erased reflection primitives they ride (the full structural `Action` set,
+  `SetComponent` granularity, the generic mutators and guards). *(Built;
+  `@destroy` and dynamic possession `@possess` deferred.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
@@ -62,14 +65,17 @@ These hold across every subsystem:
 Built:
 
 - `musce_core`: world, identity, relation layer, containment and control (the
-  `Controls` and `Focus` relations behind durable embodiment), JSON snapshot.
+  `Controls` and `Focus` relations behind durable embodiment), the `Staff`
+  permission marker, JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
   account floor (`@quit`/`@who`/`@help`/`@play`, the actor choice game-injected),
-  and a single command dispatcher draining the inbox each tick. Holds no game
-  content; library-only (no binary).
+  and a single command dispatcher draining the inbox each tick: lifecycle `@`-verbs
+  to the floor, other `@`-verbs to the game's staff-gated admin table, bare
+  commands to the embodiment frame. Holds no game content; library-only (no
+  binary).
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
@@ -79,22 +85,27 @@ Built:
 - `musce_action`: the engine's action layer, free of game content. The
   structural executor (the full `Action` set:
   `Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`, returning the
-  action's subject), the `CommandTable` lookup and public `register`, `Ctx` and
-  its public emit API (the surface a game's verb handlers program against), the
-  conn->actor audience index (`Actors`, derived from the floor's session
-  attachments resolved through `Focus`), and the sim-side audience resolver.
+  action's subject), the `CommandTable` lookup and public `register`, the `Gate`
+  tiers (`Open`/`Staff`) and `dispatch_command` (run by both the embodiment and
+  admin frames), `Ctx` and its public emit API (the surface a game's verb handlers
+  program against), the conn->actor audience index (`Actors`, derived from the
+  floor's session attachments resolved through `Focus`), and the sim-side audience
+  resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
-  the engine. Owns the verbs (`look`, `go`/bare direction, `take`, `drop`,
-  `pilot`, `release`, `say`, `help`) and their parsing, name resolution, the
-  takeable rule and the control rule, narration prose, the code-seeded starter
-  world (with a controllable drone), and the `@play` actor policy; builds the
-  `Game` and has `main` plus the end-to-end test. A real game forks this crate.
+  the engine. Owns the bare verbs (`look`, `go`/bare direction, `take`, `drop`,
+  `pilot`, `release`, `say`, `help`) and the admin/builder verbs
+  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) and their parsing, name
+  resolution, the takeable rule and the control rule, narration prose, the
+  code-seeded starter world (with a controllable drone), and the `@play` actor
+  policy; builds the `Game` and has `main` plus the end-to-end test. A real game
+  forks this crate.
 
 Deferred (with seams in place where noted):
 
-- Game logic: the admin verbs (`@create`/`@destroy`/`@dig`/`@tel`/`@goto`/
-  `@summon`/`@set`) that ride the now-built structural action set, then systems on
-  the phase pipeline (designed in actions.md and sequences.md).
+- Game logic: `@destroy` (deferred pending the `@destroy`/`@purge` decision), then
+  systems on the phase pipeline (designed in actions.md and sequences.md). The rest
+  of the admin builder verbs (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) are
+  built, riding the structural action set through the staff-gated admin frame.
 - Networking: WebSocket/SSH transports, real accounts/auth, dynamic possession
   (the `@possess`/`@release` admin verbs), and modal overlays (designed in
   networking-and-sessions.md). Raw TCP, the session floor, the session attachment

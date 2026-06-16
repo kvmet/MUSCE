@@ -6,12 +6,12 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::dispatch_bare;
+use musce_action::{CommandTable, dispatch_command};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
 
 use crate::Game;
-use crate::session::Sessions;
+use crate::session::{Sessions, resolve_actor};
 
 pub struct Dispatch {
     /// The always-present account/session floor: `@`-commands, lifecycle, and the
@@ -55,31 +55,53 @@ impl Dispatch {
         }
 
         if let Some(rest) = line.strip_prefix('@') {
-            self.floor
-                .account_command(id, rest, world, self.game.choose_actor, emit);
-        } else if let Some(character) = self.floor.character_of(id) {
-            // The character is session state; the driven actor is derived live
-            // from its `Focus` (so piloting redirects bare commands). The resolver
-            // needs the conn<->actor view, derived the same way per dispatch.
-            let actor = crate::session::resolve_actor(world, character);
-            let actors = self.floor.audience_index(world);
-            dispatch_bare(&self.game.commands, world, &actors, actor, id, line, emit);
+            // The floor owns the lifecycle verbs (@quit/@who/@help/@play); any
+            // other @-verb is an admin/builder command, dispatched against the
+            // game's admin table with the same actor resolution the bare frame
+            // uses. The floor reports whether it recognized the verb.
+            if !self
+                .floor
+                .account_command(id, rest, world, self.game.choose_actor, emit)
+            {
+                dispatch_through_actor(&self.floor, &self.game.admin, id, rest, world, emit);
+            }
         } else {
-            emit(Outgoing::Event(Event::to_connection(
-                id,
-                EventKind::Feedback,
-                "You have no character. Use @play to enter the world.",
-            )));
+            dispatch_through_actor(&self.floor, &self.game.commands, id, line, world, emit);
         }
     }
+}
+
+/// Resolve a connection's character to its live actor and run `line` against
+/// `table`. The character is session state; the driven actor is derived live from
+/// its `Focus` (so piloting redirects bare commands and admin verbs alike). A
+/// connection with no character has nothing to act through and is told to `@play`.
+fn dispatch_through_actor(
+    floor: &Sessions,
+    table: &CommandTable,
+    id: ConnectionId,
+    line: &str,
+    world: &mut World,
+    emit: &mut impl FnMut(Outgoing),
+) {
+    let Some(character) = floor.character_of(id) else {
+        emit(Outgoing::Event(Event::to_connection(
+            id,
+            EventKind::Feedback,
+            "You have no character. Use @play to enter the world.",
+        )));
+        return;
+    };
+    let actor = resolve_actor(world, character);
+    let actors = floor.audience_index(world);
+    dispatch_command(table, world, &actors, actor, id, line, emit);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use musce_action::{CommandTable, Ctx, Gate};
+    use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Id, Player, Room};
+    use musce_core::{Description, EntityId, Id, Player, Room, Staff};
     use musce_proto::{Audience, Capabilities};
 
     /// An engine-only `Game` so the router can be exercised without depending on
@@ -97,6 +119,7 @@ mod tests {
             let avatar = {
                 let mut b = EntityBuilder::new();
                 b.add(Player);
+                b.add(Staff); // staff, so the admin frame is exercisable
                 b.add(Description("a tester".into()));
                 world.spawn(b)
             };
@@ -125,10 +148,17 @@ mod tests {
             ctx.emit_self(EventKind::Narration, text);
         }
 
+        fn poke(ctx: &mut Ctx, _args: &str) {
+            ctx.emit_self(EventKind::Feedback, "poked");
+        }
+
         let mut commands = CommandTable::new();
         commands.register("look", Gate::Open, look);
+        let mut admin = CommandTable::new();
+        admin.register("poke", Gate::Staff, poke);
         Game {
             commands,
+            admin,
             seed,
             choose_actor,
         }
@@ -182,6 +212,34 @@ mod tests {
             out.iter()
                 .any(|o| matches!(o, Outgoing::Close(c) if *c == id))
         );
+    }
+
+    /// A non-lifecycle `@`-verb routes to the game's admin table (and runs, since
+    /// the seeded avatar is staff), rather than being swallowed by the floor.
+    #[test]
+    fn at_admin_verb_routes_to_admin_table() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        line(&mut d, &mut world, id, "@play");
+        let out = line(&mut d, &mut world, id, "@poke");
+
+        let texts: Vec<String> = out
+            .iter()
+            .filter_map(|o| match o {
+                Outgoing::Event(Event {
+                    text,
+                    to: Audience::Connection(_),
+                    ..
+                }) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("poked")), "got: {texts:?}");
     }
 
     /// A bare command before `@play` reports having no character.

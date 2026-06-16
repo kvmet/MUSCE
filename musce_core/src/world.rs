@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::component::{
     ComponentRegistry, Container, Creature, Description, Exits, Id, Item, NamedComponent, Player,
-    RegistryError, Room,
+    RegistryError, Room, Staff,
 };
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
@@ -64,6 +64,7 @@ impl World {
         self.register_component::<Creature>();
         self.register_component::<Container>();
         self.register_component::<Player>();
+        self.register_component::<Staff>();
         self.register_relation::<Containment>();
         self.register_relation::<Controls>();
         self.register_relation::<Focus>();

@@ -116,7 +116,7 @@ The audience resolver consumes the same mapping in reverse (actor → the connec
 
 Creating a `Controls` edge at runtime is itself a command. In the **target design** it is a staff `@possess <target>` / `@release` pair in the account/admin table (the `@`-namespace, the rule-bypassing admin bucket of [actions.md](actions.md)): `@possess` creates the `Controls` edge and sets `Focus`; `@release` lowers `Focus` and, where wanted, drops the edge. A later gameplay possession (you may pilot this *if* you hold the key) is a game verb with a game-supplied gate, the way the takeable rule is game policy.
 
-That admin table does not exist yet (the floor still hardcodes `@quit`/`@who`/`@help`/`@play`), so the **first embodiment slice deliberately does not build dynamic possession.** Instead it pre-wires one `Controls` edge in the reference seed (a character that controls a robot) and adds `pilot` / `release` *game* verbs to `musce_ref` that only move `Focus` along that pre-wired chain. That exercises the whole embodiment loop end to end through infrastructure that already exists (the game `CommandTable`, no admin table): pilot the robot, drive it, reboot and find yourself still piloting it (the persisted `Focus` over the persisted `Controls`), release back to yourself. Seeding the edge is scaffolding, not the mechanism; runtime control establishment is the admin-verbs slice, and `@possess` replaces the seeded edge without touching the resolution path or the verb handlers.
+The admin table now exists (the admin-verbs slice built the `@`-namespace admin frame: a `Gate::Staff` `CommandTable` beside the floor's lifecycle verbs), but the **first embodiment slice deliberately did not build dynamic possession,** which predates it and is still its own deferred step. Instead it pre-wires one `Controls` edge in the reference seed (a character that controls a robot) and adds `pilot` / `release` *game* verbs to `musce_ref` that only move `Focus` along that pre-wired chain. That exercises the whole embodiment loop end to end through infrastructure that already exists (the game `CommandTable`, no admin table): pilot the robot, drive it, reboot and find yourself still piloting it (the persisted `Focus` over the persisted `Controls`), release back to yourself. Seeding the edge is scaffolding, not the mechanism; runtime control establishment is the admin-verbs slice, and `@possess` replaces the seeded edge without touching the resolution path or the verb handlers.
 
 The engine/game split holds throughout: `Controls` and `Focus` are engine primitives (`musce_core`); the resolution path and, later, the admin `@possess` mechanism are engine; which entities are possessable, the `pilot`/`release` verbs, and any gameplay gate are game policy in the reference game.
 
@@ -145,10 +145,11 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
      despawns. This makes durable embodiment real end to end without the admin
      table. See "Establishing control" and "Resolving a command to an actor"
      above.
-   - **Deferred.** Dynamic possession (`@possess`/`@release` in the account/admin
-     table, which arrives with the admin-verbs slice), the gameplay possess-gate,
-     and the `p1`/`p2` multi-puppet slots. These back or extend the attachment
-     without touching the verb handlers, which already take the actor explicitly.
+   - **Deferred.** Dynamic possession (`@possess`/`@release`): the admin frame it
+     registers into is now built (the admin-verbs slice), so this is the remaining
+     step, plus the gameplay possess-gate and the `p1`/`p2` multi-puppet slots.
+     These back or extend the attachment without touching the verb handlers, which
+     already take the actor explicitly.
 5. Modal overlays: menus and editors, with input-mode switching.
 
 ### What the first slice actually built

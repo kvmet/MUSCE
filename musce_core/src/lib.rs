@@ -17,7 +17,7 @@ pub use serde_json::{Map, Value};
 
 pub use component::{
     Container, Creature, Description, Exit, Exits, Id, Item, NamedComponent, Player, RegistryError,
-    Room,
+    Room, Staff,
 };
 pub use containment::Containment;
 pub use control::{Controls, Focus};

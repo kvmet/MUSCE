@@ -6,7 +6,7 @@
 //! mechanism; the verbs themselves are game content. See
 //! `docs/architecture/actions.md`.
 
-use musce_core::{EntityId, World};
+use musce_core::{EntityId, Staff, World};
 use musce_proto::{ConnectionId, Outgoing};
 
 use crate::audience::{self, Outbound};
@@ -18,18 +18,21 @@ use crate::ctx::Ctx;
 /// registers them; the engine only invokes them.
 pub type Handler = fn(&mut Ctx, &str);
 
-/// Permission required to run a verb. Only `Open` exists this slice (every
-/// in-game verb is ungated); the admin verbs introduced next add staff tiers
-/// here, checked at dispatch before the handler runs.
+/// Permission required to run a verb, checked at dispatch before the handler
+/// runs. `Open` is every in-game verb; `Staff` gates the rule-bypassing admin
+/// verbs on the actor carrying the `Staff` marker. A single boolean tier is the
+/// whole model for now; finer tiers and account-owned permissions come later.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gate {
     Open,
+    Staff,
 }
 
 impl Gate {
-    fn permits(self) -> bool {
+    fn permits(self, world: &World, actor: EntityId) -> bool {
         match self {
             Gate::Open => true,
+            Gate::Staff => world.has::<Staff>(actor),
         }
     }
 }
@@ -79,12 +82,14 @@ impl Default for CommandTable {
     }
 }
 
-/// Dispatch one bare (embodied) command line: look the verb up, run its handler
-/// to gather semantic output, then resolve those events' audiences to
-/// connections through `emit`. `actor` is the entity the connection drives. The
-/// host owns frame selection (`@`-floor vs embodiment); this is the embodiment
-/// frame's entry point.
-pub fn dispatch_bare(
+/// Dispatch one command line against a command table for `actor`: look the verb
+/// up, gate-check it on the actor, run its handler to gather semantic output, then
+/// resolve those events' audiences to connections through `emit`. `actor` is the
+/// entity the connection drives. Frame selection (`@`-floor vs embodiment vs
+/// admin) is the host's job; this runs whichever table the host hands it, so it
+/// serves both the bare embodiment frame (the game table) and the admin frame
+/// (the `@`-verb table), the gate carrying the difference.
+pub fn dispatch_command(
     table: &CommandTable,
     world: &mut World,
     actors: &Actors,
@@ -103,7 +108,7 @@ pub fn dispatch_bare(
     {
         let mut ctx = Ctx::new(world, actor, conn, &mut out);
         match table.lookup(&word.to_lowercase()) {
-            Some(verb) if verb.gate.permits() => (verb.handler)(&mut ctx, rest),
+            Some(verb) if verb.gate.permits(ctx.world, actor) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
             None => ctx.feedback(format!("I don't understand \"{word}\".")),
         }
@@ -118,7 +123,7 @@ pub fn dispatch_bare(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Player, Room};
+    use musce_core::{Player, Room, Staff};
     use musce_proto::{Audience, Event, EventKind};
 
     /// Two test verbs over the public emit API, standing in for game content so
@@ -160,7 +165,7 @@ mod tests {
     ) -> Vec<String> {
         let table = table();
         let mut out = Vec::new();
-        dispatch_bare(&table, world, actors, actor, conn, line, &mut |o| {
+        dispatch_command(&table, world, actors, actor, conn, line, &mut |o| {
             out.push(o)
         });
         out.into_iter()
@@ -207,7 +212,7 @@ mod tests {
             c.emit_self(EventKind::Narration, "loud")
         });
         let mut out = Vec::new();
-        dispatch_bare(&t, &mut world, &actors, actor, conn, "yell", &mut |o| {
+        dispatch_command(&t, &mut world, &actors, actor, conn, "yell", &mut |o| {
             out.push(o)
         });
         assert!(matches!(
@@ -217,5 +222,38 @@ mod tests {
                 ..
             })]
         ));
+    }
+
+    /// A `Gate::Staff` verb runs for an actor carrying the `Staff` marker and is
+    /// refused (handler never runs) for one without it.
+    #[test]
+    fn staff_gate_permits_only_staff() {
+        let (mut world, actors, actor, conn) = world_with_player();
+
+        let mut t = CommandTable::new();
+        t.register("smite", Gate::Staff, |c, _| c.feedback("zap"));
+
+        // Non-staff: refused.
+        let mut out = Vec::new();
+        dispatch_command(&t, &mut world, &actors, actor, conn, "smite", &mut |o| {
+            out.push(o)
+        });
+        let text = match &out[..] {
+            [Outgoing::Event(Event { text, .. })] => text.clone(),
+            other => panic!("expected one event, got {other:?}"),
+        };
+        assert!(text.contains("aren't allowed"), "got: {text:?}");
+
+        // Mark the actor staff: now it runs.
+        let e = world.index().get(actor).unwrap();
+        world.ecs.insert_one(e, Staff).unwrap();
+        let mut out = Vec::new();
+        dispatch_command(&t, &mut world, &actors, actor, conn, "smite", &mut |o| {
+            out.push(o)
+        });
+        assert!(
+            matches!(&out[..], [Outgoing::Event(Event { text, .. })] if text.contains("zap")),
+            "staff actor should run the verb, got: {out:?}"
+        );
     }
 }

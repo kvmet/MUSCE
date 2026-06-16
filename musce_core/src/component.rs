@@ -57,6 +57,9 @@ marker!(Item, "item");
 marker!(Creature, "creature");
 marker!(Container, "container");
 marker!(Player, "player");
+// Permission marker: an actor carrying it may run staff-gated (admin) verbs. A
+// stand-in until accounts own permissions; seeded for now, like `Player`.
+marker!(Staff, "staff");
 
 // --- registry ------------------------------------------------------------
 
