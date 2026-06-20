@@ -182,8 +182,8 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
 
 /// `pilot <thing>`: aim the character's control cursor at something it controls,
 /// so bare commands drive that thing. The rule is game policy: you may only pilot
-/// what you control. (Establishing control itself is the deferred `@possess`
-/// admin verb; here the controllable thing is seeded.)
+/// what you control. (Establishing control is the `@possess` admin verb; the seed
+/// also wires one controllable thing for out-of-box play.)
 pub fn pilot(ctx: &mut Ctx, args: &str) {
     if args.trim().is_empty() {
         ctx.emit_self(EventKind::Feedback, "Pilot what?");

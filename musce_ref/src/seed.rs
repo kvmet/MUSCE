@@ -17,9 +17,9 @@ use musce_core::{
 /// `pilot`/`release`. Matches the `fn(&mut World)` shape the runtime's
 /// `Game.seed` expects.
 ///
-/// The seeded `Controls` edge is scaffolding for the first embodiment slice,
-/// standing in for the deferred `@possess` admin verb that will establish control
-/// at runtime. See `docs/architecture/networking-and-sessions.md`.
+/// The drone ships with a `Controls` edge to the avatar so there is a controllable
+/// thing in the world out of the box for `pilot`/`release` to exercise. See
+/// `docs/architecture/networking-and-sessions.md`.
 pub fn seed(world: &mut World) {
     let hall = room(world, "a stone hall, its flagstones worn smooth");
     let garden = room(world, "a quiet walled garden");

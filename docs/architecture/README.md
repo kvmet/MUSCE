@@ -45,8 +45,7 @@ These hold across every subsystem:
   sim-side audience resolver; the core verbs and seed live in `musce_ref`.)*
 - [admin-verbs.md](admin-verbs.md): the admin/builder `@`-verbs and the
   type-erased reflection primitives they ride (the full structural `Action` set,
-  `SetComponent` granularity, the generic mutators and guards). *(Built;
-  `@destroy` and dynamic possession `@possess` deferred.)*
+  `SetComponent` granularity, the generic mutators and guards). *(Built.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
@@ -97,7 +96,8 @@ Built:
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the bare verbs (`look`, `go`/bare direction, `take`, `drop`,
   `pilot`, `release`, `say`, `help`) and the admin/builder verbs
-  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) and their parsing, the unified
+  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
+  and their parsing, the unified
   name resolver (movement resolves an exit through it, matching a `Label`
   exact-then-prefix with a description-substring fallback), the takeable rule and
   the control rule, narration prose, the
@@ -107,14 +107,15 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Game logic: `@destroy` (deferred pending the `@destroy`/`@purge` decision), then
-  systems on the phase pipeline (designed in actions.md and sequences.md). The rest
-  of the admin builder verbs (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) are
-  built, riding the structural action set through the staff-gated admin frame.
-- Networking: WebSocket/SSH transports, real accounts/auth, dynamic possession
-  (the `@possess`/`@release` admin verbs), and modal overlays (designed in
+- Game logic: systems on the phase pipeline (designed in actions.md and
+  sequences.md). The admin builder verbs
+  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
+  are built, riding the structural action set through the staff-gated admin frame.
+- Networking: WebSocket/SSH transports, real accounts/auth, the gameplay
+  possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays (designed in
   networking-and-sessions.md). Raw TCP, the session floor, the session attachment
-  that `@play` sets, and durable `Controls`/`Focus` embodiment are built.
+  that `@play` sets, durable `Controls`/`Focus` embodiment, and the
+  `@possess`/`@unpossess` admin verbs are built.
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit
   aliases. Designed in ecs-and-relations.md.

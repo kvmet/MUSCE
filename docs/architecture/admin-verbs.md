@@ -2,10 +2,9 @@
 
 > Status: **built.** The structural action set and the reflection operation it
 > needs exist in `musce_core`/`musce_action` (engine); the admin builder verbs
-> (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) are built in `musce_ref` over
-> the engine's admin frame (a `Gate::Staff` `CommandTable` reached through the
-> `@`-namespace). `@destroy` (pending the `@destroy`/`@purge` question below) and
-> dynamic possession (`@possess`) remain deferred.
+> (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
+> are built in `musce_ref` over the engine's admin frame (a `Gate::Staff`
+> `CommandTable` reached through the `@`-namespace).
 
 This is the building half of the action layer: the admin/builder `@`-verbs and the
 type-erased reflection primitives they compile to. The core executor, the action
@@ -29,11 +28,19 @@ runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
   digs a room, then creates an exit entity each way (wired by `Relate`, hardcoded
   opposites n/s, e/w, u/d). Both report the new entity's id.
 - `@set #<id>.<component> <json>` overwrites a whole component.
+- `@destroy #<target>` despawns one entity, spilling its contents up into its own
+  container (the safe, recoverable default); `@purge #<target>` is the recursive
+  opt-in that takes the contents with it (irreversible).
+- `@possess #<target>` establishes the `Controls` capability edge from you onto a
+  target so you may pilot it; `@unpossess #<target>` tears that edge down and clears
+  a focus left dangling on the detached subtree. Both act only on your own edge:
+  `@possess` refuses a target someone else already controls (no silent steal) and
+  `@unpossess` refuses one you do not control, so neither can strand another
+  controller's cursor. Aiming the control cursor stays with the player `pilot` verb
+  (see [networking-and-sessions.md](networking-and-sessions.md)).
 
 Entities are referenced by id, written `#7`; the creation verbs report the new id
 so a builder can chain commands, and a future `@find` will resolve names to ids.
-`@destroy` and dynamic possession (`@possess`) are deferred (see the open questions
-below and [networking-and-sessions.md](networking-and-sessions.md)).
 
 ## SetComponent granularity
 
@@ -142,12 +149,14 @@ predicate for the guard above.
 
 ## Open questions
 
-- **`@destroy` vs `@purge`.** `despawn` reparents contents up (Reparent cascade in
-  `containment.rs`), so `@destroy bag` spills its contents to the floor. Builders
-  often expect destroy to take the contents with it. Decide whether `@destroy` is
-  despawn-with-reparent plus a separate recursive `@purge`, or recursive by
-  default. **`@destroy` is deferred out of the first admin slice pending this
-  decision;** every other builder verb shipped.
+- **`@destroy` vs `@purge`.** **Settled as a two-verb split.** `despawn` reparents
+  contents up (Reparent cascade in `containment.rs`), so `@destroy bag` spills its
+  contents to the floor: the safe, recoverable default, since a fat-fingered
+  destroy leaves the contents standing where the container was. `@purge` is the
+  recursive opt-in that walks the containment subtree depth-first and takes
+  everything with it, for when a builder genuinely means "and all of it gone." A
+  builder reaches for `@purge` only when they mean irreversible, so it refuses the
+  actor and refuses a subtree the actor is standing inside.
 - **`@dig` opposite-direction convention.** **Decided for the first admin slice:**
   hardcoded opposites n/s, e/w, u/d in `musce_ref`. A per-dig override (`@dig n=s`)
   and a content table remain a later option, added when a builder needs an

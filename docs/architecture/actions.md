@@ -13,8 +13,8 @@
 > [engine-and-game.md](engine-and-game.md)). This document covers the core
 > executor, the action vocabulary, command dispatch, and atomicity; the
 > type-erased reflection primitives and the admin/builder `@`-verbs that ride them
-> (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`, all built; `@destroy` and
-> `@possess` deferred) are in [admin-verbs.md](admin-verbs.md).
+> (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/
+> `@unpossess`) are in [admin-verbs.md](admin-verbs.md).
 
 ## Action is the only thing that mutates the world
 
@@ -271,5 +271,5 @@ The full structural action set (`Create`/`Destroy`/`SetComponent`/
 `RemoveComponent`), the type-erased reflection primitives it rides
 (`World::create`/`set_component`/`component_value`, the guards, the registry
 extensions), and the admin/builder `@`-verbs built over them
-(`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`; `@destroy` deferred) live in
-[admin-verbs.md](admin-verbs.md).
+(`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/
+`@unpossess`) live in [admin-verbs.md](admin-verbs.md).

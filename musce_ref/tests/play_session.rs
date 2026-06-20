@@ -215,6 +215,65 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
     let _ = handle.await.unwrap();
 }
 
+/// `@possess` establishes control over a thing created at runtime, which `pilot`
+/// can then aim at. Observed over the wire: `@create` a goblin, `@possess` it by
+/// the reported id, `pilot` it, then a bare `go north` moves the *goblin* (the
+/// arrival look shows the garden), proving the runtime-possession path.
+#[tokio::test]
+async fn possess_then_pilot_drives_a_created_thing() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // Create a goblin in the hall and capture the id the verb reports.
+    send(&mut writer, "@create goblin").await;
+    let created = read_burst(&mut reader).await;
+    let goblin = first_id(&created);
+
+    // Possess it by that id, then pilot it.
+    send(&mut writer, &format!("@possess #{goblin}")).await;
+    let possessed = read_burst(&mut reader).await;
+    assert!(
+        possessed.contains("possess"),
+        "@possess confirmation, got: {possessed:?}"
+    );
+
+    send(&mut writer, "pilot goblin").await;
+    let piloted = read_burst(&mut reader).await;
+    assert!(
+        piloted.contains("take control"),
+        "pilot confirmation, got: {piloted:?}"
+    );
+
+    // Bare commands now drive the goblin: moving north shows its arrival.
+    send(&mut writer, "go north").await;
+    let moved = read_burst(&mut reader).await;
+    assert!(
+        moved.contains("walled garden"),
+        "the possessed goblin moved north, got: {moved:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
 /// The admin frame end to end: the seeded avatar is staff, so `@create`/`@set`/
 /// `@dig` reach the admin table and mutate the world. Verified by chaining on the
 /// id `@create` reports and reading the result back through a bare `look`.
