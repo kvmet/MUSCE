@@ -46,21 +46,55 @@ impl World {
         self.target_of::<Focus>(controller)
     }
 
-    /// Point a controller's cursor at `target`. Pure mechanism: it sets the cursor
-    /// and enforces no policy (whether the controller may pilot `target` is the
-    /// game's rule). Fails only on the structural grounds `relate` checks.
-    pub fn set_focus(
-        &mut self,
-        controller: EntityId,
-        target: EntityId,
-    ) -> Result<(), RelationError> {
+    /// The root of an entity's control chain: the topmost controller, where
+    /// `Focus` lives. For an unpuppeted entity that is the entity itself; for a
+    /// puppet it is the controlling character at the top of the `Controls` chain.
+    /// Walks `Controls` upward, so it is correct at any chain depth.
+    ///
+    /// This is the inverse of the session's actor resolution (`focus_of(root)`,
+    /// which walks back down): together they map a connection's character to the
+    /// entity it drives and back. See
+    /// `docs/architecture/networking-and-sessions.md`.
+    pub fn control_root(&self, entity: EntityId) -> EntityId {
+        self.ancestors::<Controls>(entity)
+            .last()
+            .copied()
+            .unwrap_or(entity)
+    }
+
+    /// Point a controller's cursor at `target`. `Focus` is, by definition, the
+    /// cursor *within the control chain*, so this enforces that `target` is
+    /// something the controller controls (transitively, via `Controls`); a cursor
+    /// outside the chain is a structurally invalid state, not rejected play.
+    /// Whether a controller may *establish* control over something in the first
+    /// place stays game policy (the `pilot`/`@possess` gate); this governs only
+    /// where an existing controller's cursor may land.
+    pub fn set_focus(&mut self, controller: EntityId, target: EntityId) -> Result<(), FocusError> {
+        if target == controller || !self.ancestors::<Controls>(target).contains(&controller) {
+            return Err(FocusError::NotControlled);
+        }
         self.relate::<Focus>(controller, target)
+            .map_err(FocusError::Structural)
     }
 
     /// Drop a controller's cursor back to itself.
     pub fn clear_focus(&mut self, controller: EntityId) {
         self.unrelate::<Focus>(controller);
     }
+}
+
+/// Why a `set_focus` was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum FocusError {
+    /// `target` is not in the controller's `Controls` chain. `Focus` is the cursor
+    /// within that chain, so it cannot point outside it (the controller itself
+    /// included: absence of `Focus`, not a self-cursor, means "drive yourself").
+    #[error("target is not in the controller's control chain")]
+    NotControlled,
+    /// A structural failure from the underlying `relate` (a cycle or a missing
+    /// entity).
+    #[error(transparent)]
+    Structural(#[from] RelationError),
 }
 
 #[cfg(test)]
@@ -81,12 +115,49 @@ mod tests {
         let mut w = World::new();
         let character = being(&mut w, Player, "a pilot");
         let robot = being(&mut w, Creature, "a robot");
+        w.relate::<Controls>(robot, character).unwrap();
 
         assert_eq!(w.focus_of(character), None);
         w.set_focus(character, robot).unwrap();
         assert_eq!(w.focus_of(character), Some(robot));
         w.clear_focus(character);
         assert_eq!(w.focus_of(character), None);
+    }
+
+    #[test]
+    fn set_focus_rejects_an_uncontrolled_target() {
+        let mut w = World::new();
+        let character = being(&mut w, Player, "a pilot");
+        let stranger = being(&mut w, Creature, "a robot it does not control");
+
+        // No `Controls` edge: the cursor cannot land outside the chain.
+        assert!(matches!(
+            w.set_focus(character, stranger),
+            Err(FocusError::NotControlled)
+        ));
+        assert_eq!(w.focus_of(character), None);
+
+        // Nor on the controller itself (that is "drive yourself", i.e. no Focus).
+        assert!(matches!(
+            w.set_focus(character, character),
+            Err(FocusError::NotControlled)
+        ));
+    }
+
+    #[test]
+    fn control_root_walks_to_the_top() {
+        let mut w = World::new();
+        let character = being(&mut w, Player, "a pilot");
+        let mech = being(&mut w, Creature, "a mech");
+        let drone = being(&mut w, Creature, "a drone");
+        w.relate::<Controls>(mech, character).unwrap();
+        w.relate::<Controls>(drone, mech).unwrap();
+
+        // From any depth, the root is the topmost controller; an uncontrolled
+        // entity is its own root.
+        assert_eq!(w.control_root(drone), character);
+        assert_eq!(w.control_root(mech), character);
+        assert_eq!(w.control_root(character), character);
     }
 
     #[test]

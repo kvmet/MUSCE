@@ -27,18 +27,13 @@ impl NamedComponent for Description {
     const TAG: &'static str = "description";
 }
 
-/// A directed edge out of a room. Edge properties (door state, attenuation)
-/// live here as they appear.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Exit {
-    pub direction: String,
-    pub to: EntityId,
-}
-
+/// A short token a player types or sees to refer to an entity (an exit label
+/// like "north", later an item keyword). General, not exit-specific; the match
+/// key the name resolver keys off. Distinct from Description, which is prose.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Exits(pub Vec<Exit>);
-impl NamedComponent for Exits {
-    const TAG: &'static str = "exits";
+pub struct Label(pub String);
+impl NamedComponent for Label {
+    const TAG: &'static str = "label";
 }
 
 // Kind markers. Zero-sized; let archetypal queries filter by kind.
@@ -54,6 +49,11 @@ macro_rules! marker {
 
 marker!(Room, "room");
 marker!(Item, "item");
+// An exit is its own entity, not a field on a room: this marks the kind,
+// filters exits in queries, and keeps them out of takeable. Its label is the
+// general Label component; its origin and destination are the LeadsFrom and
+// LeadsTo relations (see exit.rs).
+marker!(Exit, "exit");
 marker!(Creature, "creature");
 marker!(Container, "container");
 marker!(Player, "player");

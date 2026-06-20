@@ -3,22 +3,27 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::component::{
-    ComponentRegistry, Container, Creature, Description, Exits, Id, Item, NamedComponent, Player,
-    RegistryError, Room, Staff,
+    ComponentRegistry, Container, Creature, Description, Exit, Id, Item, Label, NamedComponent,
+    Player, RegistryError, Room, Staff,
 };
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
+use crate::exit::{LeadsFrom, LeadsTo};
 use crate::id::{EntityId, EntityIndex};
 use crate::relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 
 type DespawnHandler = fn(&mut World, EntityId);
 type RebuildHandler = fn(&mut World);
+type RelateFn = fn(&mut World, EntityId, EntityId) -> Result<(), RelationError>;
+type UnrelateFn = fn(&mut World, EntityId);
 
 /// Type-erased per-relation cleanup hooks, populated by `register_relation`.
 #[derive(Default, Clone)]
 struct RelationRegistry {
     despawn: Vec<DespawnHandler>,
     rebuild: Vec<RebuildHandler>,
+    relate: HashMap<&'static str, RelateFn>,
+    unrelate: HashMap<&'static str, UnrelateFn>,
 }
 
 /// The authoritative in-memory game state: a hecs World plus the identity index
@@ -58,9 +63,10 @@ impl World {
     fn register_defaults(&mut self) {
         self.register_component::<Id>();
         self.register_component::<Description>();
-        self.register_component::<Exits>();
         self.register_component::<Room>();
         self.register_component::<Item>();
+        self.register_component::<Exit>();
+        self.register_component::<Label>();
         self.register_component::<Creature>();
         self.register_component::<Container>();
         self.register_component::<Player>();
@@ -68,6 +74,8 @@ impl World {
         self.register_relation::<Containment>();
         self.register_relation::<Controls>();
         self.register_relation::<Focus>();
+        self.register_relation::<LeadsFrom>();
+        self.register_relation::<LeadsTo>();
     }
 
     // --- registration ----------------------------------------------------
@@ -84,6 +92,12 @@ impl World {
         self.components.mark_relation_tag(R::TARGET_TAG);
         self.relations.despawn.push(despawn_relation::<R>);
         self.relations.rebuild.push(rebuild_relation::<R>);
+        self.relations
+            .relate
+            .insert(R::TARGET_TAG, relate_by_tag::<R>);
+        self.relations
+            .unrelate
+            .insert(R::TARGET_TAG, unrelate_by_tag::<R>);
     }
 
     // --- identity / lifecycle -------------------------------------------
@@ -235,6 +249,39 @@ impl World {
 
     pub fn unrelate<R: Relation>(&mut self, source: EntityId) {
         self.clear_target::<R>(source);
+    }
+
+    /// Type-erased relate: dispatch to the relation registered under `tag` (its
+    /// forward-link TARGET_TAG). The runtime face of relate, used by the Relate
+    /// action so wiring rides the executor like every other mutation.
+    pub fn relate_tag(
+        &mut self,
+        source: EntityId,
+        target: EntityId,
+        tag: &str,
+    ) -> Result<(), RelationError> {
+        let f = self
+            .relations
+            .relate
+            .get(tag)
+            .copied()
+            .ok_or_else(|| RelationError::UnknownKind(tag.to_string()))?;
+        f(self, source, target)
+    }
+
+    /// Type-erased unrelate: clear the forward link of the relation registered
+    /// under `tag`. The runtime face of unrelate, used by the Unrelate action.
+    /// Clearing a link that is not set is a no-op `Ok`, matching the typed
+    /// `unrelate`; only an unregistered `tag` is an error.
+    pub fn unrelate_tag(&mut self, source: EntityId, tag: &str) -> Result<(), RelationError> {
+        let f = self
+            .relations
+            .unrelate
+            .get(tag)
+            .copied()
+            .ok_or_else(|| RelationError::UnknownKind(tag.to_string()))?;
+        f(self, source);
+        Ok(())
     }
 
     pub fn target_of<R: Relation>(&self, source: EntityId) -> Option<EntityId> {
@@ -419,6 +466,18 @@ fn despawn_relation<R: Relation>(world: &mut World, id: EntityId) {
             }
         }
     }
+}
+
+fn relate_by_tag<R: Relation>(
+    world: &mut World,
+    source: EntityId,
+    target: EntityId,
+) -> Result<(), RelationError> {
+    world.relate::<R>(source, target)
+}
+
+fn unrelate_by_tag<R: Relation>(world: &mut World, source: EntityId) {
+    world.unrelate::<R>(source);
 }
 
 fn rebuild_relation<R: Relation>(world: &mut World) {

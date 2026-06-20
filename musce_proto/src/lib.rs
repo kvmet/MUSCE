@@ -9,11 +9,10 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use musce_core::EntityId;
-use serde::{Deserialize, Serialize};
 
 /// Net-local identity for one live connection. Monotonic and never reused, so a
 /// stale reference can never resolve to a different connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConnectionId(pub u64);
 
 impl ConnectionId {
@@ -26,7 +25,7 @@ impl ConnectionId {
 /// Per-connection presentation state net holds locally because it owns framing.
 /// The sim reads it (handed up on connect) and later updates it via outbound
 /// directives; it never lives in the world.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     /// Client can render ANSI color.
     pub color: bool,
@@ -72,7 +71,7 @@ pub enum Outgoing {
 
 /// A semantic, addressed piece of output. Kept semantic (not pre-rendered) so a
 /// richer client can render it its own way later.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Event {
     pub to: Audience,
     pub kind: EventKind,
@@ -103,14 +102,14 @@ impl Event {
 /// Who an event is for. `Entity`/`Room` are resolved to `Connection` sim-side by
 /// the action layer's audience resolver (it needs world state and the
 /// connection-to-entity map); net only ever routes `Connection`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Audience {
     Connection(ConnectionId),
     Entity(EntityId),
     Room(EntityId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
     /// Server-originated notice (connect banner, shutdown warning).
     System,

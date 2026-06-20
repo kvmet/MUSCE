@@ -1,9 +1,10 @@
 //! Name resolution: turn a player's typed noun into an `EntityId`. This is
 //! opinionated, English-leaning game policy over the world queries the engine
-//! exposes, so it lives in the game, not the engine. For now the `Description`
-//! doubles as the name (there is no `Name` component yet), matched
-//! case-insensitively as a substring over what the actor can plausibly refer to:
-//! the things in their hands and the things in their room. First match wins.
+//! exposes, so it lives in the game, not the engine. A typed noun matches a
+//! `Label` first (exact, then prefix), then falls back to a case-insensitive
+//! `Description` substring, over what the actor can plausibly refer to: the
+//! things in their hands, the things in their room, or the exits leading out of
+//! it. A compass direction is just a common label. First match wins.
 
 use musce_core::{Description, EntityId, World};
 
@@ -14,6 +15,8 @@ pub enum Scope {
     Inventory,
     /// Things on the floor of the actor's room (e.g. for `take`).
     Room,
+    /// The exits leading out of the actor's room (e.g. for `go`).
+    Exits,
 }
 
 /// Resolve `query` to a single entity in the given scope, or `None` on no match.
@@ -24,19 +27,44 @@ pub fn resolve(world: &World, actor: EntityId, scope: Scope, query: &str) -> Opt
         return None;
     }
 
-    let container = match scope {
-        Scope::Inventory => Some(actor),
-        Scope::Room => world.enclosing_room(actor),
+    let candidates: Vec<EntityId> = match scope {
+        Scope::Inventory => world.contents(actor),
+        Scope::Room => world
+            .enclosing_room(actor)
+            .map(|r| world.contents(r))
+            .unwrap_or_default(),
+        Scope::Exits => world
+            .enclosing_room(actor)
+            .map(|r| world.exits_of(r))
+            .unwrap_or_default(),
     };
 
-    container
+    // Read each candidate's label once (lowercased); the actor is never a match.
+    let labeled: Vec<(EntityId, Option<String>)> = candidates
         .into_iter()
-        .flat_map(|c| world.contents(c))
         .filter(|&e| e != actor)
-        .find(|&e| matches_name(world, e, &needle))
+        .map(|e| (e, world.label_of(e).map(|l| l.to_lowercase())))
+        .collect();
+
+    // Tier 1: exact label. Tier 2: label prefix. Tier 3: description substring.
+    let by_label = labeled
+        .iter()
+        .find(|(_, l)| l.as_deref() == Some(needle.as_str()))
+        .or_else(|| {
+            labeled
+                .iter()
+                .find(|(_, l)| l.as_deref().is_some_and(|l| l.starts_with(needle.as_str())))
+        });
+    if let Some(&(e, _)) = by_label {
+        return Some(e);
+    }
+    labeled
+        .iter()
+        .find(|(e, _)| description_contains(world, *e, &needle))
+        .map(|&(e, _)| e)
 }
 
-fn matches_name(world: &World, entity: EntityId, needle: &str) -> bool {
+fn description_contains(world: &World, entity: EntityId, needle: &str) -> bool {
     world
         .entity(entity)
         .and_then(|er| {
@@ -50,7 +78,7 @@ fn matches_name(world: &World, entity: EntityId, needle: &str) -> bool {
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Item, Player, Room};
+    use musce_core::{Exit, Item, Label, LeadsFrom, LeadsTo, Player, Room};
 
     fn spawn(w: &mut World, builder: EntityBuilder) -> EntityId {
         w.spawn(builder)
@@ -128,5 +156,46 @@ mod tests {
     fn miss_returns_none() {
         let (w, _room, actor) = world_with_actor();
         assert_eq!(resolve(&w, actor, Scope::Room, "dragon"), None);
+    }
+
+    #[test]
+    fn resolves_exits_by_label_and_items_by_description() {
+        let (mut w, room, actor) = world_with_actor();
+
+        // An exit labeled "north" leading out of the actor's room.
+        let dest = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Room);
+                },
+                "a garden",
+            ),
+        );
+        let exit = {
+            let mut b = EntityBuilder::new();
+            b.add(Exit);
+            b.add(Label("north".into()));
+            spawn(&mut w, b)
+        };
+        w.relate::<LeadsFrom>(exit, room).unwrap();
+        w.relate::<LeadsTo>(exit, dest).unwrap();
+
+        // Exact label and a unique prefix both resolve the exit.
+        assert_eq!(resolve(&w, actor, Scope::Exits, "north"), Some(exit));
+        assert_eq!(resolve(&w, actor, Scope::Exits, "n"), Some(exit));
+
+        // An item with only a description still resolves by substring in the room.
+        let key = spawn(
+            &mut w,
+            described(
+                |b| {
+                    b.add(Item);
+                },
+                "a brass key",
+            ),
+        );
+        w.move_entity(key, room).unwrap();
+        assert_eq!(resolve(&w, actor, Scope::Room, "brass"), Some(key));
     }
 }

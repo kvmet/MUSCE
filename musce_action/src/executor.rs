@@ -7,7 +7,6 @@
 use std::fmt;
 
 use musce_core::{EntityId, MutateError, RelationError, Value, World};
-use musce_proto::Event;
 
 /// The structural mutation vocabulary: the typed reflection of the bucket-1
 /// `World` mutators. Movement, lifecycle, and type-erased component edits. The
@@ -29,6 +28,16 @@ pub enum Action {
     },
     /// Remove one component by tag from a live entity.
     RemoveComponent { entity: EntityId, tag: String },
+    /// Wire a non-containment relation: point `source` at `target` under the
+    /// relation registered as `kind` (its forward-link tag). The typed face of
+    /// World::relate; Move is the containment-specific face.
+    Relate {
+        source: EntityId,
+        target: EntityId,
+        kind: String,
+    },
+    /// Clear `source`'s link in the relation registered as `kind`.
+    Unrelate { source: EntityId, kind: String },
 }
 
 /// A structural violation from `execute`. A correct handler validates its rules
@@ -71,17 +80,16 @@ impl std::error::Error for ExecError {
     }
 }
 
-/// Apply one action to the world. The `sink` is the structural-event channel
-/// (reaction systems read low-level facts here); no arm produces a structural
-/// event yet, so the channel is unused for now. Returns the action's **subject**
-/// (the moved/created/destroyed/edited entity); for `Create` that is the only way
-/// the caller learns the new id. Returns `ExecError` only on a structural
-/// violation, which the action's source is expected to have already ruled out.
-pub fn execute(
-    world: &mut World,
-    action: Action,
-    _sink: &mut impl FnMut(Event),
-) -> Result<EntityId, ExecError> {
+/// Apply one action to the world. Returns the action's **subject** (the
+/// moved/created/destroyed/edited entity); for `Create` that is the only way the
+/// caller learns the new id. Returns `ExecError` only on a structural violation,
+/// which the action's source is expected to have already ruled out.
+///
+/// There is no structural-fact channel yet. When reactions land it will be a typed
+/// mutation-fact stream (e.g. `Moved`/`Created`/`Destroyed`), **not** a perception
+/// `Event`, added at the same time as the first system that consumes it rather than
+/// threaded dead through every call site. See `docs/architecture/actions.md`.
+pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError> {
     match action {
         Action::Move { entity, into } => {
             world.move_entity(entity, into)?;
@@ -100,6 +108,18 @@ pub fn execute(
             world.remove_component(entity, &tag)?;
             Ok(entity)
         }
+        Action::Relate {
+            source,
+            target,
+            kind,
+        } => {
+            world.relate_tag(source, target, &kind)?;
+            Ok(source)
+        }
+        Action::Unrelate { source, kind } => {
+            world.unrelate_tag(source, &kind)?;
+            Ok(source)
+        }
     }
 }
 
@@ -107,11 +127,7 @@ pub fn execute(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Container, Description, Item, Map, MutateError, Room};
-
-    fn noop() -> impl FnMut(Event) {
-        |_| {}
-    }
+    use musce_core::{Container, Controls, Description, Item, Map, MutateError, Room};
 
     fn room(w: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();
@@ -152,7 +168,6 @@ mod tests {
                 entity: sword,
                 into: hall,
             },
-            &mut noop(),
         )
         .unwrap();
 
@@ -165,10 +180,10 @@ mod tests {
         let mut w = World::new();
         let a = container(&mut w);
         let b = container(&mut w);
-        execute(&mut w, Action::Move { entity: b, into: a }, &mut noop()).unwrap();
+        execute(&mut w, Action::Move { entity: b, into: a }).unwrap();
 
         // a into b would close a loop; the executor reflects the structural reject.
-        let err = execute(&mut w, Action::Move { entity: a, into: b }, &mut noop());
+        let err = execute(&mut w, Action::Move { entity: a, into: b });
         assert!(matches!(
             err,
             Err(ExecError::Relation(RelationError::Cycle))
@@ -187,7 +202,6 @@ mod tests {
                 entity: ghost,
                 into: hall,
             },
-            &mut noop(),
         );
         assert!(matches!(
             err,
@@ -206,7 +220,6 @@ mod tests {
                 entity: sword,
                 into: hall,
             },
-            &mut noop(),
         )
         .unwrap();
         assert_eq!(subject, sword);
@@ -220,7 +233,6 @@ mod tests {
             Action::Create {
                 components: item_blob("a torch"),
             },
-            &mut noop(),
         )
         .unwrap();
 
@@ -240,7 +252,7 @@ mod tests {
         w.move_entity(bag, hall).unwrap();
         w.move_entity(coin, bag).unwrap();
 
-        let subject = execute(&mut w, Action::Destroy { entity: bag }, &mut noop()).unwrap();
+        let subject = execute(&mut w, Action::Destroy { entity: bag }).unwrap();
 
         assert_eq!(subject, bag);
         assert!(w.entity(bag).is_none());
@@ -260,7 +272,6 @@ mod tests {
                 tag: "description".into(),
                 value: Value::String("a worn map".into()),
             },
-            &mut noop(),
         )
         .unwrap();
         assert_eq!(
@@ -274,7 +285,6 @@ mod tests {
                 entity: it,
                 tag: "description".into(),
             },
-            &mut noop(),
         )
         .unwrap();
         assert_eq!(w.component_value(it, "description"), None);
@@ -293,7 +303,6 @@ mod tests {
             Action::Create {
                 components: Value::Object(m),
             },
-            &mut noop(),
         );
         assert!(matches!(
             err,
@@ -308,7 +317,6 @@ mod tests {
                 tag: "id".into(),
                 value: Value::from(7u64),
             },
-            &mut noop(),
         );
         assert!(matches!(
             err,
@@ -316,63 +324,69 @@ mod tests {
         ));
     }
 
-    /// Merge as a read-modify-write done in the caller, standing in for the game:
-    /// the engine exposes `component_value` (read) and `SetComponent` (overwrite)
-    /// and owns neither the merge nor a verb. Here `Exits` is the multi-field
-    /// component; we read it, append one exit, and write it back.
     #[test]
-    fn merge_patch_is_a_caller_side_read_modify_write() {
+    fn relate_and_unrelate_wire_a_relation_through_execute() {
         let mut w = World::new();
-        let here = room(&mut w);
-        let there = room(&mut w);
+        let controller = item(&mut w);
+        let puppet = item(&mut w);
 
-        // Seed one exit so there is something to merge into.
-        let seed = {
-            let mut arr = Map::new();
-            arr.insert("direction".into(), Value::String("north".into()));
-            arr.insert("to".into(), Value::from(there.0));
-            Value::Array(vec![Value::Object(arr)])
-        };
-        execute(
+        let subject = execute(
             &mut w,
-            Action::SetComponent {
-                entity: here,
-                tag: "exits".into(),
-                value: seed,
+            Action::Relate {
+                source: puppet,
+                target: controller,
+                kind: "controlled_by".into(),
             },
-            &mut noop(),
         )
         .unwrap();
+        assert_eq!(subject, puppet);
+        assert_eq!(w.target_of::<Controls>(puppet), Some(controller));
+        assert_eq!(w.sources_of::<Controls>(controller), vec![puppet]);
 
-        // Read the current value, patch it (append a second exit), write it back.
-        let mut current = w.component_value(here, "exits").unwrap();
-        let new_exit = {
-            let mut o = Map::new();
-            o.insert("direction".into(), Value::String("south".into()));
-            o.insert("to".into(), Value::from(here.0));
-            Value::Object(o)
-        };
-        current.as_array_mut().unwrap().push(new_exit);
         execute(
             &mut w,
-            Action::SetComponent {
-                entity: here,
-                tag: "exits".into(),
-                value: current,
+            Action::Unrelate {
+                source: puppet,
+                kind: "controlled_by".into(),
             },
-            &mut noop(),
         )
         .unwrap();
+        assert_eq!(w.target_of::<Controls>(puppet), None);
+    }
 
-        // Both exits are present after the read-modify-write.
-        let exits = w
-            .entity(here)
-            .unwrap()
-            .get::<&musce_core::Exits>()
-            .unwrap()
-            .0
-            .clone();
-        let dirs: Vec<&str> = exits.iter().map(|e| e.direction.as_str()).collect();
-        assert_eq!(dirs, vec!["north", "south"]);
+    #[test]
+    fn relate_unknown_kind_is_exec_error() {
+        let mut w = World::new();
+        let a = item(&mut w);
+        let b = item(&mut w);
+        let err = execute(
+            &mut w,
+            Action::Relate {
+                source: a,
+                target: b,
+                kind: "no_such_relation".into(),
+            },
+        );
+        assert!(matches!(
+            err,
+            Err(ExecError::Relation(RelationError::UnknownKind(_)))
+        ));
+    }
+
+    #[test]
+    fn unrelate_unknown_kind_is_exec_error() {
+        let mut w = World::new();
+        let a = item(&mut w);
+        let err = execute(
+            &mut w,
+            Action::Unrelate {
+                source: a,
+                kind: "no_such_relation".into(),
+            },
+        );
+        assert!(matches!(
+            err,
+            Err(ExecError::Relation(RelationError::UnknownKind(_)))
+        ));
     }
 }

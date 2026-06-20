@@ -2,7 +2,7 @@
 
 > Status: **structural vocabulary built; engine/game split done.** The engine
 > owns the structural executor
-> (`Action::Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
+> (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
 > its emit API, and the sim-side audience resolver (`musce_action`), plus the
 > shared vocabulary (`musce_proto`). The game content (the verbs `look`, `go`/bare
@@ -27,14 +27,18 @@ actions; one *executor* applies them:
 - an effect or other system produces an `Action`
 
 ```
-execute(world, action, &mut sink) -> Result<(), ExecError>
+execute(world, action) -> Result<EntityId, ExecError>
 ```
 
 `execute` is **structural only**: it applies the typed mutator and enforces only
 the invariants that hold for every source (the entity exists, the relation stays
-acyclic), returning `ExecError` on a structural violation. It runs no gameplay
-rules and emits no events; the action set is just the typed reflection of the
-`World` mutators.
+acyclic), returning the action's subject `EntityId`, or `ExecError` on a
+structural violation. It runs no gameplay rules and emits no events; the action
+set is just the typed reflection of the `World` mutators. There is no
+structural-fact channel yet: rather than thread a dead sink through every call
+site, it lands with the first reaction system that reads it, and as a typed
+mutation fact (`Moved`/`Created`/...), not a perception `Event` (see "Reactions
+respond" below).
 
 Gameplay rules and perception prose live one layer up, in the verb handlers. "The
 take logic exists once" is achieved by shared rule/perception helpers (e.g. a
@@ -135,7 +139,7 @@ are one `Move`:
 | `@summon <t>` | `Move` | into `container_of(me)` | admin |
 | `@create <kind>` | `Create` | spawn, then `Move` into my room | admin |
 | `@destroy <t>` | `Destroy` | `despawn(t)` | admin |
-| `@dig <dir> [name]` | `Create` + link | spawn `Room`, add `Exits` both ways | admin |
+| `@dig <dir> [name]` | `Create` + `Relate` | spawn a `Room`, then `Create` + `Relate` an exit entity each way | admin |
 
 ## Output is the Event channel, not an action
 
@@ -238,8 +242,10 @@ Engine mutators are already built; they stay `World` methods. The `Action` enum
 is only as large as the verbs need. The first slice (built) is deliberately
 minimal:
 
-- `Action::Move { entity, into }` only, with `execute` and `ExecError`. `execute`
-  carries a structural-event sink for reactions; `Move` emits nothing into it yet.
+- `Action::Move { entity, into }` only, with `execute` and `ExecError`. The
+  reaction/structural-fact channel is deferred: rather than thread a dead sink
+  through every call site, it lands with the first system that consumes it, typed
+  as a mutation fact rather than a perception `Event`.
 - Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, `say`, and `help`
   (the game documents its own in-world surface), in a `CommandTable` looked up by
   exact name then first registered prefix (movement registered before `say`, so
@@ -251,9 +257,9 @@ minimal:
   (`musce_action::Actors`). Durable embodiment (the `Controls` relation + `Focus`
   component, world state) is deferred and will back the attachment without
   touching handlers, which already take the actor explicitly.
-- A code-seeded world (a hall, a garden, a cellar linked by `Exits`; a takeable
-  key; a player avatar), built with `World::spawn` when the DB loads empty, as
-  ground truth for tests and play.
+- A code-seeded world (a hall, a garden, a cellar linked by exit entities; a
+  takeable key; a player avatar), built with `World::spawn` when the DB loads empty,
+  as ground truth for tests and play.
 
 Output is addressed semantically and resolved sim-side: handlers emit first-person
 feedback to the acting connection and third-person narration to the room (the

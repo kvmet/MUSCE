@@ -49,4 +49,8 @@ until then this convention is the gate.
 
 ## Hygiene
 
-- Run `bb bb/hygiene.clj ./` to check file hygiene rules across the whole project before any commit.
+Run `bb bb/hygiene.clj ./` to check file hygiene rules across the whole project before any commit.
+
+## Etiquette
+
+When referring to commands such as `@play` in commit messages, encase them in backticks to prevent GitHub interpreting them as a username reference.

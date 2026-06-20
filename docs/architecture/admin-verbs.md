@@ -26,8 +26,8 @@ runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
   `@goto` travels to a thing's enclosing room (refusing a location-less target,
   pointing at `@tel`); `@summon` brings a thing to you regardless of where it is.
 - `@create <kind>` spawns from a kind table into your room; `@dig <dir> [name]`
-  digs a room and links it both ways (hardcoded n/s, e/w, u/d). Both report the new
-  entity's id.
+  digs a room, then creates an exit entity each way (wired by `Relate`, hardcoded
+  opposites n/s, e/w, u/d). Both report the new entity's id.
 - `@set #<id>.<component> <json>` overwrites a whole component.
 
 Entities are referenced by id, written `#7`; the creation verbs report the new id
@@ -85,10 +85,16 @@ object**, not its field count. A newtype like `Description(String)` serializes
 *transparently* as a bare string, so `#7.description` is already the leaf: it has
 no addressable sub-field and is always whole-set. A struct that serializes as
 `{"key": ...}` (even a single-keyed one) does have an addressable field. Today
-every component is a newtype scalar, an array (`exits`), or a unit marker; none
-serialize as objects, so there is nothing to field-address yet. The first
-object-shaped component (a `Stats`) is what unlocks the field form, additively on
-this same syntax.
+every component is a newtype scalar or a unit marker; none serialize as objects, so
+there is nothing to field-address yet. The first object-shaped component (a `Stats`)
+is what unlocks the field form, additively on this same syntax.
+
+No component needs a structured edit today: exits are wired by `Relate`, not by an
+array `SetComponent`, so the merge-patch read-modify-write has no current caller. An
+object component is *guaranteed* to arrive (`Stats` and kin), and that is the
+trigger twice over: it unlocks the field form **and** it is the point at which a
+first-class merge/patch primitive becomes worth building rather than hand-rolling
+per verb. Tracked here so the decision is made deliberately then, not rediscovered.
 
 ## The structural action set and reflection primitives
 

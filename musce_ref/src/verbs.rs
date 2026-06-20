@@ -8,7 +8,7 @@
 //! `docs/architecture/actions.md`.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{Controls, Description, EntityId, Exits, World};
+use musce_core::{Description, EntityId, World};
 use musce_proto::EventKind;
 
 use crate::names::{self, Scope};
@@ -57,11 +57,22 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
         return;
     }
 
-    let Some((direction, dest)) = find_exit(ctx.world, room, dir) else {
+    let Some(exit) = names::resolve(ctx.world, ctx.actor, Scope::Exits, dir) else {
         ctx.emit_self(EventKind::Feedback, "You can't go that way.");
         return;
     };
+    let Some(dest) = ctx.world.exit_destination(exit) else {
+        // A resolvable exit with no destination is a malformed (half-wired) exit,
+        // not a game state worth its own flavor; to the player it is no exit.
+        ctx.emit_self(EventKind::Feedback, "You can't go that way.");
+        return;
+    };
+    if let Err(reason) = can_traverse(ctx.world, ctx.actor, exit) {
+        ctx.emit_self(EventKind::Feedback, reason);
+        return;
+    }
 
+    let direction = ctx.world.label_of(exit).unwrap_or_else(|| dir.to_string());
     let who = display_name(ctx.world, ctx.actor);
     // Departure narration to the room being left. Resolved after the move
     // commits, so the actor (now elsewhere) is naturally not among its hearers.
@@ -79,7 +90,6 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
             entity: ctx.actor,
             into: dest,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -121,7 +131,6 @@ pub fn take(ctx: &mut Ctx, args: &str) {
             entity: target,
             into: ctx.actor,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -160,7 +169,6 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
             entity: target,
             into: room,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -181,23 +189,19 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Pilot what?");
         return;
     }
-    let character = character_of(ctx.world, ctx.actor);
+    let character = ctx.world.control_root(ctx.actor);
     let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, args) else {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
-    // The control rule: you may only pilot what you control.
-    if ctx.world.target_of::<Controls>(target) != Some(character) {
-        ctx.emit_self(EventKind::Feedback, "You can't pilot that.");
-        return;
-    }
 
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, character);
     let room = ctx.world.enclosing_room(character);
 
-    // Aiming the cursor is a single hop from the root, so it cannot cycle; the
-    // guard is a structural backstop, not a rule.
+    // The control rule lives in `set_focus`: the cursor may only land on something
+    // the character controls (transitively, so deep chains pilot too). A reject is
+    // "you don't control that", surfaced to the player.
     if ctx.world.set_focus(character, target).is_err() {
         ctx.emit_self(EventKind::Feedback, "You can't pilot that.");
         return;
@@ -216,7 +220,7 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
 /// `release`: drop the character's cursor back to itself, so bare commands drive
 /// you again. Tears down no `Controls` edge, so you can step back in.
 pub fn release(ctx: &mut Ctx, _args: &str) {
-    let character = character_of(ctx.world, ctx.actor);
+    let character = ctx.world.control_root(ctx.actor);
     let Some(piloted) = ctx.world.focus_of(character) else {
         ctx.emit_self(EventKind::Feedback, "You aren't piloting anything.");
         return;
@@ -279,15 +283,15 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     let mut s = description_or(world, room, "An indistinct space.");
 
     s.push_str("\nExits: ");
-    match world
-        .entity(room)
-        .and_then(|er| er.get::<&Exits>().map(|e| e.0.clone()))
-    {
-        Some(exits) if !exits.is_empty() => {
-            let dirs: Vec<&str> = exits.iter().map(|e| e.direction.as_str()).collect();
-            s.push_str(&dirs.join(", "));
-        }
-        _ => s.push_str("none"),
+    let dirs: Vec<String> = world
+        .exits_of(room)
+        .into_iter()
+        .filter_map(|e| world.label_of(e))
+        .collect();
+    if dirs.is_empty() {
+        s.push_str("none");
+    } else {
+        s.push_str(&dirs.join(", "));
     }
     s.push('.');
 
@@ -306,33 +310,13 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     Some(s)
 }
 
-/// Find an exit out of `room` whose direction matches `query` (exact first, then
-/// a unique prefix so `n` resolves `north`). Returns the canonical direction and
-/// the destination room.
-fn find_exit(world: &World, room: EntityId, query: &str) -> Option<(String, EntityId)> {
-    let q = query.to_lowercase();
-    let exits = world.entity(room)?.get::<&Exits>().map(|e| e.0.clone())?;
-    exits
-        .iter()
-        .find(|e| e.direction.eq_ignore_ascii_case(&q))
-        .or_else(|| {
-            exits
-                .iter()
-                .find(|e| e.direction.to_lowercase().starts_with(&q))
-        })
-        .map(|e| (e.direction.clone(), e.to))
-}
-
-/// The root of an actor's control stack: the entity controlled by no one, where
-/// `Focus` lives. When the actor is itself (no puppet) that is the actor; when
-/// piloting, it is the controlling character. Walks `Controls` to the root, so it
-/// stays correct at any chain depth even though this slice only seeds depth one.
-fn character_of(world: &World, actor: EntityId) -> EntityId {
-    world
-        .ancestors::<Controls>(actor)
-        .last()
-        .copied()
-        .unwrap_or(actor)
+/// Whether `mover` may traverse `exit` right now. The traversal veto is a game
+/// rule, not an engine concept: the engine provides the exit entity and a home
+/// for future door/lock state but bakes in no lock semantics. Shared so a
+/// scripted mover is vetoed exactly as a player is. No doors exist yet, so every
+/// exit is passable; this is the seam they will hang on.
+fn can_traverse(_world: &World, _mover: EntityId, _exit: EntityId) -> Result<(), &'static str> {
+    Ok(())
 }
 
 /// Takeable means a movable object, not a fixture or a being: rooms and players
@@ -354,8 +338,9 @@ fn description_or(world: &World, entity: EntityId, fallback: &str) -> String {
     description(world, entity).unwrap_or_else(|| fallback.to_string())
 }
 
-/// A name for narration. Falls back to a neutral noun when an entity has no
-/// description yet (no `Name` component exists in this slice).
+/// A name for narration. Uses the `Description` because most entities carry no
+/// `Label` yet (a `Label` is the resolver match token, not display prose; see
+/// names.rs), falling back to a neutral noun when an entity has no description.
 fn display_name(world: &World, entity: EntityId) -> String {
     description_or(world, entity, "something")
 }
@@ -365,7 +350,7 @@ mod tests {
     use super::*;
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Creature, Exit, Item, Player, Room};
+    use musce_core::{Controls, Creature, Exit, Item, Label, LeadsFrom, LeadsTo, Player, Room};
     use musce_proto::{Audience, ConnectionId};
 
     struct Fixture {
@@ -420,17 +405,12 @@ mod tests {
     }
 
     fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
-        let existing = w
-            .entity(from)
-            .and_then(|er| er.get::<&Exits>().map(|e| e.0.clone()))
-            .unwrap_or_default();
-        let mut exits = existing;
-        exits.push(Exit {
-            direction: dir.into(),
-            to,
+        let exit = spawn(w, |b| {
+            b.add(Exit);
+            b.add(Label(dir.into()));
         });
-        let e = w.index().get(from).unwrap();
-        w.ecs.insert_one(e, Exits(exits)).unwrap();
+        w.relate::<LeadsFrom>(exit, from).unwrap();
+        w.relate::<LeadsTo>(exit, to).unwrap();
     }
 
     /// Run a handler and return its emitted (pre-resolution) outbound buffer.

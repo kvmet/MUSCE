@@ -11,7 +11,7 @@
 //! new id so a builder can chain commands.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{EntityId, Exits, Map, Value, World};
+use musce_core::{EntityId, Map, Value, World};
 use musce_proto::EventKind;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
@@ -53,7 +53,6 @@ pub fn tel(ctx: &mut Ctx, args: &str) {
             entity: target,
             into: dest,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -89,7 +88,6 @@ pub fn goto(ctx: &mut Ctx, args: &str) {
             entity: ctx.actor,
             into: room,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -115,7 +113,6 @@ pub fn summon(ctx: &mut Ctx, args: &str) {
             entity: target,
             into: dest,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -141,7 +138,7 @@ pub fn create(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let id = match execute(ctx.world, Action::Create { components: blob }, &mut |_| {}) {
+    let id = match execute(ctx.world, Action::Create { components: blob }) {
         Ok(id) => id,
         Err(e) => {
             ctx.emit_self(EventKind::Feedback, format!("Couldn't create that: {e}."));
@@ -154,7 +151,6 @@ pub fn create(ctx: &mut Ctx, args: &str) {
             entity: id,
             into: room,
         },
-        &mut |_| {},
     )
     .is_err()
     {
@@ -202,7 +198,6 @@ pub fn dig(ctx: &mut Ctx, args: &str) {
         Action::Create {
             components: room_blob(name),
         },
-        &mut |_| {},
     ) {
         Ok(id) => id,
         Err(e) => {
@@ -210,7 +205,7 @@ pub fn dig(ctx: &mut Ctx, args: &str) {
             return;
         }
     };
-    if !add_exit(ctx.world, here, dir, new) || !add_exit(ctx.world, new, opposite, here) {
+    if !dig_exit(ctx.world, here, new, dir) || !dig_exit(ctx.world, new, here, opposite) {
         ctx.emit_self(EventKind::Feedback, "Dug the room, but couldn't link it.");
         return;
     }
@@ -268,7 +263,6 @@ pub fn set(ctx: &mut Ctx, args: &str) {
             tag: component.to_string(),
             value,
         },
-        &mut |_| {},
     ) {
         Ok(_) => ctx.emit_self(
             EventKind::Feedback,
@@ -330,37 +324,50 @@ fn opposite_dir(d: &str) -> Option<(&'static str, &'static str)> {
 
 fn has_exit(world: &World, room: EntityId, dir: &str) -> bool {
     world
-        .entity(room)
-        .and_then(|er| {
-            er.get::<&Exits>()
-                .map(|e| e.0.iter().any(|x| x.direction == dir))
-        })
-        .unwrap_or(false)
+        .exits_of(room)
+        .into_iter()
+        .any(|e| world.label_of(e).as_deref() == Some(dir))
 }
 
-/// Append one exit to a room's `exits` component via the structural path: read the
-/// current value as JSON, push the new edge, overwrite. Returns whether it
-/// committed. (The read-modify-write the engine exposes `component_value` for.)
-fn add_exit(world: &mut World, room: EntityId, dir: &str, to: EntityId) -> bool {
-    let mut arr = match world.component_value(room, "exits") {
-        Some(Value::Array(a)) => a,
-        _ => Vec::new(),
+/// Spawn one exit entity from `from` to `to`, labeled `label`, through the
+/// executor (Create the exit, then Relate it both endpoints) so the wiring
+/// rides the action path like every other mutation. Returns whether it
+/// committed.
+fn dig_exit(world: &mut World, from: EntityId, to: EntityId, label: &str) -> bool {
+    let exit = match execute(
+        world,
+        Action::Create {
+            components: exit_blob(label),
+        },
+    ) {
+        Ok(id) => id,
+        Err(_) => return false,
     };
-    let mut exit = Map::new();
-    exit.insert("direction".into(), Value::String(dir.to_string()));
-    exit.insert("to".into(), Value::from(to.0));
-    arr.push(Value::Object(exit));
-
     execute(
         world,
-        Action::SetComponent {
-            entity: room,
-            tag: "exits".to_string(),
-            value: Value::Array(arr),
+        Action::Relate {
+            source: exit,
+            target: from,
+            kind: "leads_from".into(),
         },
-        &mut |_| {},
     )
     .is_ok()
+        && execute(
+            world,
+            Action::Relate {
+                source: exit,
+                target: to,
+                kind: "leads_to".into(),
+            },
+        )
+        .is_ok()
+}
+
+fn exit_blob(label: &str) -> Value {
+    let mut m = Map::new();
+    m.insert("exit".into(), Value::Null);
+    m.insert("label".into(), Value::String(label.to_string()));
+    Value::Object(m)
 }
 
 fn display_name(world: &World, id: EntityId) -> String {
@@ -431,9 +438,10 @@ mod tests {
 
     /// The destination of a room's exit in a given direction, if any.
     fn exit_to(w: &World, room: EntityId, dir: &str) -> Option<EntityId> {
-        w.entity(room)?
-            .get::<&Exits>()
-            .and_then(|e| e.0.iter().find(|x| x.direction == dir).map(|x| x.to))
+        w.exits_of(room)
+            .into_iter()
+            .find(|&e| w.label_of(e).as_deref() == Some(dir))
+            .and_then(|e| w.exit_destination(e))
     }
 
     #[test]

@@ -797,7 +797,6 @@ name = "musce_proto"
 version = "0.1.0"
 dependencies = [
  "musce_core",
- "serde",
 ]
 
 [[package]]

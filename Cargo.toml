@@ -20,4 +20,3 @@ musce_host = { path = "musce_host" }
 musce_net = { path = "musce_net" }
 musce_persistence = { path = "musce_persistence" }
 musce_proto = { path = "musce_proto" }
-musce_ref = { path = "musce_ref" }

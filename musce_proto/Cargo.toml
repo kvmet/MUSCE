@@ -5,4 +5,3 @@ edition = "2024"
 
 [dependencies]
 musce_core = { workspace = true }
-serde      = { workspace = true }

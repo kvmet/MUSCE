@@ -35,6 +35,8 @@ struct Session {
 /// Resolve the entity a character's bare commands drive: the entity it is
 /// piloting (its `Focus`) if that is live, otherwise the character itself. Read
 /// live so a `pilot` that moves `Focus` redirects subsequent commands at once.
+/// `World::control_root` is the inverse, walking from a driven puppet back to its
+/// character.
 ///
 /// The liveness check is a **defensive backstop only**: a focused entity's
 /// despawn clears the cursor through the `Focus` `Detach` cascade, so a `Focus`
@@ -193,7 +195,7 @@ fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Id, Player};
+    use musce_core::{Controls, Description, EntityId, Id, Player};
     use musce_proto::Audience;
 
     /// An engine-only `@play` policy for tests: choose the first `Player` in the
@@ -314,6 +316,7 @@ mod tests {
         let mut world = World::new();
         let character = spawn_avatar(&mut world);
         let robot = spawn_avatar(&mut world);
+        world.relate::<Controls>(robot, character).unwrap();
         world.set_focus(character, robot).unwrap();
         assert_eq!(resolve_actor(&world, character), robot);
     }

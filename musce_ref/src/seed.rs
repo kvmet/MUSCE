@@ -7,7 +7,8 @@
 
 use musce_core::hecs::EntityBuilder;
 use musce_core::{
-    Controls, Creature, Description, EntityId, Exit, Exits, Item, Player, Room, Staff, World,
+    Controls, Creature, Description, EntityId, Exit, Item, Label, LeadsFrom, LeadsTo, Player, Room,
+    Staff, World,
 };
 
 /// Build the starter map into an empty world: a hall, a garden to its north, and
@@ -24,9 +25,10 @@ pub fn seed(world: &mut World) {
     let garden = room(world, "a quiet walled garden");
     let cellar = room(world, "a damp, low-ceilinged cellar");
 
-    set_exits(world, hall, &[("north", garden), ("down", cellar)]);
-    set_exits(world, garden, &[("south", hall)]);
-    set_exits(world, cellar, &[("up", hall)]);
+    link(world, hall, garden, "north");
+    link(world, hall, cellar, "down");
+    link(world, garden, hall, "south");
+    link(world, cellar, hall, "up");
 
     let key = item(world, "a brass key");
     world.move_entity(key, garden).expect("seed: place key");
@@ -97,19 +99,19 @@ fn spawn(world: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
     world.spawn(b)
 }
 
-fn set_exits(world: &mut World, room: EntityId, exits: &[(&str, EntityId)]) {
-    let exits = exits
-        .iter()
-        .map(|(dir, to)| Exit {
-            direction: (*dir).into(),
-            to: *to,
-        })
-        .collect();
-    let e = world.index().get(room).expect("seed: room just spawned");
+/// Spawn an exit entity leading from `from` to `to`, labeled `label`, wiring
+/// both endpoint relations.
+fn link(world: &mut World, from: EntityId, to: EntityId, label: &str) {
+    let exit = spawn(world, |b| {
+        b.add(Exit);
+        b.add(Label(label.into()));
+    });
     world
-        .ecs
-        .insert_one(e, Exits(exits))
-        .expect("seed: set exits");
+        .relate::<LeadsFrom>(exit, from)
+        .expect("seed: exit origin");
+    world
+        .relate::<LeadsTo>(exit, to)
+        .expect("seed: exit destination");
 }
 
 #[cfg(test)]
@@ -125,17 +127,13 @@ mod tests {
         let avatar = find_player(&w).expect("seed places a player");
         let start = w.enclosing_room(avatar).expect("avatar is in a room");
 
-        // North out of the start room reaches a room that leads back south.
+        // North out of the start room reaches a room.
         let north = w
-            .entity(start)
-            .unwrap()
-            .get::<&Exits>()
-            .unwrap()
-            .0
-            .iter()
-            .find(|e| e.direction == "north")
-            .map(|e| e.to);
-        assert!(north.is_some());
+            .exits_of(start)
+            .into_iter()
+            .find(|&e| w.label_of(e).as_deref() == Some("north"))
+            .expect("a north exit out of the start room");
+        assert!(w.exit_destination(north).is_some());
     }
 
     #[test]

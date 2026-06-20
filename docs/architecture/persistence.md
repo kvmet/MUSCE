@@ -8,9 +8,12 @@ decision shapes everything here. See
 
 ## Snapshot model
 
-A `Snapshot` is a point-in-time save payload produced on the sim thread (cheap:
-walk the components) and handed to the persistence thread, which does the actual
-writes. The sim never blocks on the database.
+A `Snapshot` is a point-in-time save payload produced on the sim thread and handed
+to the persistence thread, which does the actual writes, so the sim never blocks on
+the database for the write. Building the snapshot is **not** free, though: it is a
+full serialize of every live entity on the sim thread, O(entities) of allocation
+and JSON work each save, which surfaces as a periodic tick-time spike that grows
+with the world. Dirty-tracked partial snapshots are the fix (see below).
 
 What is and isn't serialized:
 

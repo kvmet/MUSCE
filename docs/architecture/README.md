@@ -65,7 +65,9 @@ These hold across every subsystem:
 Built:
 
 - `musce_core`: world, identity, relation layer, containment and control (the
-  `Controls` and `Focus` relations behind durable embodiment), the `Staff`
+  `Controls` and `Focus` relations behind durable embodiment), relation-backed exit
+  entities (an `Exit` marker plus the general `Label` component, wired by
+  `LeadsFrom`/`LeadsTo` with the `DespawnSources` cascade), the `Staff`
   permission marker, JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
@@ -84,8 +86,9 @@ Built:
   action, and host so the action layer never touches the transport.
 - `musce_action`: the engine's action layer, free of game content. The
   structural executor (the full `Action` set:
-  `Move`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`, returning the
-  action's subject), the `CommandTable` lookup and public `register`, the `Gate`
+  `Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`,
+  returning the action's subject), the `CommandTable` lookup and public `register`,
+  the `Gate`
   tiers (`Open`/`Staff`) and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface a game's verb handlers
   program against), the conn->actor audience index (`Actors`, derived from the
@@ -94,8 +97,10 @@ Built:
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the bare verbs (`look`, `go`/bare direction, `take`, `drop`,
   `pilot`, `release`, `say`, `help`) and the admin/builder verbs
-  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) and their parsing, name
-  resolution, the takeable rule and the control rule, narration prose, the
+  (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) and their parsing, the unified
+  name resolver (movement resolves an exit through it, matching a `Label`
+  exact-then-prefix with a description-substring fallback), the takeable rule and
+  the control rule, narration prose, the
   code-seeded starter world (with a controllable drone), and the `@play` actor
   policy; builds the `Game` and has `main` plus the end-to-end test. A real game
   forks this crate.
@@ -110,6 +115,9 @@ Deferred (with seams in place where noted):
   (the `@possess`/`@release` admin verbs), and modal overlays (designed in
   networking-and-sessions.md). Raw TCP, the session floor, the session attachment
   that `@play` sets, and durable `Controls`/`Focus` embodiment are built.
+- Doors: the optional `Portal`/`Through` layer over the built exit entities (a
+  two-sided lockable door reading identically from both rooms), and explicit exit
+  aliases. Designed in ecs-and-relations.md.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

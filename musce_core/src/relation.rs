@@ -77,4 +77,6 @@ pub enum RelationError {
     NoSuchEntity(EntityId),
     #[error("relation would create a cycle")]
     Cycle,
+    #[error("unknown relation kind: {0}")]
+    UnknownKind(String),
 }

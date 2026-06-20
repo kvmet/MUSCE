@@ -25,6 +25,12 @@ pub struct Snapshot {
 impl World {
     /// Serialize every live entity. Forward relation links are included; reverse
     /// lists and the index are derived and omitted.
+    ///
+    /// TODO(perf): this is a full serialize of the whole world, run synchronously
+    /// on the sim thread, so it costs O(entities) of allocation and JSON work per
+    /// save and surfaces as a periodic tick-time spike that grows with world size.
+    /// Dirty-tracked / incremental snapshots are the fix (deferred; see the README
+    /// roadmap and persistence.md). Fine at the current scale.
     pub fn snapshot(&mut self) -> Snapshot {
         let entities_h: Vec<hecs::Entity> = self.ecs.query::<hecs::Entity>().iter().collect();
 

@@ -4,6 +4,7 @@
 pub mod component;
 pub mod containment;
 pub mod control;
+pub mod exit;
 pub mod id;
 pub mod relation;
 pub mod snapshot;
@@ -16,11 +17,12 @@ pub use hecs;
 pub use serde_json::{Map, Value};
 
 pub use component::{
-    Container, Creature, Description, Exit, Exits, Id, Item, NamedComponent, Player, RegistryError,
+    Container, Creature, Description, Exit, Id, Item, Label, NamedComponent, Player, RegistryError,
     Room, Staff,
 };
 pub use containment::Containment;
-pub use control::{Controls, Focus};
+pub use control::{Controls, Focus, FocusError};
+pub use exit::{LeadsFrom, LeadsTo};
 pub use id::{EntityId, EntityIndex};
 pub use relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 pub use snapshot::{EntityBlob, Snapshot};
