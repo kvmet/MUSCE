@@ -9,6 +9,7 @@ use crate::component::{
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
 use crate::exit::{LeadsFrom, LeadsTo};
+use crate::fact::{DestroyCause, Fact};
 use crate::id::{EntityId, EntityIndex};
 use crate::relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 
@@ -38,6 +39,10 @@ pub struct World {
     /// copies (does not drain) this; it clears only once persistence acks via
     /// `confirm_saved`, so a failed save can't lose a pending delete.
     despawned: Vec<EntityId>,
+    /// Structural facts emitted since the last drain: a transient per-tick buffer
+    /// the runtime drains via `take_facts` before running systems. Not persisted
+    /// (a snapshot serializes only registered components); mirrors `despawned`.
+    facts: Vec<Fact>,
 }
 
 impl Default for World {
@@ -55,6 +60,7 @@ impl World {
             relations: RelationRegistry::default(),
             components: ComponentRegistry::default(),
             despawned: Vec::new(),
+            facts: Vec::new(),
         };
         w.register_defaults();
         w
@@ -125,8 +131,17 @@ impl World {
         id
     }
 
-    /// Despawn an entity, running every relation's cascade first.
+    /// Despawn an entity, running every relation's cascade first. A directly
+    /// targeted despawn; cascade-removed entities go through `despawn_with_cause`
+    /// with `Cascade`.
     pub fn despawn(&mut self, id: EntityId) {
+        self.despawn_with_cause(id, DestroyCause::Direct);
+    }
+
+    /// The despawn body, tagged with why this entity is dying. `cause` rides into
+    /// the `Destroyed` fact so a reaction can tell a directly destroyed entity from
+    /// one swept up by a relation cascade.
+    fn despawn_with_cause(&mut self, id: EntityId, cause: DestroyCause) {
         if self.index.get(id).is_none() {
             return;
         }
@@ -135,10 +150,35 @@ impl World {
         for h in handlers {
             h(self, id);
         }
+        // Snapshot what a reaction needs before the entity leaves the world. It is
+        // still live here: a cascade handler may have detached it from a target's
+        // reverse list, but never strips its own forward `Containment` link or its
+        // `Description`, so `enclosing_room` and the name still resolve. After
+        // `index.remove` below they would not.
+        let last_room = self.enclosing_room(id);
+        let name = self
+            .entity(id)
+            .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()));
+        self.emit_fact(Fact::Destroyed {
+            entity: id,
+            last_room,
+            name,
+            cause,
+        });
         if let Some(e) = self.index.remove(id) {
             let _ = self.ecs.despawn(e);
         }
         self.despawned.push(id);
+    }
+
+    fn emit_fact(&mut self, fact: Fact) {
+        self.facts.push(fact);
+    }
+
+    /// Drain the structural-fact buffer. The runtime calls this once per tick
+    /// before running systems; facts not drained leak into the next tick.
+    pub fn take_facts(&mut self) -> Vec<Fact> {
+        std::mem::take(&mut self.facts)
     }
 
     pub fn has<C: hecs::Component>(&self, id: EntityId) -> bool {
@@ -446,7 +486,10 @@ fn despawn_relation<R: Relation>(world: &mut World, id: EntityId) {
     match R::ON_TARGET_DESPAWN {
         Cascade::DespawnSources => {
             for s in sources {
-                world.despawn(s);
+                // Cascade-removed, not directly targeted: this is the single edit
+                // that makes `cause` meaningful (a `@destroy <room>` skips its
+                // collateral exits; a `@purge` reacts to each Direct removal).
+                world.despawn_with_cause(s, DestroyCause::Cascade);
             }
         }
         Cascade::Detach => {

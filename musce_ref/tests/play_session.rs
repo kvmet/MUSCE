@@ -324,6 +324,55 @@ async fn a_wandering_creature_moves_with_no_input() {
     let _ = handle.await.unwrap();
 }
 
+/// A game system reacting to a structural fact, end to end: `@create` a goblin in
+/// the actor's room, `@destroy` it, and the `death_cry` system narrates its demise
+/// in the SAME response burst as the destroy feedback. The destroy is command-
+/// driven, so the fact is drained and reacted to on the same tick (no wall-clock
+/// racing, unlike the wander e2e which deliberately spaces steps across bursts).
+#[tokio::test]
+async fn destroying_a_thing_cries_out_in_the_room() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // Create a goblin in the hall (where the avatar stands), capturing its id.
+    send(&mut writer, "@create goblin").await;
+    let created = read_burst(&mut reader).await;
+    let goblin = first_id(&created);
+
+    // Destroy it; the cry rides the same burst as the destroy feedback.
+    send(&mut writer, &format!("@destroy #{goblin}")).await;
+    let destroyed = read_burst(&mut reader).await;
+    assert!(
+        destroyed.contains("Destroyed"),
+        "@destroy feedback, got: {destroyed:?}"
+    );
+    assert!(
+        destroyed.contains("goblin crumbles to dust"),
+        "death cry in the same burst, got: {destroyed:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
 /// The admin frame end to end: the seeded avatar is staff, so `@create`/`@set`/
 /// `@dig` reach the admin table and mutate the world. Verified by chaining on the
 /// id `@create` reports and reading the result back through a bare `look`.

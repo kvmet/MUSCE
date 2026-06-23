@@ -6,7 +6,7 @@
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
 
 use musce_action::{Action, SystemCtx, execute};
-use musce_core::{Controls, Description, EntityId, Id, NamedComponent, World};
+use musce_core::{Controls, Description, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
 
@@ -98,6 +98,33 @@ pub fn wander(ctx: &mut SystemCtx) {
     }
 }
 
+/// React to structural destruction: when a named thing is directly destroyed in a
+/// room, narrate its demise to that room. The reaction half of gate 2, reading the
+/// tick's `Fact` batch rather than being driven by a command. It fires only for a
+/// `Direct` removal that was both named and located, so a cascade removal (an exit
+/// going down with its room), an unnamed entity (an exit has a `Label`, no
+/// `Description`), or a location-less one (a top-level room or box) stays silent.
+pub fn death_cry(ctx: &mut SystemCtx) {
+    // Copy the slice handle out so the read of `ctx.facts` does not hold a borrow
+    // across the `emit_room` calls (which take `&mut ctx`).
+    let facts = ctx.facts;
+    for fact in facts {
+        if let Fact::Destroyed {
+            cause: DestroyCause::Direct,
+            last_room: Some(room),
+            name: Some(name),
+            ..
+        } = fact
+        {
+            ctx.emit_room(
+                *room,
+                EventKind::Narration,
+                format!("{name} crumbles to dust."),
+            );
+        }
+    }
+}
+
 /// A name for narration, the creature's `Description`, with a neutral fallback.
 /// Mirrors the verb layer's `display_name`.
 fn display_name(world: &World, entity: EntityId) -> String {
@@ -112,7 +139,9 @@ mod tests {
     use super::*;
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Creature, Description, Exit, Label, LeadsFrom, LeadsTo, Player, Room};
+    use musce_core::{
+        Creature, Description, DestroyCause, Exit, Fact, Label, LeadsFrom, LeadsTo, Player, Room,
+    };
     use musce_proto::Audience;
     use std::time::SystemTime;
 
@@ -166,8 +195,16 @@ mod tests {
     /// Run `wander` at an explicit tick, returning its emitted outbound buffer.
     fn tick(world: &mut World, tick: u64) -> Vec<Outbound> {
         let mut out = Vec::new();
-        let mut ctx = SystemCtx::new(world, tick, SystemTime::UNIX_EPOCH, &mut out);
+        let mut ctx = SystemCtx::new(world, tick, SystemTime::UNIX_EPOCH, &[], &mut out);
         wander(&mut ctx);
+        out
+    }
+
+    /// Run `death_cry` against a given fact batch, returning its outbound buffer.
+    fn cry(world: &mut World, facts: &[Fact]) -> Vec<Outbound> {
+        let mut out = Vec::new();
+        let mut ctx = SystemCtx::new(world, 1, SystemTime::UNIX_EPOCH, facts, &mut out);
+        death_cry(&mut ctx);
         out
     }
 
@@ -272,6 +309,66 @@ mod tests {
                 .any(|t| t.contains("a sewer rat wanders north")),
             "reloaded rat should still wander, got: {:?}",
             room_narration(&out)
+        );
+    }
+
+    #[test]
+    fn death_cry_narrates_a_direct_named_destruction() {
+        let mut f = fixture();
+        let fact = Fact::Destroyed {
+            entity: f.rat,
+            last_room: Some(f.a),
+            name: Some("a sewer rat".into()),
+            cause: DestroyCause::Direct,
+        };
+        let out = cry(&mut f.world, &[fact]);
+
+        let lines = room_narration(&out);
+        assert!(
+            lines
+                .iter()
+                .any(|t| t.contains("a sewer rat crumbles to dust")),
+            "death cry, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn death_cry_ignores_a_cascade_fact() {
+        let mut f = fixture();
+        let fact = Fact::Destroyed {
+            entity: f.rat,
+            last_room: Some(f.a),
+            name: Some("a sewer rat".into()),
+            cause: DestroyCause::Cascade,
+        };
+        let out = cry(&mut f.world, &[fact]);
+
+        assert!(
+            room_narration(&out).is_empty(),
+            "a cascade removal is collateral, not a cry"
+        );
+    }
+
+    #[test]
+    fn death_cry_ignores_unnamed_or_unlocated_facts() {
+        let mut f = fixture();
+        let unnamed = Fact::Destroyed {
+            entity: f.rat,
+            last_room: Some(f.a),
+            name: None,
+            cause: DestroyCause::Direct,
+        };
+        let unlocated = Fact::Destroyed {
+            entity: f.rat,
+            last_room: None,
+            name: Some("a sewer rat".into()),
+            cause: DestroyCause::Direct,
+        };
+        let out = cry(&mut f.world, &[unnamed, unlocated]);
+
+        assert!(
+            room_narration(&out).is_empty(),
+            "no name and no room each yield silence"
         );
     }
 }

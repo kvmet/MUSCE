@@ -8,7 +8,7 @@
 
 use std::time::SystemTime;
 
-use musce_core::{EntityId, World};
+use musce_core::{EntityId, Fact, World};
 use musce_proto::{ConnectionId, Event, EventKind};
 
 use crate::audience::Outbound;
@@ -83,10 +83,17 @@ pub type System = fn(&mut SystemCtx);
 /// deterministic sim time (the default for game logic) and `now` is wall-clock
 /// (for real-world scheduling). They come straight from the runtime's per-tick
 /// context, captured once so every system in a tick sees the same instant.
+///
+/// `facts` is the tick's structural-fact batch: an observation stream of the
+/// world mutations that have committed (destructions, and more as consumers need
+/// them). A reaction system iterates it; a non-reactive system ignores it. The
+/// slice borrows a buffer the runtime drained once before the system loop, so a
+/// system never sees a fact another system in the same pass emitted.
 pub struct SystemCtx<'a> {
     pub world: &'a mut World,
     pub tick: u64,
     pub now: SystemTime,
+    pub facts: &'a [Fact],
     out: &'a mut Vec<Outbound>,
 }
 
@@ -95,12 +102,14 @@ impl<'a> SystemCtx<'a> {
         world: &'a mut World,
         tick: u64,
         now: SystemTime,
+        facts: &'a [Fact],
         out: &'a mut Vec<Outbound>,
     ) -> Self {
         SystemCtx {
             world,
             tick,
             now,
+            facts,
             out,
         }
     }

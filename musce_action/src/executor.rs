@@ -85,10 +85,12 @@ impl std::error::Error for ExecError {
 /// caller learns the new id. Returns `ExecError` only on a structural violation,
 /// which the action's source is expected to have already ruled out.
 ///
-/// There is no structural-fact channel yet. When reactions land it will be a typed
-/// mutation-fact stream (e.g. `Moved`/`Created`/`Destroyed`), **not** a perception
-/// `Event`, added at the same time as the first system that consumes it rather than
-/// threaded dead through every call site. See `docs/architecture/actions.md`.
+/// Structural facts are not emitted here. A mutation can cascade through the
+/// relation layer *below* `execute` (a destroyed room takes its exits with it), so
+/// facts are emitted at the `World` mutator layer (`despawn`), which is the only
+/// place that observes those cascade removals; `execute` stays untouched. A fact
+/// is a typed observation (`Fact::Destroyed`), **not** a perception `Event`, read
+/// by reaction systems via `SystemCtx::facts`. See `docs/architecture/actions.md`.
 pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError> {
     match action {
         Action::Move { entity, into } => {

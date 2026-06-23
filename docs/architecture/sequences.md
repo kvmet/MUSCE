@@ -1,7 +1,12 @@
 # Sequences and Effects
 
 > Status: **not implemented, pending review before implementation.** This records
-> a proposed design and its rationale; nothing here is built yet.
+> a proposed design and its rationale; the sequence/effect layer itself is not
+> built. Two pieces of substrate it depends on now exist: the tick-loop **system
+> pipeline** it would sweep components on (see [concurrency.md](concurrency.md)),
+> and the **reaction / structural-fact channel** (`Fact::Destroyed` read from
+> `SystemCtx::facts`; see [actions.md](actions.md)), so a reaction like the
+> "puppet collapses" narration is already expressible as a `System`.
 
 ## Timed behavior is a component, not a scheduler
 

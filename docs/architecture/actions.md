@@ -11,8 +11,10 @@
 > `musce_ref`,
 > which builds the `Game` the runtime is parameterized over (see
 > [engine-and-game.md](engine-and-game.md)). This document covers the core
-> executor, the action vocabulary, command dispatch, and atomicity; the
-> type-erased reflection primitives and the admin/builder `@`-verbs that ride them
+> executor, the action vocabulary, the structural-fact channel, and atomicity; the
+> command/action boundary, the dispatch registry, and the `Event` output channel
+> are in [command-dispatch.md](command-dispatch.md), and the type-erased reflection
+> primitives and the admin/builder `@`-verbs that ride them
 > (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/
 > `@unpossess`) are in [admin-verbs.md](admin-verbs.md).
 
@@ -33,12 +35,43 @@ execute(world, action) -> Result<EntityId, ExecError>
 `execute` is **structural only**: it applies the typed mutator and enforces only
 the invariants that hold for every source (the entity exists, the relation stays
 acyclic), returning the action's subject `EntityId`, or `ExecError` on a
-structural violation. It runs no gameplay rules and emits no events; the action
-set is just the typed reflection of the `World` mutators. There is no
-structural-fact channel yet: rather than thread a dead sink through every call
-site, it lands with the first reaction system that reads it, and as a typed
-mutation fact (`Moved`/`Created`/...), not a perception `Event` (see "Reactions
-respond" below).
+structural violation. It runs no gameplay rules and emits no perception events;
+the action set is just the typed reflection of the `World` mutators.
+
+### The structural-fact channel
+
+Structural mutations emit typed **facts** for game logic to react to. A fact is an
+*observation* of a mutation, not a mutation, so the rule that an action is the only
+thing that mutates still holds: a reaction reads facts and may produce its own
+actions, but the fact stream changes nothing on its own.
+
+Facts are emitted at the **`World` mutator layer (`despawn`), not `execute`**, and
+that placement is load-bearing. A single `@destroy` cascades through the relation
+layer *below* `execute` (a destroyed room takes its exits with it via
+`DespawnSources`); only the mutator recursion observes those cascade removals, so
+emitting from `execute` would catch the targeted entity and miss its collateral.
+`execute` and every verb call site therefore stay untouched.
+
+The one fact today is `Fact::Destroyed { entity, last_room, name, cause }`.
+`last_room` and `name` are a **pre-removal snapshot** (captured while the entity is
+still live, between the cascade-handler loop and the index removal, because a
+reaction reads them after it is gone): `name` is the `Description` (`None` if
+absent, e.g. an exit carries a `Label`), `last_room` the `enclosing_room` (`None`
+for a top-level room or a location-less entity). `cause` is `Direct` for the
+targeted entity and `Cascade` for one swept up by a cascade; this discriminator
+lets one reaction catch every removal in a recursive `@purge` (all `Direct`) yet
+skip the collateral of a single `@destroy <room>` (room `Direct`, exits
+`Cascade`). A `Cascade { root }` enrichment is deferred until a reaction needs to
+group a cascade by origin.
+
+Facts buffer on a transient `World` field, drained **once per tick** by
+`Dispatch::run_systems` at the top of the system loop into the read-only
+`SystemCtx::facts` slice every system sees. That timing sets the latency: a
+command-driven mutation (`@destroy`/`@purge`, drained before `run_systems`) is
+reacted to the **same tick**, while a fact a system emits is seen the **next tick**
+(buffered after the drain), so no system sees another's fact within a pass and
+system order is cosmetic. A reaction is just a `System` iterating `ctx.facts`; the
+reference game's `death_cry` narrates a destroyed thing's demise to its room.
 
 Gameplay rules and perception prose live one layer up, in the verb handlers. "The
 take logic exists once" is achieved by shared rule/perception helpers (e.g. a
@@ -46,52 +79,12 @@ take logic exists once" is achieved by shared rule/perception helpers (e.g. a
 by pushing rules into `execute`. Each engine primitive stays atomic and free of
 intent: `execute` owns the world, handlers own meaning.
 
-## Command vs Action
-
-The thread boundary is unchanged from `concurrency.md`: the net thread speaks
-`Command` in, `Event` out. `Action` is internal to the sim and never crosses the
-channel.
-
-- A **Command** is a request with provenance. It may be rejected.
-- An **Action** is the authorized, validated mutation.
-
-The parser's whole job is `Command -> Action` (or a `Rejection`, rendered as a
-`Feedback` event). Two distinct error channels: a handler's pre-commit rule check
-produces a player-facing `Rejection`; `execute` produces a structural `ExecError`,
-which a correct handler has already ruled out, so it signals a bug rather than
-ordinary play.
-
-Scripted behavior reaches the same rules by going through the same verb helpers a
-player command does, not by emitting raw actions. A sequence step references a
-**verb/intent**, not a bare `Action`, so a scripted NPC walking into a now-locked
-door fails exactly as a player would; a raw `Action` would skip the gameplay rule
-and is reserved for the rule-bypassing admin path. (See `sequences.md`.)
-
-## Dispatch: a command table the runtime invokes
-
-The parser is a **registry**, not one growing `match`. Verbs register into a
-command table keyed by name, looked up by longest matching prefix so
-abbreviations fall out for free (`n` → `north`, `inv` → `inventory`). Each entry
-is a small parse function plus its permission gate; verbs group by module
-(movement, combat, communication, building) and register themselves, so adding a
-verb is a local change, not an edit to a central switch. Lookup is O(verb length)
-and stays flat from fifty verbs to thousands.
-
-Two things keep a large command surface cheap:
-
-- **N verbs are not N mutation paths.** Most verbs are thin parse functions over
-  the tiny action set (the sugar table below): `take`/`drop`/`give`/`put`/`@tel`/
-  `@goto`/`@summon` are all one `Move` with a different computed destination and
-  rule. What grows with the game is parse rules, not the executor, which stays
-  small and central.
-- **Dispatch is a library layer the runtime invokes, not part of it.** The sim
-  thread (`musce_host`) drains the inbox and calls one dispatch entry point with
-  the world and an event sink; the command table, parse rules, and `execute` live
-  in the action layer. The runtime holds no command knowledge.
-
-Which table a command hits is the active input-stack frame (see
-[networking-and-sessions.md](networking-and-sessions.md)): the `@`-namespace
-routes to the account/admin table, bare commands to the active in-game frame.
+A **Command** is a request with provenance (it may be rejected); an **Action** is
+the authorized, validated mutation it parses into. The command/action boundary,
+the `CommandTable` registry that dispatches a parsed command to a verb, and the
+`Event` output channel verbs emit into are covered in
+[command-dispatch.md](command-dispatch.md). This document is the action set the
+verbs resolve to.
 
 ## Three buckets
 
@@ -141,39 +134,11 @@ are one `Move`:
 | `@destroy <t>` | `Destroy` | `despawn(t)` | admin |
 | `@dig <dir> [name]` | `Create` + `Relate` | spawn a `Room`, then `Create` + `Relate` an exit entity each way | admin |
 
-## Output is the Event channel, not an action
-
-Communication mutates nothing, so it is not in the action vocabulary. The
-primitive is the **Event**: the output side of the commands-in / events-out
-boundary, addressed and typed.
-
-```
-Event { to: Audience, kind: EventKind, .. }
-Audience  = Room(id) | Entity(id) | Connection(id)
-EventKind = Speech | Emote | Narration | System | Feedback | ...
-```
-
-- Showing text to a player is just emitting an Event addressed to them
-  (`to: Entity(player), kind: Narration`). No actor, no action. **Audience
-  resolution is sim-side:** turning `Room`/`Entity` into the connections that
-  should see it needs world state (who is in the room) and the
-  connection-to-entity map, so the sim expands those audiences into
-  `Connection`-addressed events before output reaches net. Net is a pure
-  `Connection` pipe and never resolves audiences. (See
-  [networking-and-sessions.md](networking-and-sessions.md).)
-- `Say`/`Emote`/`look` are commands whose handlers emit Events and mutate nothing.
-  Just as take/drop/give collapse to one `Move`, speech/emote/narrate collapse to
-  one emit. The difference: `Move` is an action (it mutates) and emit is not (it
-  reports).
-- Gating (a silence effect blocks speech) is a rule check in the Say command
-  handler, where a take's reachability check also lives, not a property of an
-  action.
-- An NPC overhearing speech is the perception layer reading Events off the bus
-  (deferred sense-propagation), not a dependency on speech being an action.
-
-So mutation funnels through `execute` (which emits nothing); output flows out as
-Events from the verb and command handlers; the sim resolves their audiences to
-connections on the way out.
+Communication mutates nothing, so it is not in the action vocabulary: mutation
+funnels through `execute` (which emits no perception events), while output flows
+out as `Event`s from the verb and system handlers, audience-resolved sim-side. The
+Event channel and its audience model are covered in
+[command-dispatch.md](command-dispatch.md).
 
 ## Atomicity: validate, then commit
 
@@ -242,10 +207,9 @@ Engine mutators are already built; they stay `World` methods. The `Action` enum
 is only as large as the verbs need. The first slice (built) is deliberately
 minimal:
 
-- `Action::Move { entity, into }` only, with `execute` and `ExecError`. The
-  reaction/structural-fact channel is deferred: rather than thread a dead sink
-  through every call site, it lands with the first system that consumes it, typed
-  as a mutation fact rather than a perception `Event`.
+- `Action::Move { entity, into }` only, with `execute` and `ExecError`. (The
+  action set has since grown to the full structural vocabulary, and the
+  structural-fact channel is now live; see "The structural-fact channel" above.)
 - Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, `say`, and `help`
   (the game documents its own in-world surface), in a `CommandTable` looked up by
   exact name then first registered prefix (movement registered before `say`, so

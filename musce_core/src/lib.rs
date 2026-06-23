@@ -5,6 +5,7 @@ pub mod component;
 pub mod containment;
 pub mod control;
 pub mod exit;
+pub mod fact;
 pub mod id;
 pub mod relation;
 pub mod snapshot;
@@ -23,6 +24,7 @@ pub use component::{
 pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
 pub use exit::{LeadsFrom, LeadsTo};
+pub use fact::{DestroyCause, Fact};
 pub use id::{EntityId, EntityIndex};
 pub use relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
 pub use snapshot::{EntityBlob, Snapshot};
@@ -120,6 +122,93 @@ mod tests {
         let mut contents = w.contents(hall);
         contents.sort();
         assert_eq!(contents, vec![coin]);
+    }
+
+    #[test]
+    fn despawn_room_with_exits_emits_direct_and_cascade_facts() {
+        use hecs::EntityBuilder;
+        let mut w = World::new();
+        let hall = room(&mut w, "hall");
+        // An exit leading out of the hall: a `LeadsFrom` source of the hall, so it
+        // cascades (DespawnSources) when the hall dies.
+        let exit = {
+            let mut b = EntityBuilder::new();
+            b.add(Exit);
+            b.add(Label("north".into()));
+            w.spawn(b)
+        };
+        w.relate::<LeadsFrom>(exit, hall).unwrap();
+
+        w.despawn(hall);
+        let facts = w.take_facts();
+
+        // Order rests on reverse-index order and is not guaranteed; assert by set.
+        let room_fact = facts
+            .iter()
+            .find(|f| matches!(f, Fact::Destroyed { entity, .. } if *entity == hall))
+            .expect("a fact for the room");
+        assert!(matches!(
+            room_fact,
+            Fact::Destroyed {
+                cause: DestroyCause::Direct,
+                ..
+            }
+        ));
+        let exit_fact = facts
+            .iter()
+            .find(|f| matches!(f, Fact::Destroyed { entity, .. } if *entity == exit))
+            .expect("a fact for the cascaded exit");
+        assert!(matches!(
+            exit_fact,
+            Fact::Destroyed {
+                cause: DestroyCause::Cascade,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn despawn_located_named_entity_captures_room_and_name() {
+        let mut w = World::new();
+        let hall = room(&mut w, "hall");
+        let coin = item(&mut w, "a gold coin");
+        w.move_entity(coin, hall).unwrap();
+
+        w.despawn(coin);
+        let facts = w.take_facts();
+
+        assert_eq!(facts.len(), 1);
+        let Fact::Destroyed {
+            entity,
+            last_room,
+            name,
+            cause,
+        } = &facts[0];
+        assert_eq!(*entity, coin);
+        assert_eq!(*last_room, Some(hall));
+        assert_eq!(name.as_deref(), Some("a gold coin"));
+        assert_eq!(*cause, DestroyCause::Direct);
+    }
+
+    #[test]
+    fn despawn_unnamed_entity_has_no_name() {
+        use hecs::EntityBuilder;
+        let mut w = World::new();
+        // An exit carries `Label`, not `Description`, so its fact has no name.
+        let exit = {
+            let mut b = EntityBuilder::new();
+            b.add(Exit);
+            b.add(Label("north".into()));
+            w.spawn(b)
+        };
+
+        w.despawn(exit);
+        let facts = w.take_facts();
+
+        assert_eq!(facts.len(), 1);
+        let Fact::Destroyed { name, cause, .. } = &facts[0];
+        assert!(name.is_none(), "an exit has no Description to name it");
+        assert_eq!(*cause, DestroyCause::Direct);
     }
 
     #[test]

@@ -41,9 +41,12 @@ These hold across every subsystem:
   why there is no auto-scheduler. *(Built: the sim thread, the tick loop, and the
   system pipeline carrying `Game.systems`.)*
 - [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
-  the structural-only executor, command dispatch as a registry, atomicity, and
-  where rules and perception live. *(Built: the executor, dispatch, and the
-  sim-side audience resolver; the core verbs and seed live in `musce_ref`.)*
+  the structural-only executor, the structural-fact channel reactions read,
+  atomicity, and where rules and perception live. *(Built: the executor, the
+  `Fact` channel; the core verbs and seed live in `musce_ref`.)*
+- [command-dispatch.md](command-dispatch.md): the command/action boundary, the
+  `CommandTable` dispatch registry with prefix lookup, and the `Event` output
+  channel with sim-side audience resolution. *(Built.)*
 - [admin-verbs.md](admin-verbs.md): the admin/builder `@`-verbs and the
   type-erased reflection primitives they ride (the full structural `Action` set,
   `SetComponent` granularity, the generic mutators and guards). *(Built.)*
@@ -68,7 +71,8 @@ Built:
   `Controls` and `Focus` relations behind durable embodiment), relation-backed exit
   entities (an `Exit` marker plus the general `Label` component, wired by
   `LeadsFrom`/`LeadsTo` with the `DespawnSources` cascade), the `Staff`
-  permission marker, JSON snapshot.
+  permission marker, the structural-fact buffer (`Fact`, emitted at the `despawn`
+  mutator layer), JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
@@ -108,17 +112,19 @@ Built:
   exact-then-prefix with a description-substring fallback), the takeable rule and
   the control rule, narration prose, the
   code-seeded starter world (with a controllable drone), the `@play` actor policy,
-  and its own tick-loop system (a `Wander` marker plus the `wander` system that
-  drifts uncontrolled wanderers between rooms, the first real system on the
-  pipeline); builds the `Game` and has `main` plus the end-to-end test. A real game
-  forks this crate.
+  and its own tick-loop systems (a `Wander` marker plus the `wander` system that
+  drifts uncontrolled wanderers between rooms, and the `death_cry` reaction that
+  narrates a destroyed thing's demise from the `Fact` channel); builds the `Game`
+  and has `main` plus the end-to-end test. A real game forks this crate.
 
 Deferred (with seams in place where noted):
 
 - Game logic: timed behavior (sequences and effects) on a shared skeleton,
   designed in sequences.md. The phase pipeline itself now carries the game's
   systems (the reference game's wandering creature is the first; see
-  concurrency.md). The admin builder verbs
+  concurrency.md), and the reaction / structural-fact channel is live (systems
+  read `Fact`s from `SystemCtx::facts`; the reference `death_cry` reacts to
+  destruction; see actions.md). The admin builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the staff-gated admin frame.
 - Networking: WebSocket/SSH transports, real accounts/auth, the gameplay

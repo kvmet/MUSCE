@@ -26,7 +26,8 @@ Touch the doc when you touch the code:
 | world, identity, relations, containment | `ecs-and-relations.md` |
 | snapshot and `musce_persistence` | `persistence.md` |
 | sim thread, tick loop, scheduling | `concurrency.md` |
-| actions, command dispatch, the executor | `actions.md` |
+| actions, the executor, the structural-fact/reaction channel | `actions.md` |
+| command dispatch, command tables, the `Event` output channel | `command-dispatch.md` |
 | admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
 | sequences, effects, timers | `sequences.md` |
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
