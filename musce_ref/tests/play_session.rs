@@ -274,6 +274,56 @@ async fn possess_then_pilot_drives_a_created_thing() {
     let _ = handle.await.unwrap();
 }
 
+/// A real system on the tick pipeline, end to end with zero player input: a
+/// `@create`d rat wanders out of the hall on its own, and the narration reaches a
+/// connection that sent no command. The tick interval is set so a wander step
+/// (`WANDER_EVERY` ticks) lands well outside `read_burst`'s 300ms gap, so each
+/// step is its own burst rather than one unbroken stream; the bounded poll mirrors
+/// `connect`'s retry rather than racing a single wall-clock read.
+#[tokio::test]
+async fn a_wandering_creature_moves_with_no_input() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(100),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // Create a rat in the hall (where the avatar stands), then send nothing more.
+    send(&mut writer, "@create rat").await;
+    let _created = read_burst(&mut reader).await;
+
+    // Bounded-poll for the rat's autonomous step; it wanders on its own.
+    let mut saw_wander = false;
+    for _ in 0..20 {
+        if read_burst(&mut reader).await.contains("rat wanders") {
+            saw_wander = true;
+            break;
+        }
+    }
+    assert!(
+        saw_wander,
+        "the rat should wander out of the hall with no command driving it"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
 /// The admin frame end to end: the seeded avatar is staff, so `@create`/`@set`/
 /// `@dig` reach the admin table and mutate the world. Verified by chaining on the
 /// id `@create` reports and reading the result back through a bare `look`.

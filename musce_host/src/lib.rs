@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
-use musce_action::CommandTable;
+use musce_action::{CommandTable, System};
 use musce_core::{EntityId, Snapshot, World};
 use musce_persistence::{Loaded, Persistence, SqliteStore};
 use musce_proto::{Command, Outgoing};
@@ -63,6 +63,12 @@ pub type Seed = fn(&mut World);
 /// has no character to give.
 pub type ChooseActor = fn(&World) -> Option<EntityId>;
 
+/// World-type registration the runtime runs against a fresh `World` before it
+/// loads or seeds, so a game's own component types are known to the deserializer
+/// (registration must precede deserialization) and persist thereafter. Engine
+/// components register themselves in `World::new`; this is where a game adds its.
+pub type Register = fn(&mut World);
+
 /// The whole of what the runtime needs from a game: its bare and admin verb
 /// registries, its world seed, and its `@play` actor-choice policy. A plain struct
 /// of values plus fn pointers; the runtime never depends on a particular game,
@@ -79,6 +85,14 @@ pub struct Game {
     pub admin: CommandTable,
     pub seed: Seed,
     pub choose_actor: ChooseActor,
+    /// Tick-loop systems, run in order every tick through the phase pipeline. A
+    /// `Vec` so the runtime runs N by construction; empty for a game with no
+    /// simulation.
+    pub systems: Vec<System>,
+    /// Registers the game's own component/relation types on a fresh world, before
+    /// load or seed. The runtime calls this so a wanderer (or any game type)
+    /// deserializes and persists. No-op for a game that adds no types.
+    pub register: Register,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -173,6 +187,9 @@ fn sim_loop(
     done_tx: oneshot::Sender<RunReport>,
 ) {
     let mut world = World::new();
+    // The game's own component types must be registered before the deserializer
+    // can read them, so this runs before load (and before seed).
+    (game.register)(&mut world);
     if let Err(e) = world.load(&loaded.entities, loaded.next_id) {
         tracing::error!(error = %e, "failed to load world; starting empty");
     }
@@ -214,19 +231,23 @@ fn sim_loop(
             now: SystemTime::now(),
         };
 
+        // One emit sink for the whole tick, shared by command dispatch and the
+        // system pipeline: both route semantic output to the same outbox.
+        let mut emit = |out| {
+            if event_tx.send(out).is_err() {
+                tracing::error!("event outbox closed; dropping output");
+            }
+        };
+
         // Drain the command inbox: the only entry point for external mutation.
         // The loop holds no command knowledge; it hands each command to the
         // dispatcher, which routes it to the right input-stack frame and emits
         // events (and, for in-game frames, runs `execute` against the world).
         while let Ok(cmd) = cmd_rx.try_recv() {
-            dispatch.handle(cmd, &mut world, &mut |out| {
-                if event_tx.send(out).is_err() {
-                    tracing::error!("event outbox closed; dropping output");
-                }
-            });
+            dispatch.handle(cmd, &mut world, &mut emit);
         }
 
-        run_phases(&mut world, &ctx);
+        dispatch.run_systems(&mut world, &ctx, &mut emit);
 
         since_save += 1;
         if since_save >= config.save_every {
@@ -243,10 +264,6 @@ fn sim_loop(
 
     let _ = done_tx.send(RunReport { ticks: tick, saves });
 }
-
-/// The phase pipeline. Empty for now; systems become ordered phases here, each
-/// able to schedule by `ctx.tick` or `ctx.now`.
-fn run_phases(_world: &mut World, _ctx: &TickCtx) {}
 
 fn apply_ack(world: &mut World, ack: Ack, pending: &mut u32) {
     *pending = pending.saturating_sub(1);
@@ -277,15 +294,18 @@ mod tests {
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Item, Room, World};
 
-    /// An engine-only `Game`: no verbs, a no-op seed, and a `bind_actor` that
-    /// binds nothing. The runtime, not game content, is what this crate tests, so
-    /// the lifecycle test needs only a `Game`-shaped value to hand `run`.
+    /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
+    /// nothing, no systems, and a no-op `register`. The runtime, not game content,
+    /// is what this crate tests, so the lifecycle test needs only a `Game`-shaped
+    /// value to hand `run`.
     fn test_game() -> Game {
         Game {
             commands: CommandTable::new(),
             admin: CommandTable::new(),
             seed: |_| {},
             choose_actor: |_| None,
+            systems: vec![],
+            register: |_| {},
         }
     }
 

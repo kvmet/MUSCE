@@ -15,7 +15,7 @@ use musce_core::{Controls, EntityId, Map, Value, World};
 use musce_proto::EventKind;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
-const KINDS: &str = "torch, rock, goblin, box";
+const KINDS: &str = "torch, rock, goblin, box, rat";
 
 /// Build the reference game's admin command table. All verbs are `Gate::Staff`;
 /// only an actor carrying the `Staff` marker reaches them. Registration order
@@ -455,17 +455,23 @@ fn bad_ref() -> &'static str {
 }
 
 /// The blob for a `@create` kind, or `None` if unknown. Plain components only (no
-/// id, no relation tags), so `World::create` accepts it.
+/// id, no relation tags), so `World::create` accepts it. A kind is a set of marker
+/// tags plus a description, so a kind can carry several markers (a `rat` is a
+/// creature that wanders); the `wander` tag only round-trips because the game
+/// registered it (see `systems::register`).
 fn kind_blob(kind: &str) -> Option<Value> {
-    let (marker, desc) = match kind {
-        "torch" => ("item", "a guttering torch"),
-        "rock" => ("item", "a heavy rock"),
-        "goblin" => ("creature", "a snaggle-toothed goblin"),
-        "box" => ("container", "a sturdy wooden box"),
+    let (markers, desc): (&[&str], &str) = match kind {
+        "torch" => (&["item"], "a guttering torch"),
+        "rock" => (&["item"], "a heavy rock"),
+        "goblin" => (&["creature"], "a snaggle-toothed goblin"),
+        "box" => (&["container"], "a sturdy wooden box"),
+        "rat" => (&["creature", "wander"], "a twitching sewer rat"),
         _ => return None,
     };
     let mut m = Map::new();
-    m.insert(marker.into(), Value::Null);
+    for marker in markers {
+        m.insert((*marker).into(), Value::Null);
+    }
     m.insert("description".into(), Value::String(desc.into()));
     Some(Value::Object(m))
 }

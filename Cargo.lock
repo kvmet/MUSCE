@@ -808,6 +808,7 @@ dependencies = [
  "musce_host",
  "musce_persistence",
  "musce_proto",
+ "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",

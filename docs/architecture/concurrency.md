@@ -1,7 +1,11 @@
 # Concurrency and the Tick
 
-> Status: the threading model and tick shape are decided; the systems and tick
-> pipeline are not yet built. This records the intended design and its rationale.
+> Status: **built.** The single sim thread, the tick loop, and the system pipeline
+> run; `musce_host` carries the game's `Game.systems` on the pipeline every tick
+> (the reference game's wandering creature is the first), so tick scheduling and
+> the dual clocks are exercised, not just declared. Multi-rate cadences beyond a
+> system's own `tick % N` gating are not yet a pipeline feature. This records the
+> threading model, the tick shape, and their rationale.
 
 ## One authoritative sim thread
 
@@ -22,16 +26,27 @@ A fixed-order pipeline of phases:
 
 ```
 loop {
-    drain command inbox       // the only entry point for external mutation
-    run phases in fixed order // each phase may have its own cadence
-    collect emitted events    // push to the outbox
-    every N ticks: snapshot   // hand to the persistence thread
+    drain command inbox        // the only entry point for external mutation
+    run systems in fixed order // Game.systems, each scheduling by tick/now
+    collect emitted events     // push to the outbox
+    every N ticks: snapshot    // hand to the persistence thread
 }
 ```
 
 Fixed order means deterministic ticks: reproducible bugs and sane resolution
-order. Phases support **multi-rate** cadences so subsystems run at their natural
-frequency rather than all every tick.
+order. The game injects its systems as `Game.systems` (a `fn(&mut SystemCtx)`
+list); the runtime runs them in registration order each tick. A `SystemCtx`
+mirrors a verb's `Ctx` for the simulation half: it carries the world the system
+mutates (through the same `execute`) and an emit buffer addressed to rooms, which
+the runtime resolves to connections through the same audience resolver verbs use,
+so a system's narration reaches players exactly as a verb's does. It has no actor
+or connection, because a system acts for the world, not a player.
+
+`SystemCtx` carries both clocks: `tick` (deterministic sim time, the default for
+game logic) and `now` (wall-clock). A system schedules its own cadence off these,
+e.g. `tick % N == 0` (the wanderer steps every `WANDER_EVERY` ticks) rather than
+running its full body each tick. A pipeline-level multi-rate scheduler is not
+built; per-system gating covers the need for now.
 
 ## Why no auto-scheduler
 

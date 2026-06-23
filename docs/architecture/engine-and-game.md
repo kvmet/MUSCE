@@ -72,10 +72,19 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
   for a game with no builder surface.
 - **`seed: fn(&mut World)`** builds the starting world when the database loads
   empty; a loaded world is left untouched.
-- **`bind_actor`** the `@play` policy: which actor a connection comes to drive. The
-  stub finds the seeded avatar; the persisted `Controls`/`Focus` embodiment (see
-  [networking-and-sessions.md](networking-and-sessions.md)) replaces the body of
-  this hook later without changing the interface.
+- **`choose_actor`** the `@play` policy: which actor a connection comes to drive.
+  The stub finds the seeded avatar; the persisted `Controls`/`Focus` embodiment
+  (see [networking-and-sessions.md](networking-and-sessions.md)) replaces the body
+  of this hook later without changing the interface.
+- **`systems: Vec<fn(&mut SystemCtx)>`** the tick-loop systems the runtime carries
+  on the phase pipeline, run in order every tick (see
+  [concurrency.md](concurrency.md)). A `Vec`, so the runtime runs N by
+  construction; empty for a game with no simulation.
+- **`register: fn(&mut World)`** registers the game's own component (and relation)
+  types on a fresh world, run before load and seed, since registration must
+  precede deserialization. Engine types register themselves in `World::new`; this
+  is where a game adds its own (the reference game registers its `Wander` marker),
+  so they round-trip through persistence like any built-in.
 
 A plain struct of values plus fn pointers, matching the style the command and
 component registries already use. A `trait Game` is the alternative if a game ever

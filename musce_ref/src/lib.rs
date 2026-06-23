@@ -8,18 +8,22 @@
 mod admin;
 mod names;
 mod seed;
+mod systems;
 mod verbs;
 
 use musce_host::Game;
 
 /// Build the reference game: its bare and admin command tables, its world seed,
-/// and its `@play` actor policy. `main` (and the end-to-end test) pass this to
-/// `musce_host::run`.
+/// its `@play` actor policy, the tick-loop systems it runs, and the world-type
+/// registration the runtime applies before load. `main` (and the end-to-end test)
+/// pass this to `musce_host::run`.
 pub fn game() -> Game {
     Game {
         commands: verbs::commands(),
         admin: admin::commands(),
         seed: seed::seed,
         choose_actor: seed::choose_actor,
+        systems: vec![systems::wander],
+        register: systems::register,
     }
 }

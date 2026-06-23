@@ -6,6 +6,8 @@
 //! resolves those audiences to connections afterward. See
 //! `docs/architecture/actions.md`.
 
+use std::time::SystemTime;
+
 use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Event, EventKind};
 
@@ -61,5 +63,52 @@ impl<'a> Ctx<'a> {
             Event::to_room(room, kind, text),
             self.conn,
         ));
+    }
+}
+
+/// A tick-loop system: the simulation-side analogue of a verb [`Handler`]. It
+/// mutates the world and emits semantic output through a [`SystemCtx`], which the
+/// runtime resolves to connections the same way it does a verb's. A game registers
+/// these in its `Game.systems`; the engine only invokes them.
+///
+/// [`Handler`]: crate::Handler
+pub type System = fn(&mut SystemCtx);
+
+/// The per-tick context handed to a [`System`]. Mirrors [`Ctx`] for the
+/// simulation half: the world a system mutates and the output buffer it emits
+/// into, plus both clocks. There is no actor or connection, because a system acts
+/// on the world's behalf, not a player's, so its output is third-person only.
+///
+/// Both clocks are carried even when a system uses only one: `tick` is
+/// deterministic sim time (the default for game logic) and `now` is wall-clock
+/// (for real-world scheduling). They come straight from the runtime's per-tick
+/// context, captured once so every system in a tick sees the same instant.
+pub struct SystemCtx<'a> {
+    pub world: &'a mut World,
+    pub tick: u64,
+    pub now: SystemTime,
+    out: &'a mut Vec<Outbound>,
+}
+
+impl<'a> SystemCtx<'a> {
+    pub fn new(
+        world: &'a mut World,
+        tick: u64,
+        now: SystemTime,
+        out: &'a mut Vec<Outbound>,
+    ) -> Self {
+        SystemCtx {
+            world,
+            tick,
+            now,
+            out,
+        }
+    }
+
+    /// Third-person output to everyone in `room`. A system has no first person, so
+    /// unlike [`Ctx::emit_room_except_self`] there is no actor to exclude.
+    pub fn emit_room(&mut self, room: EntityId, kind: EventKind, text: impl Into<String>) {
+        self.out
+            .push(Outbound::new(Event::to_room(room, kind, text)));
     }
 }

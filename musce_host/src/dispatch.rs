@@ -6,12 +6,12 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{CommandTable, dispatch_command};
+use musce_action::{CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
 
-use crate::Game;
 use crate::session::{Sessions, resolve_actor};
+use crate::{Game, TickCtx};
 
 pub struct Dispatch {
     /// The always-present account/session floor: `@`-commands, lifecycle, and the
@@ -40,6 +40,25 @@ impl Dispatch {
             Input::Connected { .. } => self.floor.connect(id, emit),
             Input::Disconnected => self.floor.disconnect(id),
             Input::Line(line) => self.handle_line(id, line.trim(), world, emit),
+        }
+    }
+
+    /// Run the game's systems for one tick, in registration order. Each system
+    /// mutates the world and emits semantic output into its own buffer; that
+    /// output is then audience-resolved to connections through `emit`, exactly as
+    /// `dispatch_command` does for a verb. The audience index is built once
+    /// (owned, so it does not borrow the world the systems mutate).
+    pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
+        let actors = self.floor.audience_index(world);
+        for system in &self.game.systems {
+            let mut out: Vec<Outbound> = Vec::new();
+            {
+                let mut sctx = SystemCtx::new(world, ctx.tick, ctx.now, &mut out);
+                system(&mut sctx);
+            }
+            for ob in out {
+                resolve(world, &actors, ob, emit);
+            }
         }
     }
 
@@ -161,6 +180,8 @@ mod tests {
             admin,
             seed,
             choose_actor,
+            systems: vec![],
+            register: |_| {},
         }
     }
 
@@ -286,5 +307,46 @@ mod tests {
             })
             .collect();
         assert!(rendered.iter().any(|t| t.contains("a test chamber")));
+    }
+
+    /// `Game.systems` is a `Vec`, so the pipeline runs every registered system in
+    /// one tick. Two distinct systems each leave a different mark on the world;
+    /// both marks present proves both ran (not one twice).
+    #[test]
+    fn run_systems_runs_every_registered_system() {
+        use musce_action::SystemCtx;
+        use musce_core::{Container, Item};
+        use std::time::SystemTime;
+
+        fn add_item(ctx: &mut SystemCtx) {
+            let mut b = EntityBuilder::new();
+            b.add(Item);
+            ctx.world.spawn(b);
+        }
+        fn add_container(ctx: &mut SystemCtx) {
+            let mut b = EntityBuilder::new();
+            b.add(Container);
+            ctx.world.spawn(b);
+        }
+
+        let game = Game {
+            commands: CommandTable::new(),
+            admin: CommandTable::new(),
+            seed: |_| {},
+            choose_actor: |_| None,
+            systems: vec![add_item, add_container],
+            register: |_| {},
+        };
+        let dispatch = Dispatch::new(game);
+        let mut world = World::new();
+        let ctx = TickCtx {
+            tick: 1,
+            now: SystemTime::UNIX_EPOCH,
+        };
+
+        dispatch.run_systems(&mut world, &ctx, &mut |_| {});
+
+        assert_eq!(world.ecs.query::<&Item>().iter().count(), 1);
+        assert_eq!(world.ecs.query::<&Container>().iter().count(), 1);
     }
 }

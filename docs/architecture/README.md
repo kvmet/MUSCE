@@ -38,7 +38,8 @@ These hold across every subsystem:
 - [persistence.md](persistence.md): World-as-truth, the snapshot model, the
   blob schema, and the save/confirm contract.
 - [concurrency.md](concurrency.md): the threading model, the tick pipeline, and
-  why there is no auto-scheduler.
+  why there is no auto-scheduler. *(Built: the sim thread, the tick loop, and the
+  system pipeline carrying `Game.systems`.)*
 - [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
   the structural-only executor, command dispatch as a registry, atomicity, and
   where rules and perception live. *(Built: the executor, dispatch, and the
@@ -75,8 +76,11 @@ Built:
   account floor (`@quit`/`@who`/`@help`/`@play`, the actor choice game-injected),
   and a single command dispatcher draining the inbox each tick: lifecycle `@`-verbs
   to the floor, other `@`-verbs to the game's staff-gated admin table, bare
-  commands to the embodiment frame. Holds no game content; library-only (no
-  binary).
+  commands to the embodiment frame. After draining commands it runs the game's
+  injected systems (`Game.systems`) on the phase pipeline, resolving their output
+  through the same audience resolver, and runs `Game.register` against a fresh
+  world before load so a game's own component types deserialize and persist. Holds
+  no game content; library-only (no binary).
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
@@ -90,9 +94,11 @@ Built:
   the `Gate`
   tiers (`Open`/`Staff`) and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface a game's verb handlers
-  program against), the conn->actor audience index (`Actors`, derived from the
-  floor's session attachments resolved through `Focus`), and the sim-side audience
-  resolver.
+  program against), `SystemCtx` and the `System` type (the tick-loop analogue of
+  `Ctx`/`Handler`: a system mutates through `execute` and emits room-addressed
+  output, with both clocks and no actor), the conn->actor audience index
+  (`Actors`, derived from the floor's session attachments resolved through
+  `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the bare verbs (`look`, `go`/bare direction, `take`, `drop`,
   `pilot`, `release`, `say`, `help`) and the admin/builder verbs
@@ -101,14 +107,18 @@ Built:
   name resolver (movement resolves an exit through it, matching a `Label`
   exact-then-prefix with a description-substring fallback), the takeable rule and
   the control rule, narration prose, the
-  code-seeded starter world (with a controllable drone), and the `@play` actor
-  policy; builds the `Game` and has `main` plus the end-to-end test. A real game
+  code-seeded starter world (with a controllable drone), the `@play` actor policy,
+  and its own tick-loop system (a `Wander` marker plus the `wander` system that
+  drifts uncontrolled wanderers between rooms, the first real system on the
+  pipeline); builds the `Game` and has `main` plus the end-to-end test. A real game
   forks this crate.
 
 Deferred (with seams in place where noted):
 
-- Game logic: systems on the phase pipeline (designed in actions.md and
-  sequences.md). The admin builder verbs
+- Game logic: timed behavior (sequences and effects) on a shared skeleton,
+  designed in sequences.md. The phase pipeline itself now carries the game's
+  systems (the reference game's wandering creature is the first; see
+  concurrency.md). The admin builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the staff-gated admin frame.
 - Networking: WebSocket/SSH transports, real accounts/auth, the gameplay
