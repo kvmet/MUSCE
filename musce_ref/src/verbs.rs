@@ -11,6 +11,7 @@ use musce_action::{Action, CommandTable, Ctx, Gate, execute};
 use musce_core::{Description, EntityId, World};
 use musce_proto::EventKind;
 
+use crate::commit_or_log;
 use crate::names::{self, Scope};
 
 /// Build the reference game's command table. Movement is registered first so
@@ -82,17 +83,17 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
         format!("{who} leaves {direction}."),
     );
 
-    // Moving a being into a room cannot close a containment cycle, so this is
-    // infallible in practice; the guard is a structural backstop, not a rule.
-    if execute(
+    // Moving a being into a room cannot close a containment cycle, so this should
+    // never fail; if it ever does it is a bug, logged loud rather than quietly
+    // shown to the player as "something blocks".
+    if !commit_or_log(
         ctx.world,
         Action::Move {
             entity: ctx.actor,
             into: dest,
         },
-    )
-    .is_err()
-    {
+        "go: move actor into the exit destination",
+    ) {
         ctx.emit_self(EventKind::Feedback, "Something blocks the way.");
         return;
     }
@@ -162,16 +163,16 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, ctx.actor);
 
-    // Dropping a held item into its enclosing room cannot cycle; backstop only.
-    if execute(
+    // Dropping a held item into its enclosing room cannot cycle, so this should
+    // never fail; a bug here is logged loud, not silently shown as a refusal.
+    if !commit_or_log(
         ctx.world,
         Action::Move {
             entity: target,
             into: room,
         },
-    )
-    .is_err()
-    {
+        "drop: move held item into the room",
+    ) {
         ctx.emit_self(EventKind::Feedback, "You can't drop that.");
         return;
     }

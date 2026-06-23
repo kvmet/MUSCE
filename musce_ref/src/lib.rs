@@ -11,6 +11,8 @@ mod seed;
 mod systems;
 mod verbs;
 
+use musce_action::{Action, execute};
+use musce_core::World;
 use musce_host::Game;
 
 /// Build the reference game: its bare and admin command tables, its world seed,
@@ -25,5 +27,23 @@ pub fn game() -> Game {
         choose_actor: seed::choose_actor,
         systems: vec![systems::wander, systems::death_cry],
         register: systems::register,
+    }
+}
+
+/// Commit an action whose failure modes the caller has already structurally ruled
+/// out (a being into a room cannot cycle; a freshly resolved target exists; a
+/// hardcoded relation kind is registered). The `Ok` subject is discarded; on the
+/// should-never-happen `ExecError` this logs loudly with `context` and returns
+/// `false`, so the caller degrades (a bland message, a skipped step) without
+/// swallowing the bug silently or panicking the long-lived sim over one wedged
+/// mutation. Use `execute` directly when you need the new id back, or when the
+/// failure is reachable play (a real cycle a player can construct, as in `take`).
+pub(crate) fn commit_or_log(world: &mut World, action: Action, context: &str) -> bool {
+    match execute(world, action) {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::error!(error = %e, context, "a structural action failed unexpectedly");
+            false
+        }
     }
 }

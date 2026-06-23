@@ -5,8 +5,10 @@
 //! resolves to connections the same way it does a verb's output. See
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Action, SystemCtx, execute};
+use musce_action::{Action, SystemCtx};
 use musce_core::{Controls, Description, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
+
+use crate::commit_or_log;
 use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
 
@@ -81,16 +83,16 @@ pub fn wander(ctx: &mut SystemCtx) {
         ctx.emit_room(room, EventKind::Narration, format!("{who} wanders {dir}."));
 
         // A creature moving into a room cannot close a containment cycle, so this
-        // is infallible in practice; the guard is a structural backstop.
-        if execute(
+        // should never fail; a bug here is logged loud rather than a silently
+        // skipped step that no player would ever see.
+        if !commit_or_log(
             ctx.world,
             Action::Move {
                 entity: creature,
                 into: dest,
             },
-        )
-        .is_err()
-        {
+            "wander: move creature into the exit destination",
+        ) {
             continue;
         }
 

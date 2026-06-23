@@ -17,6 +17,7 @@ use musce_core::{
 };
 use musce_proto::EventKind;
 
+use crate::commit_or_log;
 use crate::systems::Wander;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
@@ -93,15 +94,16 @@ pub fn goto(ctx: &mut Ctx, args: &str) {
         );
         return;
     };
-    if execute(
+    // The destination is the room enclosing `target`, never an ancestor of the
+    // acting being, so moving the actor into it cannot cycle: a fire is a bug.
+    if !commit_or_log(
         ctx.world,
         Action::Move {
             entity: ctx.actor,
             into: room,
         },
-    )
-    .is_err()
-    {
+        "@goto: move actor into the target's room",
+    ) {
         ctx.emit_self(EventKind::Feedback, "Something blocks the way.");
         return;
     }
@@ -156,15 +158,16 @@ pub fn create(ctx: &mut Ctx, args: &str) {
             return;
         }
     };
-    if execute(
+    // A fresh, location-less entity moving into a room cannot cycle: a fire here
+    // is a bug, not the builder's mistake.
+    if !commit_or_log(
         ctx.world,
         Action::Move {
             entity: id,
             into: room,
         },
-    )
-    .is_err()
-    {
+        "@create: place the new entity in the room",
+    ) {
         ctx.emit_self(EventKind::Feedback, "Created it, but couldn't place it.");
         return;
     }
@@ -365,18 +368,21 @@ pub fn unpossess(ctx: &mut Ctx, args: &str) {
     {
         ctx.world.clear_focus(ctx.actor);
     }
-    match execute(
+    // `Unrelate` of a registered, hardcoded kind only fails on an unknown kind,
+    // so this cannot fail; report success, and let `commit_or_log` shout if the
+    // registry ever regresses.
+    if commit_or_log(
         ctx.world,
         Action::Unrelate {
             source: target,
             kind: "controlled_by".into(),
         },
+        "@unpossess: clear controlled_by",
     ) {
-        Ok(_) => ctx.emit_self(
+        ctx.emit_self(
             EventKind::Feedback,
             format!("You release control of #{}.", target.0),
-        ),
-        Err(e) => ctx.emit_self(EventKind::Feedback, format!("Can't release that: {e}.")),
+        );
     }
 }
 
@@ -393,16 +399,16 @@ pub fn destroy(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "You can't destroy yourself.");
         return;
     }
-    match execute(ctx.world, Action::Destroy { entity: target }) {
-        Ok(_) => ctx.emit_self(
-            EventKind::Feedback,
-            format!(
-                "Destroyed #{}; its contents spilled where it stood.",
-                target.0
-            ),
+    // `Destroy` is infallible (despawn no-ops on a missing entity), so there is
+    // no error to report; the subject is discarded.
+    let _ = execute(ctx.world, Action::Destroy { entity: target });
+    ctx.emit_self(
+        EventKind::Feedback,
+        format!(
+            "Destroyed #{}; its contents spilled where it stood.",
+            target.0
         ),
-        Err(e) => ctx.emit_self(EventKind::Feedback, format!("Can't destroy that: {e}.")),
-    }
+    );
 }
 
 /// `@purge #<target>`: recursively despawn a target and everything inside it,
@@ -526,26 +532,32 @@ fn dig_exit(world: &mut World, from: EntityId, to: EntityId, label: &str) -> boo
         },
     ) {
         Ok(id) => id,
-        Err(_) => return false,
+        Err(e) => {
+            // A hardcoded exit blob cannot fail to create; a fire means the blob
+            // or the registry regressed, so shout rather than quietly fail.
+            tracing::error!(error = %e, "@dig: exit blob failed to create");
+            return false;
+        }
     };
-    execute(
+    // A fresh exit pointing at existing rooms cannot cycle, and the kinds are
+    // hardcoded registered literals, so both wires should always commit.
+    commit_or_log(
         world,
         Action::Relate {
             source: exit,
             target: from,
             kind: "leads_from".into(),
         },
+        "@dig: wire the exit's leads_from",
+    ) && commit_or_log(
+        world,
+        Action::Relate {
+            source: exit,
+            target: to,
+            kind: "leads_to".into(),
+        },
+        "@dig: wire the exit's leads_to",
     )
-    .is_ok()
-        && execute(
-            world,
-            Action::Relate {
-                source: exit,
-                target: to,
-                kind: "leads_to".into(),
-            },
-        )
-        .is_ok()
 }
 
 fn exit_blob(label: &str) -> Value {
