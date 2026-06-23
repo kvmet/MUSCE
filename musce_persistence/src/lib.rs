@@ -18,10 +18,21 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// What `load` returns: the persisted entities and the id high-water mark.
+/// The schema version a freshly written world carries. Bump this whenever a
+/// persisted component's tag or shape changes in a way old blobs cannot be read
+/// as; the load path compares the stored version against this and runs the
+/// migration seam to bring older blobs up to it. No migrations exist yet (the
+/// schema has only ever been at version 1); this is the marker that makes the
+/// first one possible without retrofitting versioning onto already-written
+/// worlds. See `docs/architecture/persistence.md`.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// What `load` returns: the persisted entities, the id high-water mark, and the
+/// schema version the entities were written at (for the migration seam).
 pub struct Loaded {
     pub entities: Vec<EntityBlob>,
     pub next_id: u64,
+    pub schema_version: u32,
 }
 
 /// Backend-agnostic save/load contract. Implemented per database engine.
@@ -35,6 +46,7 @@ pub trait Persistence {
 }
 
 const NEXT_ID_KEY: &str = "next_id";
+const SCHEMA_VERSION_KEY: &str = "schema_version";
 
 #[derive(Clone)]
 pub struct SqliteStore {
@@ -120,6 +132,17 @@ impl Persistence for SqliteStore {
         .execute(&mut *tx)
         .await?;
 
+        // Stamp the schema version every world is written at, so a later load can
+        // tell whether the blobs need migrating up to the current shape.
+        sqlx::query(
+            "INSERT INTO meta (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(SCHEMA_VERSION_KEY)
+        .bind(SCHEMA_VERSION.to_string())
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
         Ok(())
     }
@@ -149,7 +172,22 @@ impl Persistence for SqliteStore {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
 
-        Ok(Loaded { entities, next_id })
+        // A world written before versioning existed has no marker; treat it as the
+        // current version, since those are dev-only worlds carrying today's schema.
+        // A real older version triggers the migration seam at load.
+        let schema_version: u32 = sqlx::query("SELECT value FROM meta WHERE key = ?")
+            .bind(SCHEMA_VERSION_KEY)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(|r| r.get::<String, _>("value"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(SCHEMA_VERSION);
+
+        Ok(Loaded {
+            entities,
+            next_id,
+            schema_version,
+        })
     }
 }
 
@@ -201,6 +239,34 @@ mod tests {
         assert!(w2.has::<Room>(hall));
         assert!(w2.has::<Container>(bag));
         assert!(w2.has::<Item>(coin));
+    }
+
+    #[tokio::test]
+    async fn save_stamps_the_schema_version() {
+        let mut w = World::new();
+        let mut b = EntityBuilder::new();
+        b.add(Item);
+        w.spawn(b);
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.init().await.unwrap();
+        store.save(&w.snapshot()).await.unwrap();
+
+        assert_eq!(store.load().await.unwrap().schema_version, SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn unversioned_world_reads_as_current() {
+        // A world with rows but no schema_version marker (predates versioning) is
+        // treated as the current version, not migrated.
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.init().await.unwrap();
+        sqlx::query("INSERT INTO entities (entity_id, zone, data, updated_at) VALUES (1, NULL, '{\"item\":null}', 0)")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        assert_eq!(store.load().await.unwrap().schema_version, SCHEMA_VERSION);
     }
 
     #[tokio::test]

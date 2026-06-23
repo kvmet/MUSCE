@@ -77,9 +77,26 @@ disjoint id ranges to shards from the same source.
 - On load, the DB primary key and the entity's own `Id` component are checked to
   agree (a `debug_assert`), catching corrupt or wrongly-keyed blobs instead of
   letting index and component silently diverge.
-- An unknown component tag on load is a hard error, not a silent skip. This means
-  removing a registered component type breaks old saves until migrated. That is
-  deliberate pre-1.0: surfacing the mismatch beats silently dropping data.
+- An unknown component tag on load is a hard error, not a silent skip, and a load
+  error is **fatal**: the runtime refuses to boot rather than run an empty world.
+  Running empty would reissue ids from 1 that the next save would write over the
+  still-stored entities, so refusing to boot is what keeps a load failure from
+  becoming data loss. Surfacing the mismatch beats silently dropping data.
+- **Schema version and the migration seam.** Every save stamps a `schema_version`
+  into `meta` (`SCHEMA_VERSION` in `musce_persistence`). On load, the stored
+  version is compared against the current one and the blobs pass through a
+  migration seam (`migrate_blobs` in `musce_host`) before they are deserialized.
+  Bumping `SCHEMA_VERSION` and adding a transform keyed by the version it migrates
+  from is how a renamed or reshaped component lands without breaking old saves: the
+  transform is a function you write at the seam, not surgery on the load path. The
+  version marker exists from the start precisely so the *first* migration is
+  possible; retrofitting versioning onto already-written worlds is the harder
+  problem it avoids. No transforms exist yet (the schema has only ever been at
+  version 1), and the seam is a no-op for a current-version world; a world written
+  before versioning existed has no marker and is read as current (those are
+  dev-only worlds carrying today's schema). Whole-world or structural migrations
+  (splitting an entity, not just renaming a tag) may need more than the per-blob
+  transform; that is deferred until a concrete case asks for it.
 
 ## Backends
 
