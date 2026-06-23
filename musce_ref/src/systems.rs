@@ -107,10 +107,10 @@ pub fn wander(ctx: &mut SystemCtx) {
 /// going down with its room), an unnamed entity (an exit has a `Label`, no
 /// `Description`), or a location-less one (a top-level room or box) stays silent.
 pub fn death_cry(ctx: &mut SystemCtx) {
-    // Copy the slice handle out so the read of `ctx.facts` does not hold a borrow
-    // across the `emit_room` calls (which take `&mut ctx`).
-    let facts = ctx.facts;
-    for fact in facts {
+    // `ctx.facts` is a `&[Fact]` whose lifetime outlives `ctx`, so reading it is a
+    // Copy that holds no borrow of `ctx`; the `emit_room` calls below take
+    // `&mut ctx` freely while we iterate it.
+    for fact in ctx.facts {
         if let Fact::Destroyed {
             cause: DestroyCause::Direct,
             last_room: Some(room),
