@@ -11,8 +11,13 @@
 //! new id so a builder can chain commands.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{Controls, EntityId, Map, Value, World};
+use musce_core::{
+    ComponentBlob, Container, Controls, Creature, Description, EntityId, Exit, Item, Label, Room,
+    Value, World,
+};
 use musce_proto::EventKind;
+
+use crate::systems::Wander;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
 const KINDS: &str = "torch, rock, goblin, box, rat";
@@ -455,32 +460,37 @@ fn bad_ref() -> &'static str {
 }
 
 /// The blob for a `@create` kind, or `None` if unknown. Plain components only (no
-/// id, no relation tags), so `World::create` accepts it. A kind is a set of marker
-/// tags plus a description, so a kind can carry several markers (a `rat` is a
-/// creature that wanders); the `wander` tag only round-trips because the game
-/// registered it (see `systems::register`).
+/// id, no relation tags), so `World::create` accepts it. Each kind names its Rust
+/// components and `ComponentBlob` derives the tags; a kind can carry several
+/// markers (a `rat` is a creature that wanders). The `Wander` tag only round-trips
+/// because the game registered it (see `systems::register`).
 fn kind_blob(kind: &str) -> Option<Value> {
-    let (markers, desc): (&[&str], &str) = match kind {
-        "torch" => (&["item"], "a guttering torch"),
-        "rock" => (&["item"], "a heavy rock"),
-        "goblin" => (&["creature"], "a snaggle-toothed goblin"),
-        "box" => (&["container"], "a sturdy wooden box"),
-        "rat" => (&["creature", "wander"], "a twitching sewer rat"),
+    let blob = ComponentBlob::new();
+    let blob = match kind {
+        "torch" => blob
+            .with(Item)
+            .with(Description("a guttering torch".into())),
+        "rock" => blob.with(Item).with(Description("a heavy rock".into())),
+        "goblin" => blob
+            .with(Creature)
+            .with(Description("a snaggle-toothed goblin".into())),
+        "box" => blob
+            .with(Container)
+            .with(Description("a sturdy wooden box".into())),
+        "rat" => blob
+            .with(Creature)
+            .with(Wander)
+            .with(Description("a twitching sewer rat".into())),
         _ => return None,
     };
-    let mut m = Map::new();
-    for marker in markers {
-        m.insert((*marker).into(), Value::Null);
-    }
-    m.insert("description".into(), Value::String(desc.into()));
-    Some(Value::Object(m))
+    Some(blob.build())
 }
 
 fn room_blob(name: &str) -> Value {
-    let mut m = Map::new();
-    m.insert("room".into(), Value::Null);
-    m.insert("description".into(), Value::String(name.into()));
-    Value::Object(m)
+    ComponentBlob::new()
+        .with(Room)
+        .with(Description(name.into()))
+        .build()
 }
 
 /// Map a typed direction (abbreviation or full word) to its canonical name and
@@ -539,14 +549,13 @@ fn dig_exit(world: &mut World, from: EntityId, to: EntityId, label: &str) -> boo
 }
 
 fn exit_blob(label: &str) -> Value {
-    let mut m = Map::new();
-    m.insert("exit".into(), Value::Null);
-    m.insert("label".into(), Value::String(label.to_string()));
-    Value::Object(m)
+    ComponentBlob::new()
+        .with(Exit)
+        .with(Label(label.to_string()))
+        .build()
 }
 
 fn display_name(world: &World, id: EntityId) -> String {
-    use musce_core::Description;
     world
         .entity(id)
         .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))

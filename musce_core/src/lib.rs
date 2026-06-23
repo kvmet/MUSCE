@@ -17,8 +17,8 @@ pub use hecs;
 pub use serde_json::{Map, Value};
 
 pub use component::{
-    Container, Creature, Description, Exit, Id, Item, Label, NamedComponent, Player, RegistryError,
-    Room, Staff,
+    ComponentBlob, Container, Creature, Description, Exit, Id, Item, Label, NamedComponent, Player,
+    RegistryError, Room, Staff,
 };
 pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};

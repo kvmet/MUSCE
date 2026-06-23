@@ -26,7 +26,12 @@ runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
   pointing at `@tel`); `@summon` brings a thing to you regardless of where it is.
 - `@create <kind>` spawns from a kind table into your room; `@dig <dir> [name]`
   digs a room, then creates an exit entity each way (wired by `Relate`, hardcoded
-  opposites n/s, e/w, u/d). Both report the new entity's id.
+  opposites n/s, e/w, u/d). Both report the new entity's id. The `Action::Create`
+  payload stays a tag->value blob (actions are data, so they journal), but this
+  statically-known content builds it with `ComponentBlob`, naming Rust components
+  (`Item`, `Description`, `Wander`, ...) so the tags come from `NamedComponent::TAG`
+  rather than hand-written strings; a typo is a type error. The raw tag->value path
+  is reserved for genuinely runtime input (`@set` from a user).
 - `@set #<id>.<component> <json>` overwrites a whole component.
 - `@destroy #<target>` despawns one entity, spilling its contents up into its own
   container (the safe, recoverable default); `@purge #<target>` is the recursive

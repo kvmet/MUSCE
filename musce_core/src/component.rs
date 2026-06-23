@@ -61,6 +61,39 @@ marker!(Player, "player");
 // stand-in until accounts own permissions; seeded for now, like `Player`.
 marker!(Staff, "staff");
 
+// --- typed blob builder --------------------------------------------------
+
+/// Builds a tag->value component blob from typed components, so statically-known
+/// content names Rust types and the tags fall out of `NamedComponent::TAG`. The
+/// finished `Value` is the same tag-keyed object `Action::Create`/`World::create`
+/// already consume; only its construction is typed. A typo is now a type error
+/// rather than a runtime one. The raw tag->value path stays for genuinely runtime
+/// input (e.g. `@set` from a user).
+#[derive(Default)]
+pub struct ComponentBlob {
+    map: Map<String, Value>,
+}
+
+impl ComponentBlob {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add one typed component; its tag is `C::TAG`, its value is `c` serialized.
+    pub fn with<C: NamedComponent>(mut self, c: C) -> Self {
+        self.map.insert(
+            C::TAG.to_string(),
+            serde_json::to_value(&c).expect("component serialization is infallible"),
+        );
+        self
+    }
+
+    /// The finished tag->value object, ready for `Action::Create { components }`.
+    pub fn build(self) -> Value {
+        Value::Object(self.map)
+    }
+}
+
 // --- registry ------------------------------------------------------------
 
 type SerFn = for<'a> fn(hecs::EntityRef<'a>, &mut Map<String, Value>);
@@ -219,4 +252,21 @@ pub enum RegistryError {
     UnknownComponent(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_blob_keys_by_tag_with_marker_null_and_newtype_inner() {
+        let blob = ComponentBlob::new()
+            .with(Item)
+            .with(Description("x".into()))
+            .build();
+        assert_eq!(
+            blob,
+            serde_json::json!({ "item": null, "description": "x" })
+        );
+    }
 }
