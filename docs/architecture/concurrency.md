@@ -48,6 +48,28 @@ e.g. `tick % N == 0` (the wanderer steps every `WANDER_EVERY` ticks) rather than
 running its full body each tick. A pipeline-level multi-rate scheduler is not
 built; per-system gating covers the need for now.
 
+What `SystemCtx` carries versus what lives in the world is a rule, not a habit: it
+holds only facts the runtime uniquely owns and must capture once per tick so every
+system sees the same value (the two clocks). Anything that is persisted world
+state advanced by game logic is a component, not context, and stays out of
+`SystemCtx`.
+
+### Randomness
+
+Ambient simulation wants stochastic behavior, but the sim is deterministic by
+design (tick-counted saves, reproducible ticks, no wall-clock or entropy in game
+logic). The two reconcile through a **seeded world RNG**: a game keeps its random
+state as a persisted component (a seed advanced as it is drawn from), reads and
+advances it inside a system, and so gets variety that is still reproducible and
+survives a reload, because the seed is world state like any other. This is game
+content, not engine mechanism, so the engine provides nothing here by the rule
+above (the seed is persisted game state, so it is a component). The one hard rule
+a game must hold: ambient randomness goes through that persisted RNG, never
+`rand::thread_rng()` or other entropy, which would break determinism and
+reproducibility the same way wall-clock reads would. The wanderer sidesteps this
+today by choosing deterministically (the lowest-id exit); the first system that
+wants a real coin-flip introduces the world RNG.
+
 ## Why no auto-scheduler
 
 A bevy-style scheduler that analyzes system component access and runs
