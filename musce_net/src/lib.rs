@@ -11,13 +11,8 @@ mod tcp;
 use std::net::SocketAddr;
 
 use crossbeam_channel::Sender;
+use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::UnboundedReceiver;
-
-// The boundary vocabulary now lives in `musce_proto` (shared with the action
-// layer); re-export it so existing `musce_net::{Command, ...}` paths keep working.
-pub use musce_proto::{
-    Audience, Capabilities, Command, ConnectionId, Event, EventKind, Input, Outgoing,
-};
 
 pub use connection::{Connection, LineReader, LineWriter, render};
 

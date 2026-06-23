@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use musce_net::{Command, Event, EventKind, Input, Outgoing, start};
+use musce_net::start;
+use musce_proto::{Command, Event, EventKind, Input, Outgoing};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
