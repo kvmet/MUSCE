@@ -441,3 +441,96 @@ async fn admin_verbs_build_the_world() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 }
+
+/// A seeded sequence drives an entity end to end with zero player input: the
+/// clockwork sentry patrols hall <-> garden on its own, and its movement narration
+/// reaches a connection that sent only `@play`. The patrol repeats, so a bounded
+/// poll catches a pass through the avatar's room whenever the test attaches.
+/// Mirrors the wander e2e (a system on the tick pipeline, observed over the wire),
+/// but driven by a `Sequences` component rather than a bespoke system.
+#[tokio::test]
+async fn a_patrolling_sentry_moves_with_no_input() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+
+    // Accumulate everything after @play; the sentry's narration arrives on its own
+    // schedule, whenever the patrol next passes through the avatar's room.
+    let mut seen = String::new();
+    let mut saw = false;
+    for _ in 0..30 {
+        seen.push_str(&read_burst(&mut reader).await);
+        if seen.contains("clockwork sentry") {
+            saw = true;
+            break;
+        }
+    }
+    assert!(
+        saw,
+        "the sentry should patrol with no command driving it, got: {seen:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
+/// A finite sequence ending in self-destruction, converging with the gate-2
+/// reaction channel: the seeded torch's terminal beat destroys it, and the
+/// `death_cry` system narrates the demise one tick later, reaching the avatar in
+/// the same room with no narration code in the sequence layer at all. Observed over
+/// the wire: after `@play`, the burn-out cry appears with no command driving it.
+#[tokio::test]
+async fn a_torch_burns_out_and_cries_in_the_room() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+
+    let mut seen = String::new();
+    let mut saw = false;
+    for _ in 0..40 {
+        seen.push_str(&read_burst(&mut reader).await);
+        if seen.contains("guttering torch crumbles to dust") {
+            saw = true;
+            break;
+        }
+    }
+    assert!(
+        saw,
+        "the torch should burn out and its death cry reach the room, got: {seen:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}

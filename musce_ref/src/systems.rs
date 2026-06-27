@@ -5,10 +5,10 @@
 //! resolves to connections the same way it does a verb's output. See
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Action, SystemCtx};
+use musce_action::SystemCtx;
 use musce_core::{Controls, Description, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
-use crate::commit_or_log;
+use crate::verbs::{Locked, MoveOutcome, do_move};
 use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,8 @@ impl NamedComponent for Wander {
 /// seeds. The runtime calls this through `Game.register`.
 pub fn register(world: &mut World) {
     world.register_component::<Wander>();
+    world.register_component::<Locked>();
+    crate::sequences::register(world);
 }
 
 /// How often, in ticks, a wanderer takes a step. Small, so the runtime demo and
@@ -64,39 +66,41 @@ pub fn wander(ctx: &mut SystemCtx) {
         };
 
         // `exits_of` is a reverse index rebuilt on load with no guaranteed order,
-        // so sort by id and take the lowest usable exit for a deterministic step.
-        // Skip half-wired exits (no destination), the same way `go` does.
+        // so sort by id and take the lowest exit with a destination for a
+        // deterministic step. The traversal veto (a locked exit) is left to
+        // `do_move`, the shared rule path a player's `go` also runs.
         let mut exits = ctx.world.exits_of(room);
         exits.sort();
-        let Some((exit, dest)) = exits
+        let Some(exit) = exits
             .into_iter()
-            .find_map(|e| ctx.world.exit_destination(e).map(|d| (e, d)))
+            .find(|&e| ctx.world.exit_destination(e).is_some())
         else {
             continue; // no exit out of here, or every exit is half-wired
         };
 
         let who = display_name(ctx.world, creature);
-        let dir = ctx.world.label_of(exit).unwrap_or_else(|| "away".into());
-
-        // Departure narration to the room being left, resolved after the move
-        // commits (so the creature, now elsewhere, is not among its hearers).
-        ctx.emit_room(room, EventKind::Narration, format!("{who} wanders {dir}."));
-
-        // A creature moving into a room cannot close a containment cycle, so this
-        // should never fail; a bug here is logged loud rather than a silently
-        // skipped step that no player would ever see.
-        if !commit_or_log(
-            ctx.world,
-            Action::Move {
-                entity: creature,
-                into: dest,
-            },
-            "wander: move creature into the exit destination",
-        ) {
-            continue;
+        match do_move(ctx.world, creature, exit) {
+            MoveOutcome::Moved {
+                from,
+                dest,
+                direction,
+            } => {
+                // Narration is audience-resolved after the move commits, so the
+                // creature (now in `dest`) is not among the old room's hearers.
+                if let Some(from) = from {
+                    ctx.emit_room(
+                        from,
+                        EventKind::Narration,
+                        format!("{who} wanders {direction}."),
+                    );
+                }
+                ctx.emit_room(dest, EventKind::Narration, format!("{who} wanders in."));
+            }
+            // A locked exit (or a structurally wedged one, already logged by
+            // `do_move`) halts the wanderer this tick; it does not try another
+            // exit. NoDestination cannot occur: we filtered for a destination.
+            MoveOutcome::NoDestination | MoveOutcome::Blocked(_) => {}
         }
-
-        ctx.emit_room(dest, EventKind::Narration, format!("{who} wanders in."));
     }
 }
 
@@ -283,6 +287,26 @@ mod tests {
         let out = tick(&mut f.world, WANDER_EVERY);
 
         assert_eq!(f.world.enclosing_room(f.rat), Some(f.b));
+        assert!(room_narration(&out).is_empty());
+    }
+
+    /// The other half of the shared-rule guarantee (the player twin is
+    /// `go_through_a_locked_exit_rejects` in verbs.rs): a locked exit stops the
+    /// ambient wanderer exactly as it stops a player, now that both route through
+    /// `do_move`. This is the bug that fix closes: the old `wander` called
+    /// `execute(Move)` directly and would have walked through a locked door. Lock
+    /// the exit through the registered `locked` tag the fixture's `register` wires.
+    #[test]
+    fn a_locked_exit_keeps_it_put() {
+        let mut f = fixture();
+        let north = f.world.exits_of(f.a)[0]; // the single A->B exit
+        f.world
+            .set_component(north, "locked", musce_core::Value::Null)
+            .unwrap();
+
+        let out = tick(&mut f.world, WANDER_EVERY);
+
+        assert_eq!(f.world.enclosing_room(f.rat), Some(f.a)); // didn't move
         assert!(room_narration(&out).is_empty());
     }
 

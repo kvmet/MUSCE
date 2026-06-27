@@ -8,6 +8,7 @@
 mod admin;
 mod names;
 mod seed;
+mod sequences;
 mod systems;
 mod verbs;
 
@@ -25,7 +26,11 @@ pub fn game() -> Game {
         admin: admin::commands(),
         seed: seed::seed,
         choose_actor: seed::choose_actor,
-        systems: vec![systems::wander, systems::death_cry],
+        systems: vec![
+            systems::wander,
+            sequences::sequence_sweep,
+            systems::death_cry,
+        ],
         register: systems::register,
     }
 }

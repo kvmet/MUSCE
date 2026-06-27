@@ -54,8 +54,9 @@ These hold across every subsystem:
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
-  effects on a shared skeleton, and how they differ from systems. *(Proposed; not
-  implemented.)*
+  effects on a shared skeleton, and how they differ from systems. *(Built, in
+  `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
+  a seeded patroller and burning torch.)*
 - [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
   overlay, the account floor, staff multi-puppet). *(Built: raw TCP, session
@@ -110,21 +111,28 @@ Built:
   and their parsing, the unified
   name resolver (movement resolves an exit through it, matching a `Label`
   exact-then-prefix with a description-substring fallback), the takeable rule and
-  the control rule, narration prose, the
+  the control rule, the shared `do_move` traversal helper (the one rule-checked
+  move path, with a `Locked`-exit veto, run by `go`, `wander`, and sequences
+  alike), narration prose, the
   code-seeded starter world (with a controllable drone), the `@play` actor policy,
   and its own tick-loop systems (a `Wander` marker plus the `wander` system that
-  drifts uncontrolled wanderers between rooms, and the `death_cry` reaction that
-  narrates a destroyed thing's demise from the `Fact` channel); builds the `Game`
+  drifts uncontrolled wanderers between rooms, the `death_cry` reaction that
+  narrates a destroyed thing's demise from the `Fact` channel, and the sequence
+  layer: the `Steps`/`Sequences` components, the `sequence_sweep` system, and a
+  seeded patrolling sentry and burning torch); builds the `Game`
   and has `main` plus the end-to-end test. A real game forks this crate.
 
 Deferred (with seams in place where noted):
 
-- Game logic: timed behavior (sequences and effects) on a shared skeleton,
-  designed in sequences.md. The phase pipeline itself now carries the game's
-  systems (the reference game's wandering creature is the first; see
-  concurrency.md), and the reaction / structural-fact channel is live (systems
-  read `Fact`s from `SystemCtx::facts`; the reference `death_cry` reacts to
-  destruction; see actions.md). The admin builder verbs
+- Game logic: timed behavior (sequences and effects) on a shared skeleton is
+  **built** in `musce_ref` (the `Steps`/`Sequences` components, the
+  `sequence_sweep` system, a seeded patroller and torch; see sequences.md), over
+  the phase pipeline that carries the game's systems and the reaction /
+  structural-fact channel the torch converges with (`death_cry` narrates the
+  burn-out; see actions.md and concurrency.md). What remains deferred: a runtime
+  verb to attach/detach a sequence (it is seed-only for now), branch/condition
+  intents (the scripting layer below), bounded-repeat effects (a repeat-count),
+  and the seeded-world RNG for stochastic beats. The admin builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the staff-gated admin frame.
 - Networking: WebSocket/SSH transports, real accounts/auth, the gameplay
@@ -134,7 +142,9 @@ Deferred (with seams in place where noted):
   `@possess`/`@unpossess` admin verbs are built.
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit
-  aliases. Designed in ecs-and-relations.md.
+  aliases. Designed in ecs-and-relations.md. A minimal `Locked` exit marker now
+  exists in `musce_ref` as the first `can_traverse` veto (the seam a richer door /
+  skill-check check grows from), but two-sided door state is still deferred.
 - Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.

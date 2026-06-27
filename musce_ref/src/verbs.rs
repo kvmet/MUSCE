@@ -8,8 +8,9 @@
 //! `docs/architecture/actions.md`.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{Description, EntityId, World};
+use musce_core::{Description, EntityId, NamedComponent, World};
 use musce_proto::EventKind;
+use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
 use crate::names::{self, Scope};
@@ -46,13 +47,16 @@ pub fn look(ctx: &mut Ctx, _args: &str) {
     }
 }
 
-/// `go <dir>` / a bare direction: traverse the named exit out of the room.
+/// `go <dir>` / a bare direction: traverse the named exit out of the room. The
+/// rule-checked move itself lives in [`do_move`], shared with the ambient `wander`
+/// system (and, later, scripted sequences); this verb owns only the parse, the
+/// exit resolution, and the player-facing prose.
 pub fn go(ctx: &mut Ctx, dir: &str) {
     let dir = dir.trim();
-    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+    if ctx.world.enclosing_room(ctx.actor).is_none() {
         ctx.emit_self(EventKind::Feedback, "You are nowhere.");
         return;
-    };
+    }
     if dir.is_empty() {
         ctx.emit_self(EventKind::Feedback, "Go where?");
         return;
@@ -62,46 +66,36 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
         ctx.emit_self(EventKind::Feedback, "You can't go that way.");
         return;
     };
-    let Some(dest) = ctx.world.exit_destination(exit) else {
-        // A resolvable exit with no destination is a malformed (half-wired) exit,
-        // not a game state worth its own flavor; to the player it is no exit.
-        ctx.emit_self(EventKind::Feedback, "You can't go that way.");
-        return;
-    };
-    if let Err(reason) = can_traverse(ctx.world, ctx.actor, exit) {
-        ctx.emit_self(EventKind::Feedback, reason);
-        return;
-    }
 
-    let direction = ctx.world.label_of(exit).unwrap_or_else(|| dir.to_string());
     let who = display_name(ctx.world, ctx.actor);
-    // Departure narration to the room being left. Resolved after the move
-    // commits, so the actor (now elsewhere) is naturally not among its hearers.
-    ctx.emit_room_except_self(
-        room,
-        EventKind::Narration,
-        format!("{who} leaves {direction}."),
-    );
-
-    // Moving a being into a room cannot close a containment cycle, so this should
-    // never fail; if it ever does it is a bug, logged loud rather than quietly
-    // shown to the player as "something blocks".
-    if !commit_or_log(
-        ctx.world,
-        Action::Move {
-            entity: ctx.actor,
-            into: dest,
-        },
-        "go: move actor into the exit destination",
-    ) {
-        ctx.emit_self(EventKind::Feedback, "Something blocks the way.");
-        return;
+    match do_move(ctx.world, ctx.actor, exit) {
+        MoveOutcome::Moved {
+            from,
+            dest,
+            direction,
+        } => {
+            // Departure/arrival narration is audience-resolved after the handler
+            // runs, against the committed world, so the actor (now in `dest`) is
+            // not among the departure room's hearers.
+            if let Some(from) = from {
+                ctx.emit_room_except_self(
+                    from,
+                    EventKind::Narration,
+                    format!("{who} leaves {direction}."),
+                );
+            }
+            ctx.emit_room_except_self(dest, EventKind::Narration, format!("{who} arrives."));
+            ctx.emit_self(EventKind::Feedback, format!("You go {direction}."));
+            look(ctx, "");
+        }
+        // A half-wired exit (no destination) is no exit to the player.
+        MoveOutcome::NoDestination => {
+            ctx.emit_self(EventKind::Feedback, "You can't go that way.");
+        }
+        MoveOutcome::Blocked(reason) => {
+            ctx.emit_self(EventKind::Feedback, reason);
+        }
     }
-
-    // Arrival narration to the destination, then the mover's own look.
-    ctx.emit_room_except_self(dest, EventKind::Narration, format!("{who} arrives."));
-    ctx.emit_self(EventKind::Feedback, format!("You go {direction}."));
-    look(ctx, "");
 }
 
 /// `take <item>`: pick a reachable thing up off the floor into the actor's hands.
@@ -311,12 +305,84 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     Some(s)
 }
 
-/// Whether `mover` may traverse `exit` right now. The traversal veto is a game
-/// rule, not an engine concept: the engine provides the exit entity and a home
-/// for future door/lock state but bakes in no lock semantics. Shared so a
-/// scripted mover is vetoed exactly as a player is. No doors exist yet, so every
-/// exit is passable; this is the seam they will hang on.
-fn can_traverse(_world: &World, _mover: EntityId, _exit: EntityId) -> Result<(), &'static str> {
+/// Marks an exit that cannot be traversed: the minimal door/lock primitive and the
+/// state [`can_traverse`] vetoes on. Zero-sized on purpose, it is the simple
+/// always-impassable case (a sealed or one-way passage). Data-carrying locks (a
+/// required key, a difficulty for a skill check) are a later design that adds its
+/// own components `can_traverse` also reads, not fields bolted on here. Registered
+/// (see [`crate::systems::register`]) so a locked exit survives a reload.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub(crate) struct Locked;
+
+impl NamedComponent for Locked {
+    const TAG: &'static str = "locked";
+}
+
+/// The result of a [`do_move`] attempt, so each caller phrases its own narration
+/// over one shared rule-checked move. `Moved` carries the room left (`from`, `None`
+/// if the mover was location-less), the destination, and the exit's label.
+pub(crate) enum MoveOutcome {
+    Moved {
+        from: Option<EntityId>,
+        dest: EntityId,
+        direction: String,
+    },
+    /// The exit has no destination (a half-wired exit): no exit, to the mover.
+    NoDestination,
+    /// A traversal rule vetoed the move; carries the player-facing reason.
+    Blocked(&'static str),
+}
+
+/// Move `actor` through `exit`, subject to the traversal rules: the single
+/// rule-checked move path, shared by the player `go` verb, the ambient `wander`
+/// system, and scripted sequences, so a scripted or wandering mover is vetoed
+/// exactly as a player is. Resolves the destination, runs [`can_traverse`], then
+/// commits through `execute`; it emits no narration (each caller owns its prose).
+/// The caller resolves which exit (by direction name, or by deterministic choice)
+/// and hands it in already resolved.
+pub(crate) fn do_move(world: &mut World, actor: EntityId, exit: EntityId) -> MoveOutcome {
+    let Some(dest) = world.exit_destination(exit) else {
+        return MoveOutcome::NoDestination;
+    };
+    if let Err(reason) = can_traverse(world, actor, exit) {
+        return MoveOutcome::Blocked(reason);
+    }
+
+    // Capture the room being left before the move commits; the caller narrates the
+    // departure to it.
+    let from = world.enclosing_room(actor);
+    let direction = world.label_of(exit).unwrap_or_else(|| "away".to_string());
+
+    // A being moving into a room cannot close a containment cycle, so this should
+    // never fail; a bug here is logged loud rather than silently swallowed.
+    if !commit_or_log(
+        world,
+        Action::Move {
+            entity: actor,
+            into: dest,
+        },
+        "do_move: move actor into the exit destination",
+    ) {
+        return MoveOutcome::Blocked("Something blocks the way.");
+    }
+
+    MoveOutcome::Moved {
+        from,
+        dest,
+        direction,
+    }
+}
+
+/// Whether `mover` may traverse `exit` right now. The traversal veto is game
+/// policy, not an engine concept: the engine provides the exit entity and a home
+/// for door/lock state but bakes in no lock semantics. The single traversal-rule
+/// seam, reached through [`do_move`] so every mover (player, wanderer, sequence)
+/// is vetoed alike. Today the one veto is a [`Locked`] exit; richer checks (a key,
+/// a skill check, open/closed door state) slot in here additively.
+fn can_traverse(world: &World, _mover: EntityId, exit: EntityId) -> Result<(), &'static str> {
+    if world.has::<Locked>(exit) {
+        return Err("It's locked.");
+    }
     Ok(())
 }
 
@@ -511,6 +577,24 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("can't go that way"))
         );
+    }
+
+    /// Half of the shared-rule guarantee: a locked exit vetoes the player. The
+    /// `wander` twin (`a_locked_exit_keeps_it_put` in systems.rs) proves the same
+    /// veto stops a scripted/ambient mover, which is the bug routing both through
+    /// `do_move` fixes. Lock the resolved exit directly (no registry needed: the
+    /// veto reads `world.has::<Locked>`, not the persisted blob).
+    #[test]
+    fn go_through_a_locked_exit_rejects() {
+        let mut f = fixture();
+        let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
+        let e = f.world.index().get(north).unwrap();
+        f.world.ecs.insert_one(e, Locked).unwrap();
+
+        let out = run(&mut f.world, f.actor, |c| go(c, "north"));
+
+        assert_eq!(f.world.enclosing_room(f.actor), Some(f.hall)); // didn't move
+        assert!(self_feedback(&out).iter().any(|t| t.contains("locked")));
     }
 
     #[test]

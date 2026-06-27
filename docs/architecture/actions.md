@@ -74,10 +74,12 @@ system order is cosmetic. A reaction is just a `System` iterating `ctx.facts`; t
 reference game's `death_cry` narrates a destroyed thing's demise to its room.
 
 Gameplay rules and perception prose live one layer up, in the verb handlers. "The
-take logic exists once" is achieved by shared rule/perception helpers (e.g. a
-`do_move` used by both the player `go` command and, later, AI and sequences), not
-by pushing rules into `execute`. Each engine primitive stays atomic and free of
-intent: `execute` owns the world, handlers own meaning.
+move logic exists once" is achieved by a shared rule helper: `do_move` runs the
+traversal rule (`can_traverse`, today a `Locked`-exit veto) and the commit, shared
+by `go`, the `wander` system, and scripted sequences, so a scripted mover is
+vetoed exactly as a player is and each caller owns only its prose. Not by pushing
+rules into `execute`: each primitive stays atomic and free of intent, `execute`
+owns the world, handlers own meaning.
 
 A **Command** is a request with provenance (it may be rejected); an **Action** is
 the authorized, validated mutation it parses into. The command/action boundary,

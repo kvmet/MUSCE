@@ -11,6 +11,17 @@ use musce_core::{
     Staff, World,
 };
 
+use crate::sequences::{Intent, Step, Steps, attach};
+
+/// Ticks between the patrolling sentry's steps, and the torch's burn-out lifetime.
+/// Sized against the e2e harness rather than arbitrarily small: at its 10ms tick
+/// rate a 40-tick patrol step is 400ms, longer than the 300ms read gap the e2e
+/// uses to delimit a response burst, so the sentry's ambient narration never
+/// starves that gap and hangs an unrelated test. The torch outlives the `@play`
+/// handshake so its burn-out cry has a connected listener.
+const PATROL_STEP: u32 = 40;
+const TORCH_LIFETIME: u32 = 60;
+
 /// Build the starter map into an empty world: a hall, a garden to its north, and
 /// a cellar below it; a takeable key in the garden; a player avatar standing in
 /// the hall; and a patrol drone beside it that the avatar controls, to exercise
@@ -41,6 +52,51 @@ pub fn seed(world: &mut World) {
     world
         .relate::<Controls>(drone, avatar)
         .expect("seed: wire control");
+
+    // The two sequence demonstrators on one skeleton: a clockwork sentry that
+    // patrols hall <-> garden forever (a repeating movement program, its "wait"
+    // beats expressed as the inter-step delays), and a torch that burns out (a
+    // finite program whose terminal beat destroys the carrier, which the
+    // `death_cry` reaction then narrates). See `docs/architecture/sequences.md`.
+    let patrol = program(
+        world,
+        vec![
+            Step {
+                delay: PATROL_STEP,
+                intent: Intent::Move {
+                    dir: "north".into(),
+                },
+            },
+            Step {
+                delay: PATROL_STEP,
+                intent: Intent::Move {
+                    dir: "south".into(),
+                },
+            },
+        ],
+    );
+    let sentry = creature(world, "a clockwork sentry pacing a fixed beat");
+    world.move_entity(sentry, hall).expect("seed: place sentry");
+    attach(world, sentry, patrol, true).expect("seed: attach patrol");
+
+    let burn = program(
+        world,
+        vec![Step {
+            delay: TORCH_LIFETIME,
+            intent: Intent::Destroy,
+        }],
+    );
+    let torch = item(world, "a guttering torch");
+    world.move_entity(torch, hall).expect("seed: place torch");
+    attach(world, torch, burn, false).expect("seed: attach torch burn-out");
+}
+
+/// Spawn a program entity carrying a `Steps` list. A program is location-less,
+/// shared content referenced by id from a `Sequences` instance.
+fn program(world: &mut World, steps: Vec<Step>) -> EntityId {
+    spawn(world, |b| {
+        b.add(Steps(steps));
+    })
 }
 
 /// The `@play` policy: choose which actor a connection comes to drive. The floor
@@ -156,5 +212,39 @@ mod tests {
         let drone = controlled[0];
         assert_eq!(w.target_of::<Controls>(drone), Some(avatar));
         assert_eq!(w.enclosing_room(drone), w.enclosing_room(avatar));
+    }
+
+    #[test]
+    fn seed_wires_the_sequence_demonstrators() {
+        use crate::sequences::Sequences;
+        let mut w = World::new();
+        seed(&mut w);
+
+        // The sentry runs one repeating patrol; the torch runs one finite burn.
+        let sentry = find_described(&w, "clockwork sentry").expect("a seeded sentry");
+        let patrol = sequences_of(&w, sentry);
+        assert_eq!(patrol.len(), 1);
+        assert!(patrol[0].repeat, "the patrol repeats");
+
+        let torch = find_described(&w, "guttering torch").expect("a seeded torch");
+        let burn = sequences_of(&w, torch);
+        assert_eq!(burn.len(), 1);
+        assert!(!burn[0].repeat, "the torch is a one-shot");
+
+        fn sequences_of(w: &World, e: EntityId) -> Vec<crate::sequences::Instance> {
+            w.entity(e)
+                .and_then(|er| er.get::<&Sequences>().map(|s| s.0.clone()))
+                .expect("entity carries Sequences")
+        }
+    }
+
+    /// First entity whose `Description` contains `needle`, for finding seeded
+    /// content by name in tests.
+    fn find_described(w: &World, needle: &str) -> Option<EntityId> {
+        w.ecs
+            .query::<(&musce_core::Id, &Description)>()
+            .iter()
+            .find(|(_, d)| d.0.contains(needle))
+            .map(|(id, _)| id.0)
     }
 }
