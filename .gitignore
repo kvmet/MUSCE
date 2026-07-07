@@ -29,3 +29,7 @@ target
 *.db
 *.db-wal
 *.db-shm
+
+#bb
+.clj-kondo/
+.lsp/

@@ -37,7 +37,7 @@
     :fail (println (str "SPLIT: " path " (" lines " lines, over limit " limit ") "
                        "— too big, break it into smaller files"))
     :warn (println (str "WARN:  " path " (" lines " lines, limit " limit ") "
-                       "— getting large, plan a split"))
+                       "— getting large, consider splitting it (don't shave lines to fit)"))
     nil))
 
 (defn- expand [arg]
