@@ -41,17 +41,21 @@ its title (e.g. `> Status: not implemented, pending review before
 implementation.`). Keep it honest: it is how a reader tells proposed design from
 shipped reality.
 
-## Formatting
+## Before committing
 
-The codebase is `cargo fmt` clean. Run `cargo fmt` before committing, and format
-only the files your change touches (not a workspace-wide sweep that churns
-unrelated code). The enforcing gate is `cargo fmt --check` in CI once CI exists;
-until then this convention is the gate.
+A commit that records work is not ready until all three hold. These are
+requirements, not suggestions:
 
-## Hygiene
-
-Run `bb bb/hygiene.clj ./` to check file hygiene rules across the whole project before any commit.
+1. **Docs match code.** Every architecture doc whose subsystem you touched is
+   updated in the same commit, with honest `> Status:` markers (see "Keep the
+   architecture docs in sync" and "Status markers").
+2. **Formatting is clean.** The codebase is `cargo fmt` clean. Run `cargo fmt`
+   and format only the files your change touches (not a workspace-wide sweep that
+   churns unrelated code). The enforcing gate is `cargo fmt --check` in CI once CI
+   exists; until then this convention is the gate.
+3. **Hygiene passes.** Run `bb bb/hygiene.clj ./` to check file hygiene rules
+   across the whole project.
 
 ## Etiquette
 
-When referring to commands such as `@play` in commit messages, encase them in backticks to prevent GitHub interpreting them as a username reference.
+When referring to things that start with `@` such as `@play` in commit messages, encase them in backticks to prevent GitHub interpreting them as a username reference.
