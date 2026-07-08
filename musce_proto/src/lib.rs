@@ -97,6 +97,17 @@ impl Event {
             text: text.into(),
         }
     }
+
+    /// Text aimed at one entity, resolved to the connection(s) driving it. The
+    /// sim-side resolver expands this like `to_room`; if the entity drives no
+    /// connection it reaches no one. Net never sees it.
+    pub fn to_entity(entity: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
+        Event {
+            to: Audience::Entity(entity),
+            kind,
+            text: text.into(),
+        }
+    }
 }
 
 /// Who an event is for. `Entity`/`Room` are resolved to `Connection` sim-side by

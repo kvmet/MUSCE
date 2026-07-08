@@ -36,6 +36,7 @@ pub fn commands() -> CommandTable {
     t.register("pilot", Gate::Open, pilot);
     t.register("release", Gate::Open, release);
     t.register("say", Gate::Open, say);
+    t.register("tell", Gate::Open, tell);
     t.register("help", Gate::Open, help);
     t
 }
@@ -309,6 +310,43 @@ pub fn say(ctx: &mut Ctx, args: &str) {
     ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} says, \"{msg}\""));
 }
 
+/// `tell <target> <message>`: speak privately to one person in the room. Only the
+/// sender and the target see it; the room does not overhear (that line waits on a
+/// room broadcast that can exclude both parties). The first consumer of
+/// `emit_entity`: the message is addressed to the target entity, resolved to its
+/// connection(s) at output time, so an unconnected target simply hears nothing.
+pub fn tell(ctx: &mut Ctx, args: &str) {
+    let (query, msg) = match args.trim().split_once(char::is_whitespace) {
+        Some((q, m)) => (q, m.trim()),
+        None => (args.trim(), ""),
+    };
+    if query.is_empty() {
+        ctx.emit_self(EventKind::Feedback, "Tell whom?");
+        return;
+    }
+    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, query) else {
+        ctx.emit_self(
+            EventKind::Feedback,
+            format!("You don't see \"{query}\" here."),
+        );
+        return;
+    };
+    if msg.is_empty() {
+        let them = display_name(ctx.world, target);
+        ctx.emit_self(EventKind::Feedback, format!("Tell {them} what?"));
+        return;
+    }
+
+    let who = display_name(ctx.world, ctx.actor);
+    let them = display_name(ctx.world, target);
+    ctx.emit_self(EventKind::Feedback, format!("You tell {them}, \"{msg}\""));
+    ctx.emit_entity(
+        target,
+        EventKind::Narration,
+        format!("{who} tells you, \"{msg}\""),
+    );
+}
+
 /// `help`: list the in-world verbs. This is the game's surface, so the game
 /// documents it; the engine floor's `@help` covers only the account commands.
 pub fn help(ctx: &mut Ctx, _args: &str) {
@@ -316,7 +354,7 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
         EventKind::Feedback,
         "You can: look, examine <thing> (or x), inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
-         pilot <thing>, release, say <message>, help.",
+         pilot <thing>, release, say <message>, tell <someone> <message>, help.",
     );
 }
 
@@ -598,6 +636,48 @@ mod tests {
                 .any(|t| t.contains("don't see that here"))
         );
         assert!(room_narration(&out).is_empty());
+    }
+
+    #[test]
+    fn tell_addresses_the_target_privately() {
+        let mut f = fixture();
+        // A second being standing in the hall with the actor.
+        let guard = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Name("a stone guard".into()));
+        });
+        f.world.move_entity(guard, f.hall).unwrap();
+
+        let out = run(&mut f.world, f.actor, |c| tell(c, "guard hello there"));
+
+        // Sender sees a confirmation.
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("You tell a stone guard, \"hello there\""))
+        );
+        // The message is directed to the target entity, not broadcast to the room.
+        let directed: Vec<String> = out
+            .iter()
+            .filter(|o| matches!(o.event.to, Audience::Entity(e) if e == guard))
+            .map(|o| o.event.text.clone())
+            .collect();
+        assert_eq!(directed.len(), 1);
+        assert!(directed[0].contains("tells you, \"hello there\""));
+        // No room-overhear: nobody else present sees it.
+        assert!(room_narration(&out).is_empty());
+    }
+
+    #[test]
+    fn tell_without_a_target_present_rejects() {
+        let mut f = fixture();
+        let out = run(&mut f.world, f.actor, |c| tell(c, "nobody hi"));
+
+        assert!(self_feedback(&out).iter().any(|t| t.contains("don't see")));
+        assert!(
+            out.iter()
+                .all(|o| !matches!(o.event.to, Audience::Entity(_)))
+        );
     }
 
     #[test]

@@ -2,8 +2,9 @@
 //! handlers program against. `Ctx` carries the world a handler mutates, the actor
 //! it acts through, the connection that issued the command, and the output buffer
 //! it emits into. The emit methods address output semantically (first-person to
-//! the actor, third-person to the room with the actor excluded); the dispatcher
-//! resolves those audiences to connections afterward. See
+//! the actor, third-person to the room with the actor excluded, or directed to a
+//! specific entity); the dispatcher resolves those audiences to connections
+//! afterward. See
 //! `docs/architecture/actions.md`.
 
 use std::time::SystemTime;
@@ -49,6 +50,14 @@ impl<'a> Ctx<'a> {
     /// parse-level replies (unknown verb, gated) before any handler runs.
     pub fn feedback(&mut self, text: impl Into<String>) {
         self.emit_self(EventKind::Feedback, text);
+    }
+
+    /// Directed output to a specific entity, resolved to the connection(s) driving
+    /// it at output time. If the entity drives no connection it reaches no one, the
+    /// same way narration to a room of NPCs does; the in-world act still happened.
+    pub fn emit_entity(&mut self, target: EntityId, kind: EventKind, text: impl Into<String>) {
+        self.out
+            .push(Outbound::new(Event::to_entity(target, kind, text)));
     }
 
     /// Third-person output to everyone in `room` except the actor, so the actor
