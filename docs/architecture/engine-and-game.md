@@ -136,8 +136,9 @@ moving files.
   stay engine mechanism; the verbs and their parsing are the game's.
 - **`Ctx` and a public emit API.** The handler context (`&mut World`, the actor,
   the connection) plus a small public emit surface: a first-person line to the
-  actor, a third-person line to the room with the actor excluded, and a directed
-  line to a specific entity (resolved to its driving connections). Handlers are
+  actor, a third-person line to the room excluding a set of parties (the actor, or
+  the actor and a directed target both), and a directed line to a specific entity
+  (resolved to its driving connections). Handlers are
   `fn(&mut Ctx, &str)`. The exact method names are an open detail; the shape is
   fixed.
 - **`execute` / `Action` / `ExecError`.** Already public: the structural mutation

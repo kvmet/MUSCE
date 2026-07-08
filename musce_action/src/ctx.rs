@@ -2,8 +2,9 @@
 //! handlers program against. `Ctx` carries the world a handler mutates, the actor
 //! it acts through, the connection that issued the command, and the output buffer
 //! it emits into. The emit methods address output semantically (first-person to
-//! the actor, third-person to the room with the actor excluded, or directed to a
-//! specific entity); the dispatcher resolves those audiences to connections
+//! the actor, third-person to the room with the actor or a set of parties
+//! excluded, or directed to a specific entity); the dispatcher resolves those
+//! audiences to connections
 //! afterward. See
 //! `docs/architecture/actions.md`.
 
@@ -68,9 +69,24 @@ impl<'a> Ctx<'a> {
         kind: EventKind,
         text: impl Into<String>,
     ) {
+        let actor = self.actor;
+        self.emit_room_except(room, kind, text, &[actor]);
+    }
+
+    /// Third-person output to everyone in `room` except the named entities. The
+    /// general form of [`Ctx::emit_room_except_self`]: a directed act (A waves at B)
+    /// gives the actor and the target each their own line, then this to the room so
+    /// neither party reads the bystander view a second time.
+    pub fn emit_room_except(
+        &mut self,
+        room: EntityId,
+        kind: EventKind,
+        text: impl Into<String>,
+        exclude: &[EntityId],
+    ) {
         self.out.push(Outbound::excluding(
             Event::to_room(room, kind, text),
-            self.conn,
+            exclude.to_vec(),
         ));
     }
 }

@@ -37,6 +37,7 @@ pub fn commands() -> CommandTable {
     t.register("release", Gate::Open, release);
     t.register("say", Gate::Open, say);
     t.register("tell", Gate::Open, tell);
+    t.register("wave", Gate::Open, wave);
     t.register("help", Gate::Open, help);
     t
 }
@@ -311,10 +312,12 @@ pub fn say(ctx: &mut Ctx, args: &str) {
 }
 
 /// `tell <target> <message>`: speak privately to one person in the room. Only the
-/// sender and the target see it; the room does not overhear (that line waits on a
-/// room broadcast that can exclude both parties). The first consumer of
-/// `emit_entity`: the message is addressed to the target entity, resolved to its
-/// connection(s) at output time, so an unconnected target simply hears nothing.
+/// sender and the target see it; the room does not overhear, by design. (The room
+/// broadcast that would carry an overhear line, `emit_room_except`, now exists and
+/// drives `wave at`; `tell` deliberately omits it to stay private.) The first
+/// consumer of `emit_entity`: the message is addressed to the target entity,
+/// resolved to its connection(s) at output time, so an unconnected target hears
+/// nothing.
 pub fn tell(ctx: &mut Ctx, args: &str) {
     let (query, msg) = match args.trim().split_once(char::is_whitespace) {
         Some((q, m)) => (q, m.trim()),
@@ -347,6 +350,47 @@ pub fn tell(ctx: &mut Ctx, args: &str) {
     );
 }
 
+/// `wave`, or `wave at <someone>`: a social gesture. Bare, it waves to the room.
+/// Targeted, it is three-party: the actor, the target, and the rest of the room
+/// each read their own line, so this is the first consumer of the room broadcast
+/// that excludes a *set* (`emit_room_except`), cutting both the actor and the
+/// target from the bystander view they already saw addressed to them.
+pub fn wave(ctx: &mut Ctx, args: &str) {
+    let rest = args.trim();
+    let query = match rest.split_once(char::is_whitespace) {
+        Some(("at", who)) => who.trim(),
+        _ => rest,
+    };
+    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+        ctx.emit_self(EventKind::Feedback, "There is no one to see you.");
+        return;
+    };
+    let who = display_name(ctx.world, ctx.actor);
+
+    if query.is_empty() {
+        ctx.emit_self(EventKind::Feedback, "You wave.");
+        ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} waves."));
+        return;
+    }
+
+    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, query) else {
+        ctx.emit_self(
+            EventKind::Feedback,
+            format!("You don't see \"{query}\" here."),
+        );
+        return;
+    };
+    let them = display_name(ctx.world, target);
+    ctx.emit_self(EventKind::Feedback, format!("You wave at {them}."));
+    ctx.emit_entity(target, EventKind::Narration, format!("{who} waves at you."));
+    ctx.emit_room_except(
+        room,
+        EventKind::Narration,
+        format!("{who} waves at {them}."),
+        &[ctx.actor, target],
+    );
+}
+
 /// `help`: list the in-world verbs. This is the game's surface, so the game
 /// documents it; the engine floor's `@help` covers only the account commands.
 pub fn help(ctx: &mut Ctx, _args: &str) {
@@ -354,7 +398,8 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
         EventKind::Feedback,
         "You can: look, examine <thing> (or x), inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
-         pilot <thing>, release, say <message>, tell <someone> <message>, help.",
+         pilot <thing>, release, say <message>, tell <someone> <message>, \
+         wave (or wave at <someone>), help.",
     );
 }
 
@@ -674,6 +719,57 @@ mod tests {
         let out = run(&mut f.world, f.actor, |c| tell(c, "nobody hi"));
 
         assert!(self_feedback(&out).iter().any(|t| t.contains("don't see")));
+        assert!(
+            out.iter()
+                .all(|o| !matches!(o.event.to, Audience::Entity(_)))
+        );
+    }
+
+    #[test]
+    fn wave_at_target_is_three_party() {
+        let mut f = fixture();
+        let guard = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Name("a stone guard".into()));
+        });
+        f.world.move_entity(guard, f.hall).unwrap();
+
+        let out = run(&mut f.world, f.actor, |c| wave(c, "at guard"));
+
+        // Actor sees a first-person confirmation.
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t == "You wave at a stone guard.")
+        );
+        // Target gets a directed second-person line, addressed to the entity.
+        let directed: Vec<String> = out
+            .iter()
+            .filter(|o| matches!(o.event.to, Audience::Entity(e) if e == guard))
+            .map(|o| o.event.text.clone())
+            .collect();
+        assert_eq!(directed.len(), 1);
+        assert!(directed[0].contains("waves at you"));
+        // The room gets one bystander line, cutting both parties who already saw one.
+        let room: Vec<&Outbound> = out
+            .iter()
+            .filter(|o| matches!(o.event.to, Audience::Room(_)))
+            .collect();
+        assert_eq!(room.len(), 1);
+        assert!(room[0].event.text.contains("waves at a stone guard"));
+        assert!(room[0].exclude.contains(&f.actor) && room[0].exclude.contains(&guard));
+    }
+
+    #[test]
+    fn wave_bare_greets_the_room() {
+        let mut f = fixture();
+        let out = run(&mut f.world, f.actor, |c| wave(c, ""));
+
+        assert!(self_feedback(&out).iter().any(|t| t == "You wave."));
+        let room = room_narration(&out);
+        assert_eq!(room.len(), 1);
+        assert!(room[0].contains("waves."));
+        // No target, so no directed line.
         assert!(
             out.iter()
                 .all(|o| !matches!(o.event.to, Audience::Entity(_)))

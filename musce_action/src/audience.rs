@@ -4,33 +4,36 @@
 //! and the connection<->actor map, so it happens here, before output reaches net.
 //! Net is left a pure `Connection` pipe. See `docs/architecture/actions.md`.
 
-use musce_core::World;
+use musce_core::{EntityId, World};
 use musce_proto::{Audience, Event, Outgoing};
 
 use crate::bindings::Actors;
 
-/// One handler-emitted piece of output before audience resolution. `exclude` is
-/// the connection to omit when expanding a broadcast: a verb sends the actor a
+/// One handler-emitted piece of output before audience resolution. `exclude` names
+/// the entities to omit when expanding a broadcast: a verb sends the actor a
 /// first-person line directly and a third-person line to the room *except* the
-/// actor, so the actor never sees both.
+/// actor, so the actor never sees both. A directed act (A waves at B) excludes both
+/// parties from the room line, since each already got their own line. Exclusion is
+/// by entity, not connection, because handlers speak entities; each excluded entity
+/// resolves to its driving connection(s) here, where the `Actors` index is on hand.
 #[derive(Debug, Clone)]
 pub struct Outbound {
     pub event: Event,
-    pub exclude: Option<musce_proto::ConnectionId>,
+    pub exclude: Vec<EntityId>,
 }
 
 impl Outbound {
     pub fn new(event: Event) -> Self {
         Outbound {
             event,
-            exclude: None,
+            exclude: Vec::new(),
         }
     }
 
-    pub fn excluding(event: Event, conn: musce_proto::ConnectionId) -> Self {
+    pub fn excluding(event: Event, entities: Vec<EntityId>) -> Self {
         Outbound {
             event,
-            exclude: Some(conn),
+            exclude: entities,
         }
     }
 }
@@ -42,8 +45,11 @@ impl Outbound {
 pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl FnMut(Outgoing)) {
     let Outbound { event, exclude } = out;
 
+    let excluded_conns: Vec<musce_proto::ConnectionId> =
+        exclude.iter().flat_map(|e| actors.conns_for(*e)).collect();
+
     let mut deliver = |conn| {
-        if Some(conn) == exclude {
+        if excluded_conns.contains(&conn) {
             return;
         }
         emit(Outgoing::Event(Event {
@@ -144,7 +150,7 @@ mod tests {
 
         let out = Outbound::excluding(
             Event::to_room(room, EventKind::Narration, "Alice waves"),
-            ConnectionId(1),
+            vec![alice],
         );
         let events = collect(&w, &actors, out);
 
@@ -152,6 +158,40 @@ mod tests {
         assert!(matches!(
             events[0],
             Outgoing::Event(Event { to: Audience::Connection(c), .. }) if c == ConnectionId(2)
+        ));
+    }
+
+    #[test]
+    fn exclude_drops_a_set() {
+        let mut w = World::new();
+        let room = {
+            let mut b = EntityBuilder::new();
+            b.add(Room);
+            w.spawn(b)
+        };
+        let alice = player(&mut w);
+        let bob = player(&mut w);
+        let carol = player(&mut w);
+        w.move_entity(alice, room).unwrap();
+        w.move_entity(bob, room).unwrap();
+        w.move_entity(carol, room).unwrap();
+
+        let mut actors = Actors::default();
+        actors.bind(ConnectionId(1), alice);
+        actors.bind(ConnectionId(2), bob);
+        actors.bind(ConnectionId(3), carol);
+
+        // Alice waves at Bob: both got their own line, so only Carol sees the room's.
+        let out = Outbound::excluding(
+            Event::to_room(room, EventKind::Narration, "Alice waves at Bob"),
+            vec![alice, bob],
+        );
+        let events = collect(&w, &actors, out);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            Outgoing::Event(Event { to: Audience::Connection(c), .. }) if c == ConnectionId(3)
         ));
     }
 }

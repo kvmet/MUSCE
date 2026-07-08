@@ -228,10 +228,13 @@ minimal:
   as ground truth for tests and play.
 
 Output is addressed semantically and resolved sim-side: handlers emit first-person
-feedback to the acting connection and third-person narration to the room (the
-actor excluded), and the audience resolver expands `Room`/`Entity` into the
-connections that should see it before anything reaches net. Net is left a pure
-`Connection` pipe.
+feedback to the acting connection, a directed line to a specific entity, and
+third-person narration to the room excluding a set of parties (the actor alone, or
+the actor and a target both, so a directed act like `wave at` never shows either
+party the bystander view they already received). The audience resolver expands
+`Room`/`Entity` into the connections that should see it and drops the excluded
+entities' connections before anything reaches net. Net is left a pure `Connection`
+pipe.
 
 The full structural action set (`Create`/`Destroy`/`SetComponent`/
 `RemoveComponent`), the type-erased reflection primitives it rides
