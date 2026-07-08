@@ -100,12 +100,13 @@ pub enum FocusError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{Creature, Description, Player};
+    use crate::component::Description;
     use hecs::EntityBuilder;
 
-    fn being<M: hecs::Component>(w: &mut World, marker: M, desc: &str) -> EntityId {
+    // Controls/Focus are kind-agnostic, so a test "being" is just a described
+    // entity; player/creature are game kinds and no longer live in core.
+    fn being(w: &mut World, desc: &str) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(marker);
         b.add(Description(desc.into()));
         w.spawn(b)
     }
@@ -113,8 +114,8 @@ mod tests {
     #[test]
     fn focus_set_and_clear() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let robot = being(&mut w, Creature, "a robot");
+        let character = being(&mut w, "a pilot");
+        let robot = being(&mut w, "a robot");
         w.relate::<Controls>(robot, character).unwrap();
 
         assert_eq!(w.focus_of(character), None);
@@ -127,8 +128,8 @@ mod tests {
     #[test]
     fn set_focus_rejects_an_uncontrolled_target() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let stranger = being(&mut w, Creature, "a robot it does not control");
+        let character = being(&mut w, "a pilot");
+        let stranger = being(&mut w, "a robot it does not control");
 
         // No `Controls` edge: the cursor cannot land outside the chain.
         assert!(matches!(
@@ -147,9 +148,9 @@ mod tests {
     #[test]
     fn control_root_walks_to_the_top() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let mech = being(&mut w, Creature, "a mech");
-        let drone = being(&mut w, Creature, "a drone");
+        let character = being(&mut w, "a pilot");
+        let mech = being(&mut w, "a mech");
+        let drone = being(&mut w, "a drone");
         w.relate::<Controls>(mech, character).unwrap();
         w.relate::<Controls>(drone, mech).unwrap();
 
@@ -163,8 +164,8 @@ mod tests {
     #[test]
     fn controls_and_focus_round_trip() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let robot = being(&mut w, Creature, "a robot");
+        let character = being(&mut w, "a pilot");
+        let robot = being(&mut w, "a robot");
         w.relate::<Controls>(robot, character).unwrap();
         w.set_focus(character, robot).unwrap();
 
@@ -182,8 +183,8 @@ mod tests {
     #[test]
     fn controller_death_detaches_controlled() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let robot = being(&mut w, Creature, "a robot");
+        let character = being(&mut w, "a pilot");
+        let robot = being(&mut w, "a robot");
         w.relate::<Controls>(robot, character).unwrap();
 
         w.despawn(character);
@@ -196,8 +197,8 @@ mod tests {
     #[test]
     fn despawning_puppet_resets_focus() {
         let mut w = World::new();
-        let character = being(&mut w, Player, "a pilot");
-        let robot = being(&mut w, Creature, "a robot");
+        let character = being(&mut w, "a pilot");
+        let robot = being(&mut w, "a robot");
         w.relate::<Controls>(robot, character).unwrap();
         w.set_focus(character, robot).unwrap();
         assert_eq!(w.focus_of(character), Some(robot));

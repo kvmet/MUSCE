@@ -11,13 +11,12 @@
 //! new id so a builder can chain commands.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{
-    ComponentBlob, Container, Controls, Creature, Description, EntityId, Exit, Item, Label, Room,
-    Value, World,
-};
+use musce_core::{ComponentBlob, Controls, Description, EntityId, Name, Room, Value, World};
 use musce_proto::EventKind;
 
 use crate::commit_or_log;
+use crate::kinds::{Container, Creature, Exit, Item};
+use crate::names::display_name;
 use crate::systems::Wander;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
@@ -517,7 +516,7 @@ fn has_exit(world: &World, room: EntityId, dir: &str) -> bool {
     world
         .exits_of(room)
         .into_iter()
-        .any(|e| world.label_of(e).as_deref() == Some(dir))
+        .any(|e| world.name_of(e).as_deref() == Some(dir))
 }
 
 /// Spawn one exit entity from `from` to `to`, labeled `label`, through the
@@ -560,18 +559,11 @@ fn dig_exit(world: &mut World, from: EntityId, to: EntityId, label: &str) -> boo
     )
 }
 
-fn exit_blob(label: &str) -> Value {
+fn exit_blob(name: &str) -> Value {
     ComponentBlob::new()
         .with(Exit)
-        .with(Label(label.to_string()))
+        .with(Name(name.to_string()))
         .build()
-}
-
-fn display_name(world: &World, id: EntityId) -> String {
-    world
-        .entity(id)
-        .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-        .unwrap_or_else(|| "something".to_string())
 }
 
 #[cfg(test)]

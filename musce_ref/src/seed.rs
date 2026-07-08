@@ -6,11 +6,10 @@
 //! `docs/architecture/engine-and-game.md`.
 
 use musce_core::hecs::EntityBuilder;
-use musce_core::{
-    Controls, Creature, Description, EntityId, Exit, Item, Label, LeadsFrom, LeadsTo, Player, Room,
-    Staff, World,
-};
+use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, Staff, World};
 
+use crate::kinds::{Creature, Exit, Item, Player};
+use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
 
 /// Ticks between the patrolling sentry's steps, and the torch's burn-out lifetime.
@@ -41,13 +40,25 @@ pub fn seed(world: &mut World) {
     link(world, garden, hall, "south");
     link(world, cellar, hall, "up");
 
-    let key = item(world, "a brass key");
+    let key = item(
+        world,
+        "a brass key",
+        "A small brass key, its teeth worn smooth. It may fit an old lock.",
+    );
     world.move_entity(key, garden).expect("seed: place key");
 
-    let avatar = avatar(world, "a weathered adventurer");
+    let avatar = avatar(
+        world,
+        "a weathered adventurer",
+        "A weathered adventurer, road dust still on well-worn boots.",
+    );
     world.move_entity(avatar, hall).expect("seed: place avatar");
 
-    let drone = creature(world, "a battered patrol drone, idling on its treads");
+    let drone = creature(
+        world,
+        "a patrol drone",
+        "A battered patrol drone idles on its treads, lenses whirring as they track you.",
+    );
     world.move_entity(drone, hall).expect("seed: place drone");
     world
         .relate::<Controls>(drone, avatar)
@@ -75,7 +86,11 @@ pub fn seed(world: &mut World) {
             },
         ],
     );
-    let sentry = creature(world, "a clockwork sentry pacing a fixed beat");
+    let sentry = creature(
+        world,
+        "a clockwork sentry",
+        "A clockwork sentry paces a fixed beat, gears ticking behind a dented breastplate.",
+    );
     world.move_entity(sentry, hall).expect("seed: place sentry");
     attach(world, sentry, patrol, true).expect("seed: attach patrol");
 
@@ -86,7 +101,16 @@ pub fn seed(world: &mut World) {
             intent: Intent::Destroy,
         }],
     );
-    let torch = item(world, "a guttering torch");
+    // The torch carries aliases (`light`, `flame`) that its name does not contain,
+    // to exercise the resolver's alias tier out of the box.
+    let torch = spawn(world, |b| {
+        b.add(Item);
+        b.add(Name("a guttering torch".into()));
+        b.add(Description(
+            "A pitch-soaked torch, its flame guttering low as it burns toward the grip.".into(),
+        ));
+        b.add(Aliases(vec!["light".into(), "flame".into()]));
+    });
     world.move_entity(torch, hall).expect("seed: place torch");
     attach(world, torch, burn, false).expect("seed: attach torch burn-out");
 }
@@ -125,26 +149,29 @@ fn room(world: &mut World, desc: &str) -> EntityId {
     })
 }
 
-fn item(world: &mut World, desc: &str) -> EntityId {
+fn item(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Item);
+        b.add(Name(name.into()));
         b.add(Description(desc.into()));
     })
 }
 
-fn avatar(world: &mut World, desc: &str) -> EntityId {
+fn avatar(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Player);
         // The reference avatar is staff so the admin verbs are playable out of the
         // box; a real game gates staff through accounts, not the seed.
         b.add(Staff);
+        b.add(Name(name.into()));
         b.add(Description(desc.into()));
     })
 }
 
-fn creature(world: &mut World, desc: &str) -> EntityId {
+fn creature(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Creature);
+        b.add(Name(name.into()));
         b.add(Description(desc.into()));
     })
 }
@@ -155,12 +182,12 @@ fn spawn(world: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
     world.spawn(b)
 }
 
-/// Spawn an exit entity leading from `from` to `to`, labeled `label`, wiring
-/// both endpoint relations.
-fn link(world: &mut World, from: EntityId, to: EntityId, label: &str) {
+/// Spawn an exit entity leading from `from` to `to`, named `name` (its direction),
+/// wiring both endpoint relations.
+fn link(world: &mut World, from: EntityId, to: EntityId, name: &str) {
     let exit = spawn(world, |b| {
         b.add(Exit);
-        b.add(Label(label.into()));
+        b.add(Name(name.into()));
     });
     world
         .relate::<LeadsFrom>(exit, from)
@@ -187,7 +214,7 @@ mod tests {
         let north = w
             .exits_of(start)
             .into_iter()
-            .find(|&e| w.label_of(e).as_deref() == Some("north"))
+            .find(|&e| w.name_of(e).as_deref() == Some("north"))
             .expect("a north exit out of the start room");
         assert!(w.exit_destination(north).is_some());
     }
@@ -238,13 +265,13 @@ mod tests {
         }
     }
 
-    /// First entity whose `Description` contains `needle`, for finding seeded
-    /// content by name in tests.
+    /// First entity whose `Name` contains `needle`, for finding seeded content by
+    /// its handle in tests.
     fn find_described(w: &World, needle: &str) -> Option<EntityId> {
         w.ecs
-            .query::<(&musce_core::Id, &Description)>()
+            .query::<(&musce_core::Id, &Name)>()
             .iter()
-            .find(|(_, d)| d.0.contains(needle))
+            .find(|(_, n)| n.0.contains(needle))
             .map(|(id, _)| id.0)
     }
 }

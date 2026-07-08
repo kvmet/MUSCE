@@ -774,7 +774,6 @@ name = "musce_net"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
- "musce_core",
  "musce_proto",
  "tokio",
  "tracing",

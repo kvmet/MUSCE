@@ -3,8 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::component::{
-    ComponentRegistry, Container, Creature, Description, Exit, Id, Item, Label, NamedComponent,
-    Player, RegistryError, Room, Staff,
+    ComponentRegistry, Description, Id, Name, NamedComponent, RegistryError, Room, Staff,
 };
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
@@ -69,13 +68,8 @@ impl World {
     fn register_defaults(&mut self) {
         self.register_component::<Id>();
         self.register_component::<Description>();
+        self.register_component::<Name>();
         self.register_component::<Room>();
-        self.register_component::<Item>();
-        self.register_component::<Exit>();
-        self.register_component::<Label>();
-        self.register_component::<Creature>();
-        self.register_component::<Container>();
-        self.register_component::<Player>();
         self.register_component::<Staff>();
         self.register_relation::<Containment>();
         self.register_relation::<Controls>();
@@ -152,13 +146,17 @@ impl World {
         }
         // Snapshot what a reaction needs before the entity leaves the world. It is
         // still live here: a cascade handler may have detached it from a target's
-        // reverse list, but never strips its own forward `Containment` link or its
-        // `Description`, so `enclosing_room` and the name still resolve. After
-        // `index.remove` below they would not.
+        // reverse list, but never strips its own forward `Containment` link, its
+        // `Name`, or its `Description`, so `enclosing_room` and the name still
+        // resolve. After `index.remove` below they would not. The name is the
+        // entity's `Name` handle, falling back to its `Description` for content
+        // that carries only prose (a quick-create thing), mirroring how the game
+        // displays it; `None` if it has neither.
         let last_room = self.enclosing_room(id);
-        let name = self
-            .entity(id)
-            .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()));
+        let name = self.name_of(id).or_else(|| {
+            self.entity(id)
+                .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
+        });
         self.emit_fact(Fact::Destroyed {
             entity: id,
             last_room,

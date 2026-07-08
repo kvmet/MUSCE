@@ -129,7 +129,7 @@ pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError>
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Container, Controls, Description, Item, Map, MutateError, Room};
+    use musce_core::{Controls, Description, Map, MutateError, Room, Staff};
 
     fn room(w: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();
@@ -137,23 +137,23 @@ mod tests {
         w.spawn(b)
     }
 
+    // Container/item are game kinds, not engine machinery, so these executor tests
+    // (which exercise the kind-agnostic structural actions) use bare entities: a
+    // "container" is just something other things get moved into.
     fn container(w: &mut World) -> EntityId {
-        let mut b = EntityBuilder::new();
-        b.add(Container);
-        w.spawn(b)
+        w.spawn(EntityBuilder::new())
     }
 
     fn item(w: &mut World) -> EntityId {
-        let mut b = EntityBuilder::new();
-        b.add(Item);
-        w.spawn(b)
+        w.spawn(EntityBuilder::new())
     }
 
-    /// A component blob `{ "item": null, "description": <desc> }`, built through
+    /// A component blob `{ "staff": null, "description": <desc> }`, built through
     /// the re-exported JSON types (the action layer has no serde_json of its own).
-    fn item_blob(desc: &str) -> Value {
+    /// `staff` stands in as a core-registered marker so `create` accepts the blob.
+    fn staff_blob(desc: &str) -> Value {
         let mut m = Map::new();
-        m.insert("item".into(), Value::Null);
+        m.insert("staff".into(), Value::Null);
         m.insert("description".into(), Value::String(desc.into()));
         Value::Object(m)
     }
@@ -233,12 +233,12 @@ mod tests {
         let id = execute(
             &mut w,
             Action::Create {
-                components: item_blob("a torch"),
+                components: staff_blob("a torch"),
             },
         )
         .unwrap();
 
-        assert!(w.has::<Item>(id));
+        assert!(w.has::<Staff>(id));
         assert_eq!(
             w.entity(id).unwrap().get::<&Description>().unwrap().0,
             "a torch"

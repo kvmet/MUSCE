@@ -13,7 +13,7 @@ use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
-use crate::names::{self, Scope};
+use crate::names::{self, Scope, display_name, short_name};
 
 /// Build the reference game's command table. Movement is registered first so
 /// single-letter direction abbreviations win their prefix ties (`s` is south, so
@@ -27,6 +27,9 @@ pub fn commands() -> CommandTable {
     t.register("up", Gate::Open, |c, _| go(c, "up"));
     t.register("down", Gate::Open, |c, _| go(c, "down"));
     t.register("look", Gate::Open, look);
+    t.register("examine", Gate::Open, examine);
+    t.register("x", Gate::Open, examine);
+    t.register("inventory", Gate::Open, inventory);
     t.register("go", Gate::Open, go);
     t.register("take", Gate::Open, take);
     t.register("drop", Gate::Open, drop);
@@ -39,11 +42,60 @@ pub fn commands() -> CommandTable {
 
 // --- verbs ---------------------------------------------------------------
 
-/// `look`: describe the actor's current room, its exits, and its contents.
-pub fn look(ctx: &mut Ctx, _args: &str) {
+/// `look`: describe the actor's current room, its exits, and its contents. With
+/// an argument (`look <target>`) it looks closely at one thing, the same as
+/// `examine`.
+pub fn look(ctx: &mut Ctx, args: &str) {
+    if !args.trim().is_empty() {
+        examine(ctx, args);
+        return;
+    }
     match describe_room(ctx.world, ctx.actor) {
         Some(text) => ctx.emit_self(EventKind::Narration, text),
         None => ctx.emit_self(EventKind::Feedback, "You are nowhere."),
+    }
+}
+
+/// `examine <target>` / `x`: look closely at a nearby thing (an item, a creature,
+/// an exit, or yourself, addressed as `me`). Reveals its `Description`; a thing
+/// carrying only a name gets a plain acknowledgement.
+pub fn examine(ctx: &mut Ctx, args: &str) {
+    let query = args.trim();
+    if query.is_empty() {
+        ctx.emit_self(EventKind::Feedback, "Examine what?");
+        return;
+    }
+    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor, query) else {
+        ctx.emit_self(EventKind::Feedback, "You don't see that here.");
+        return;
+    };
+    match description(ctx.world, target) {
+        Some(text) => ctx.emit_self(EventKind::Narration, text),
+        None => {
+            let name = display_name(ctx.world, target);
+            ctx.emit_self(
+                EventKind::Narration,
+                format!("You see nothing special about {name}."),
+            );
+        }
+    }
+}
+
+/// `inventory` / `i`: list what the actor is holding.
+pub fn inventory(ctx: &mut Ctx, _args: &str) {
+    let items: Vec<String> = ctx
+        .world
+        .contents(ctx.actor)
+        .into_iter()
+        .filter_map(|e| short_name(ctx.world, e))
+        .collect();
+    if items.is_empty() {
+        ctx.emit_self(EventKind::Feedback, "You are carrying nothing.");
+    } else {
+        ctx.emit_self(
+            EventKind::Feedback,
+            format!("You are carrying: {}.", items.join(", ")),
+        );
     }
 }
 
@@ -262,8 +314,9 @@ pub fn say(ctx: &mut Ctx, args: &str) {
 pub fn help(ctx: &mut Ctx, _args: &str) {
     ctx.emit_self(
         EventKind::Feedback,
-        "You can: look, go <direction> (or just a direction), take <item>, \
-         drop <item>, pilot <thing>, release, say <message>, help.",
+        "You can: look, examine <thing> (or x), inventory (or i), \
+         go <direction> (or just a direction), take <item>, drop <item>, \
+         pilot <thing>, release, say <message>, help.",
     );
 }
 
@@ -281,7 +334,7 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     let dirs: Vec<String> = world
         .exits_of(room)
         .into_iter()
-        .filter_map(|e| world.label_of(e))
+        .filter_map(|e| world.name_of(e))
         .collect();
     if dirs.is_empty() {
         s.push_str("none");
@@ -294,7 +347,7 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
         .contents(room)
         .into_iter()
         .filter(|&e| e != viewer)
-        .filter_map(|e| description(world, e))
+        .filter_map(|e| short_name(world, e))
         .collect();
     if !others.is_empty() {
         s.push_str("\nYou see: ");
@@ -351,7 +404,7 @@ pub(crate) fn do_move(world: &mut World, actor: EntityId, exit: EntityId) -> Mov
     // Capture the room being left before the move commits; the caller narrates the
     // departure to it.
     let from = world.enclosing_room(actor);
-    let direction = world.label_of(exit).unwrap_or_else(|| "away".to_string());
+    let direction = world.name_of(exit).unwrap_or_else(|| "away".to_string());
 
     // A being moving into a room cannot close a containment cycle, so this should
     // never fail; a bug here is logged loud rather than silently swallowed.
@@ -390,7 +443,8 @@ fn can_traverse(world: &World, _mover: EntityId, exit: EntityId) -> Result<(), &
 /// and creatures stay put. This is the gameplay rule, kept here in the handler,
 /// not in `execute`.
 fn is_takeable(world: &World, entity: EntityId) -> bool {
-    use musce_core::{Creature, Player, Room};
+    use crate::kinds::{Creature, Player};
+    use musce_core::Room;
     !(world.has::<Room>(entity) || world.has::<Player>(entity) || world.has::<Creature>(entity))
 }
 
@@ -405,19 +459,13 @@ fn description_or(world: &World, entity: EntityId, fallback: &str) -> String {
     description(world, entity).unwrap_or_else(|| fallback.to_string())
 }
 
-/// A name for narration. Uses the `Description` because most entities carry no
-/// `Label` yet (a `Label` is the resolver match token, not display prose; see
-/// names.rs), falling back to a neutral noun when an entity has no description.
-fn display_name(world: &World, entity: EntityId) -> String {
-    description_or(world, entity, "something")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kinds::{Creature, Exit, Item, Player};
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Controls, Creature, Exit, Item, Label, LeadsFrom, LeadsTo, Player, Room};
+    use musce_core::{Controls, LeadsFrom, LeadsTo, Name, Room};
     use musce_proto::{Audience, ConnectionId};
 
     struct Fixture {
@@ -474,7 +522,7 @@ mod tests {
     fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
         let exit = spawn(w, |b| {
             b.add(Exit);
-            b.add(Label(dir.into()));
+            b.add(Name(dir.into()));
         });
         w.relate::<LeadsFrom>(exit, from).unwrap();
         w.relate::<LeadsTo>(exit, to).unwrap();
@@ -710,6 +758,81 @@ mod tests {
             self_feedback(&out)
                 .iter()
                 .any(|t| t.contains("return to yourself"))
+        );
+    }
+
+    #[test]
+    fn examine_reveals_a_things_description() {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap(); // be where the key is
+        let out = run(&mut f.world, f.actor, |c| examine(c, "key"));
+
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("a brass key")),
+            "examine shows the target's description, got: {:?}",
+            self_feedback(&out)
+        );
+        assert!(room_narration(&out).is_empty()); // examine is private
+    }
+
+    #[test]
+    fn examine_self_looks_at_the_actor() {
+        let mut f = fixture();
+        let out = run(&mut f.world, f.actor, |c| examine(c, "me"));
+
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("a brave adventurer"))
+        );
+    }
+
+    #[test]
+    fn examine_a_thing_not_present_rejects() {
+        let mut f = fixture();
+        let out = run(&mut f.world, f.actor, |c| examine(c, "dragon"));
+
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("don't see that here"))
+        );
+    }
+
+    #[test]
+    fn look_with_an_argument_examines() {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap();
+        let out = run(&mut f.world, f.actor, |c| look(c, "key"));
+
+        // `look key` reveals the key, not the room.
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("a brass key"))
+        );
+    }
+
+    #[test]
+    fn inventory_lists_held_things_and_reports_empty() {
+        let mut f = fixture();
+
+        let out = run(&mut f.world, f.actor, |c| inventory(c, ""));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("carrying nothing"))
+        );
+
+        // Give the actor the key, then it shows up in the listing.
+        f.world.move_entity(f.key, f.actor).unwrap();
+        let out = run(&mut f.world, f.actor, |c| inventory(c, ""));
+        assert!(
+            self_feedback(&out)
+                .iter()
+                .any(|t| t.contains("carrying") && t.contains("a brass key"))
         );
     }
 }

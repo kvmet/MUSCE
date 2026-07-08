@@ -123,7 +123,7 @@ pub fn dispatch_command(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Player, Room, Staff};
+    use musce_core::{Description, Room, Staff};
     use musce_proto::{Audience, Event, EventKind};
 
     /// Two test verbs over the public emit API, standing in for game content so
@@ -145,7 +145,7 @@ mod tests {
         };
         let actor = {
             let mut b = EntityBuilder::new();
-            b.add(Player);
+            b.add(Description("an actor".into()));
             world.spawn(b)
         };
         world.move_entity(actor, room).unwrap();

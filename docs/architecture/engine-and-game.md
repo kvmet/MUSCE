@@ -83,8 +83,36 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
 - **`register: fn(&mut World)`** registers the game's own component (and relation)
   types on a fresh world, run before load and seed, since registration must
   precede deserialization. Engine types register themselves in `World::new`; this
-  is where a game adds its own (the reference game registers its `Wander` marker),
-  so they round-trip through persistence like any built-in.
+  is where a game adds its own, so they round-trip through persistence like any
+  built-in. The reference game registers its kind markers (`item`, `creature`,
+  `container`, a player avatar, an exit) and its behavior components (`Wander`,
+  `Locked`, `Aliases`, the sequence types) here.
+
+### The component boundary
+
+The engine defines a component only when engine code *reads* it. Everything else
+is game vocabulary and lives in the game, registered through `register` above. So
+`Item`/`Creature`/`Container`/`Player`/`Exit` are not engine types: the engine
+stores them but never interprets them (containment holds any entity in any entity;
+what counts as a takeable "item" or a fillable "container" is a game rule). `Exit`
+is the subtle case: the engine owns exit *connectivity* (the `LeadsFrom`/`LeadsTo`
+relations are engine mechanism the despawn cascade reads), but the *kind marker* is
+read only by game rules (`go`, `is_takeable`), so an exit entity is engine-owned
+relations plus a game-owned kind tag. A game built on the engine defines its own
+kinds the same way, without modifying it.
+
+Two kinds stay in core, and not by accident: they *are* the engine's model.
+
+- **`Room`** is the perception boundary. `enclosing_room`, `Audience::Room`, and
+  the `Fact` channel's `last_room` snapshot are all room-scoped, because MUSCE is a
+  room-based substrate.
+- **`Staff`** is the one built-in permission tier the admin `Gate` checks.
+
+A game wanting a non-room world or account-role permissions instead of a `Staff`
+marker would need the engine to grow a parameterization seam (a game-supplied
+perception boundary; a game-supplied privilege predicate). Neither is built,
+because neither is needed yet; they are the two deliberate model assumptions the
+"a game never modifies the engine" rule is scoped within.
 
 A plain struct of values plus fn pointers, matching the style the command and
 component registries already use. A `trait Game` is the alternative if a game ever

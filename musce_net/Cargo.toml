@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 crossbeam-channel = { workspace = true }
-musce_core = { workspace = true }
 musce_proto = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

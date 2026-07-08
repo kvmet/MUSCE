@@ -63,8 +63,25 @@ boundary, addressed and typed.
 ```
 Event { to: Audience, kind: EventKind, .. }
 Audience  = Room(id) | Entity(id) | Connection(id)
-EventKind = Speech | Emote | Narration | System | Feedback | ...
+EventKind = System | Feedback | Narration
 ```
+
+`EventKind` is a **closed set of engine-intrinsic delivery tiers** and stays that
+way: `System` (out-of-band server messages: the connect banner, shutdown),
+`Feedback` (a solicited reply to the actor's own command, including the
+dispatcher's rejections), and `Narration` (in-world description). These are what
+engine mechanism itself emits, so the engine owns the set and a game never extends
+the enum.
+
+Game presentation *channels* (speech vs emote vs a combat log vs a whisper the
+client styles apart) are a different axis and ride an **additive, opaque `channel`
+tag**, never new `EventKind` variants. This is deliberate and is the one rule that
+keeps the protocol stable: a new variant is a wire-format and exhaustive-match
+change (a migration), while an optional `channel` field defaults on old data (an
+addition), so the open axis must never be enum cardinality. The field is unbuilt
+until a client actually styles channels apart; today `say` emits `Narration` with
+no channel, which is correct until then. When the need lands, add the field and a
+`"speech"` value, touching no existing variant.
 
 - Showing text to a player is just emitting an Event addressed to them
   (`to: Entity(player), kind: Narration`). No actor, no action. **Audience

@@ -1,9 +1,10 @@
 //! Unit tests for the admin builder verbs.
 
 use super::*;
+use crate::kinds::{Container, Creature, Item, Player};
 use musce_action::Outbound;
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Container, Creature, Description, Item, Player, Room, Staff};
+use musce_core::{Description, Room, Staff};
 use musce_proto::{Audience, ConnectionId};
 
 fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
@@ -22,6 +23,9 @@ fn described(w: &mut World, marker: impl FnOnce(&mut EntityBuilder), desc: &str)
 /// A world with a staff builder standing in a hall: (world, hall, builder).
 fn world_with_builder() -> (World, EntityId, EntityId) {
     let mut w = World::new();
+    // `@create` builds a component blob and spawns it through the registry, so the
+    // game's own kinds must be registered, exactly as the runtime does at boot.
+    crate::systems::register(&mut w);
     let hall = described(
         &mut w,
         |b| {
@@ -60,7 +64,7 @@ fn re(id: EntityId) -> String {
 fn exit_to(w: &World, room: EntityId, dir: &str) -> Option<EntityId> {
     w.exits_of(room)
         .into_iter()
-        .find(|&e| w.label_of(e).as_deref() == Some(dir))
+        .find(|&e| w.name_of(e).as_deref() == Some(dir))
         .and_then(|e| w.exit_destination(e))
 }
 

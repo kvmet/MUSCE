@@ -55,9 +55,9 @@ emitting from `execute` would catch the targeted entity and miss its collateral.
 The one fact today is `Fact::Destroyed { entity, last_room, name, cause }`.
 `last_room` and `name` are a **pre-removal snapshot** (captured while the entity is
 still live, between the cascade-handler loop and the index removal, because a
-reaction reads them after it is gone): `name` is the `Description` (`None` if
-absent, e.g. an exit carries a `Label`), `last_room` the `enclosing_room` (`None`
-for a top-level room or a location-less entity). `cause` is `Direct` for the
+reaction reads them after it is gone): `name` is the entity's `Name` handle,
+falling back to its `Description` (`None` if it carries neither), and `last_room`
+the `enclosing_room` (`None` for a top-level room or a location-less entity). `cause` is `Direct` for the
 targeted entity and `Cascade` for one swept up by a cascade; this discriminator
 lets one reaction catch every removal in a recursive `@purge` (all `Direct`) yet
 skip the collateral of a single `@destroy <room>` (room `Direct`, exits

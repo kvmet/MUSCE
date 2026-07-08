@@ -18,8 +18,7 @@ pub use hecs;
 pub use serde_json::{Map, Value};
 
 pub use component::{
-    ComponentBlob, Container, Creature, Description, Exit, Id, Item, Label, NamedComponent, Player,
-    RegistryError, Room, Staff,
+    ComponentBlob, Description, Id, Name, NamedComponent, RegistryError, Room, Staff,
 };
 pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
@@ -42,16 +41,17 @@ mod tests {
         w.spawn(b)
     }
 
+    // The core tests exercise the engine machinery (containment, snapshot,
+    // mutation), which is kind-agnostic, so these stand-in "things" carry only a
+    // `Description`: item/container are game kinds and no longer live here.
     fn item(w: &mut World, name: &str) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Item);
         b.add(Description(name.into()));
         w.spawn(b)
     }
 
     fn container(w: &mut World, name: &str) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Container);
         b.add(Description(name.into()));
         w.spawn(b)
     }
@@ -133,8 +133,7 @@ mod tests {
         // cascades (DespawnSources) when the hall dies.
         let exit = {
             let mut b = EntityBuilder::new();
-            b.add(Exit);
-            b.add(Label("north".into()));
+            b.add(Name("north".into()));
             w.spawn(b)
         };
         w.relate::<LeadsFrom>(exit, hall).unwrap();
@@ -194,20 +193,16 @@ mod tests {
     fn despawn_unnamed_entity_has_no_name() {
         use hecs::EntityBuilder;
         let mut w = World::new();
-        // An exit carries `Label`, not `Description`, so its fact has no name.
-        let exit = {
-            let mut b = EntityBuilder::new();
-            b.add(Exit);
-            b.add(Label("north".into()));
-            w.spawn(b)
-        };
+        // An entity with neither a `Name` nor a `Description` has nothing to name
+        // it, so its fact carries no name.
+        let bare = w.spawn(EntityBuilder::new());
 
-        w.despawn(exit);
+        w.despawn(bare);
         let facts = w.take_facts();
 
         assert_eq!(facts.len(), 1);
         let Fact::Destroyed { name, cause, .. } = &facts[0];
-        assert!(name.is_none(), "an exit has no Description to name it");
+        assert!(name.is_none(), "no Name or Description means no name");
         assert_eq!(*cause, DestroyCause::Direct);
     }
 
@@ -273,13 +268,13 @@ mod tests {
         let before = w.index().len();
         let id = w
             .create(&serde_json::json!({
-                "item": null,
+                "staff": null,
                 "description": "a brass lamp",
             }))
             .unwrap();
 
         // The components landed, a fresh Id was assigned, and the index grew.
-        assert!(w.has::<Item>(id));
+        assert!(w.has::<Staff>(id));
         assert_eq!(w.index().len(), before + 1);
         let er = w.entity(id).unwrap();
         assert_eq!(er.get::<&Description>().unwrap().0, "a brass lamp");
@@ -375,9 +370,7 @@ mod tests {
     #[test]
     fn component_value_absent_is_none() {
         let mut w = World::new();
-        let mut b = EntityBuilder::new();
-        b.add(Item);
-        let bare = w.spawn(b);
+        let bare = w.spawn(EntityBuilder::new());
         assert_eq!(w.component_value(bare, "description"), None);
     }
 
@@ -410,9 +403,12 @@ mod tests {
         assert_eq!(w2.container_of(bag), Some(hall));
         assert_eq!(w2.enclosing_room(coin), Some(hall));
         assert_eq!(w2.contents(bag), vec![coin]);
+        // A marker and a newtype both round-trip through the snapshot.
         assert!(w2.has::<Room>(hall));
-        assert!(w2.has::<Container>(bag));
-        assert!(w2.has::<Item>(coin));
+        assert_eq!(
+            w2.entity(coin).unwrap().get::<&Description>().unwrap().0,
+            "coin"
+        );
         assert_eq!(w2.next_id(), snap.next_id);
     }
 }

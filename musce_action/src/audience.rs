@@ -74,8 +74,8 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
 mod tests {
     use super::*;
     use musce_core::EntityId;
+    use musce_core::Room;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Player, Room};
     use musce_proto::{ConnectionId, EventKind};
 
     fn collect(world: &World, actors: &Actors, out: Outbound) -> Vec<Outgoing> {
@@ -84,10 +84,10 @@ mod tests {
         v
     }
 
+    // An actor is just an entity a connection binds to; "player" is a game kind,
+    // not needed to exercise audience routing.
     fn player(w: &mut World) -> EntityId {
-        let mut b = EntityBuilder::new();
-        b.add(Player);
-        w.spawn(b)
+        w.spawn(EntityBuilder::new())
     }
 
     #[test]

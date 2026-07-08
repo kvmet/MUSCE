@@ -9,11 +9,11 @@
 //! `docs/architecture/sequences.md`.
 
 use musce_action::{Action, SystemCtx};
-use musce_core::{Description, EntityId, Id, NamedComponent, World};
+use musce_core::{EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
-use crate::names::{self, Scope};
+use crate::names::{self, Scope, display_name};
 use crate::verbs::{MoveOutcome, do_move};
 use musce_proto::EventKind;
 
@@ -294,21 +294,13 @@ fn program_steps(world: &World, program: EntityId) -> Option<Vec<Step>> {
         .and_then(|er| er.get::<&Steps>().map(|s| s.0.clone()))
 }
 
-/// A name for narration: the carrier's `Description`, with a neutral fallback.
-/// Mirrors the verb and system layers' `display_name`.
-fn display_name(world: &World, entity: EntityId) -> String {
-    world
-        .entity(entity)
-        .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-        .unwrap_or_else(|| "something".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kinds::{Creature, Exit, Item};
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Creature, Exit, Item, Label, LeadsFrom, LeadsTo, Room};
+    use musce_core::{Description, LeadsFrom, LeadsTo, Name, Room};
     use musce_proto::Audience;
     use std::time::SystemTime;
 
@@ -363,7 +355,7 @@ mod tests {
     fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
         let exit = spawn(w, |b| {
             b.add(Exit);
-            b.add(Label(dir.into()));
+            b.add(Name(dir.into()));
         });
         w.relate::<LeadsFrom>(exit, from).unwrap();
         w.relate::<LeadsTo>(exit, to).unwrap();

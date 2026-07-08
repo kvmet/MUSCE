@@ -327,7 +327,7 @@ fn send_snapshot(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Item, Room, World};
+    use musce_core::{Description, Room, World};
 
     /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
     /// nothing, no systems, and a no-op `register`. The runtime, not game content,
@@ -349,14 +349,14 @@ mod tests {
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
         store.init().await.unwrap();
 
-        // Seed a world (hall containing an item) into the store.
+        // Seed a world (hall containing a thing) into the store.
         {
             let mut w = World::new();
             let mut b = EntityBuilder::new();
             b.add(Room);
             let hall = w.spawn(b);
             let mut b = EntityBuilder::new();
-            b.add(Item);
+            b.add(Description("a thing".into()));
             let thing = w.spawn(b);
             w.move_entity(thing, hall).unwrap();
             store.save(&w.snapshot()).await.unwrap();

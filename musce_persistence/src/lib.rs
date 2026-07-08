@@ -195,7 +195,7 @@ impl Persistence for SqliteStore {
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Container, Description, Item, Room, World};
+    use musce_core::{Description, Room, World};
 
     #[tokio::test]
     async fn save_load_roundtrip() {
@@ -206,13 +206,13 @@ mod tests {
         b.add(Description("hall".into()));
         let hall = w.spawn(b);
 
+        // bag/coin are just described entities: container/item are game kinds and
+        // this test exercises the kind-agnostic DB round-trip.
         let mut b = EntityBuilder::new();
-        b.add(Container);
         b.add(Description("bag".into()));
         let bag = w.spawn(b);
 
         let mut b = EntityBuilder::new();
-        b.add(Item);
         b.add(Description("coin".into()));
         let coin = w.spawn(b);
 
@@ -237,15 +237,21 @@ mod tests {
         assert_eq!(w2.enclosing_room(coin), Some(hall));
         assert_eq!(w2.contents(bag), vec![coin]);
         assert!(w2.has::<Room>(hall));
-        assert!(w2.has::<Container>(bag));
-        assert!(w2.has::<Item>(coin));
+        assert_eq!(
+            w2.entity(bag).unwrap().get::<&Description>().unwrap().0,
+            "bag"
+        );
+        assert_eq!(
+            w2.entity(coin).unwrap().get::<&Description>().unwrap().0,
+            "coin"
+        );
     }
 
     #[tokio::test]
     async fn save_stamps_the_schema_version() {
         let mut w = World::new();
         let mut b = EntityBuilder::new();
-        b.add(Item);
+        b.add(Description("a thing".into()));
         w.spawn(b);
 
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
@@ -273,7 +279,7 @@ mod tests {
     async fn deletes_are_applied() {
         let mut w = World::new();
         let mut b = EntityBuilder::new();
-        b.add(Item);
+        b.add(Description("a thing".into()));
         let thing = w.spawn(b);
 
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();

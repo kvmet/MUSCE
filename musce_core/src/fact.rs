@@ -26,7 +26,7 @@ pub enum Fact {
     /// An entity was despawned. `last_room` and `name` are a pre-removal snapshot:
     /// the entity is gone by the time a reaction reads them, so the data it needs
     /// is captured while the entity is still live. `name` is the entity's
-    /// `Description` (`None` if it carried none, e.g. an exit carries `Label`);
+    /// `Description` (`None` if it carried none, e.g. an exit carries `Name`);
     /// `last_room` is its `enclosing_room` (`None` for a location-less entity or a
     /// top-level room).
     Destroyed {

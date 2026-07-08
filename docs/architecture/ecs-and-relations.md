@@ -33,9 +33,15 @@ across persistence or shard boundaries. So every entity also carries a global
 
 ## Kinds
 
-An entity's kind is a zero-sized marker component (`Room`, `Item`, `Creature`,
-`Container`, `Player`). This lets archetypal queries filter by kind, e.g. "all
-rooms with coordinates".
+An entity's kind is a zero-sized marker component. This lets archetypal queries
+filter by kind, e.g. "all rooms with coordinates". The engine defines only the
+kinds it reads: `Room` (the perception boundary) and `Staff` (the admin gate).
+Game kinds like `Item`/`Creature`/`Container`/an exit/a player avatar are game
+vocabulary and live in the game, registered through `Game.register` (see
+[engine-and-game.md](engine-and-game.md)); the engine stores them but never
+interprets them. The `Exit` marker is game-side too, even though the engine owns
+exit *connectivity* itself: an exit entity is engine-owned `LeadsFrom`/`LeadsTo`
+relations plus a game-owned kind tag (see Exits below).
 
 ## The relation layer
 
@@ -112,7 +118,7 @@ session resolves a driven actor (see
 ## Exits
 
 > Status: **built.** Exits are relation-backed entities (an `Exit` marker plus a
-> general `Label` component, wired by `LeadsFrom` and `LeadsTo` with the
+> general `Name` component, wired by `LeadsFrom` and `LeadsTo` with the
 > `DespawnSources` cascade) and are wired through the `Relate` action. The
 > Portal/Through door layer remains deferred.
 
@@ -131,16 +137,17 @@ relation-wired entities, exits join the cascade like everything else.
 
 An exit is an entity carrying:
 
-- an **`Exit`** zero-sized kind marker (filters in queries; never takeable),
-- a general **`Label`** component (`"north"`, the token a player types and sees;
-  defined beside `Description`, and exits are its first user), and
+- an **`Exit`** zero-sized kind marker (game-defined vocabulary the game filters
+  on; never takeable; the engine stores but never reads it),
+- a general **`Name`** component (`"north"`, the handle a player types and sees;
+  defined beside `Description`, and shared by every nameable thing), and
 - two relation links:
   - **`LeadsFrom`**: exit → its origin room. A room's exit list is this relation's
     reverse index, so listing a room's exits is an index read, not a scan.
   - **`LeadsTo`**: exit → its destination room.
 
-The match key is the general `Label` component; a direction is just the common
-label, not a dedicated field.
+The match key is the general `Name` component; a direction is just a common
+name, not a dedicated field.
 
 Both endpoints are one-to-many (an exit has exactly one origin, one destination)
 and **not acyclic**: their sources (exits) and targets (rooms) are disjoint kinds,
@@ -177,9 +184,9 @@ Movement through an exit is the usual validate -> mutate -> emit (see
 [actions.md](actions.md)), and the veto is a **game rule, not an engine concept**.
 The engine provides the exit entity and a home for door/lock state; it bakes in no
 lock semantics. The game's `go` handler: (1) finds the exit out of the mover's room
-whose `Label` matches (reverse index of `LeadsFrom`, resolved through the unified
-name resolver: exact-then-prefix on the label, falling back to a description
-substring), (2) runs a shared `can_traverse(world, mover, exit) -> Result<(),
+whose `Name` matches (reverse index of `LeadsFrom`, resolved through the unified
+name resolver: exact then whole-or-word prefix on the `Name`, then aliases, then a
+description substring), (2) runs a shared `can_traverse(world, mover, exit) -> Result<(),
 Reason>` game rule (a locked portal, a guard, a size limit) *before* committing,
 and (3) on pass `Move`s the mover into the exit's `LeadsTo` destination.
 `can_traverse` is a shared helper (like `is_takeable`), so a scripted NPC walking
@@ -193,8 +200,13 @@ Exits are wired through the executor, not by hand. The `Relate` / `Unrelate`
 actions (in the [actions.md](actions.md) vocabulary) are the typed face of
 `World::relate_tag`/`unrelate_tag`, so wiring an exit goes through `execute` and the
 future action journal like every other mutation. `@dig` `Create`s the exit entity
-(marker + `Label`), then `Relate`s it `LeadsFrom` its room and `LeadsTo` the new
+(marker + `Name`), then `Relate`s it `LeadsFrom` its room and `LeadsTo` the new
 room, with the reciprocal a second exit the other way.
+
+The `Name` is general, not exit-specific: every nameable thing (items, creatures,
+the player) carries one as its primary in-character handle, with `Description` the
+longer prose an `examine` reveals. Extra match keywords live in a game-side
+`Aliases` component the resolver also reads.
 
 ## Queries
 

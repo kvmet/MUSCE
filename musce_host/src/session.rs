@@ -195,15 +195,19 @@ fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Controls, Description, EntityId, Id, Player};
+    use musce_core::{Controls, Description, EntityId, Id};
     use musce_proto::Audience;
 
-    /// An engine-only `@play` policy for tests: choose the first `Player` in the
+    /// A local stand-in for a game's player kind: the engine has no `Player`
+    /// concept, so these tests define their own marker to pick an actor by.
+    struct Avatar;
+
+    /// An engine-only `@play` policy for tests: choose the first `Avatar` in the
     /// world. Stands in for a game's injected `choose_actor`.
     fn first_player_choose(world: &World) -> Option<EntityId> {
         world
             .ecs
-            .query::<(&Id, &Player)>()
+            .query::<(&Id, &Avatar)>()
             .iter()
             .next()
             .map(|(id, _)| id.0)
@@ -212,7 +216,7 @@ mod tests {
     /// Spawn a lone described player avatar and return it.
     fn spawn_avatar(world: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Player);
+        b.add(Avatar);
         b.add(Description("a tester".into()));
         world.spawn(b)
     }
@@ -334,7 +338,6 @@ mod tests {
 
         let mut data = Map::new();
         data.insert("id".into(), Value::from(1u64));
-        data.insert("player".into(), Value::Null);
         data.insert("description".into(), Value::from("a pilot"));
         data.insert("focus".into(), Value::from(9999u64));
 

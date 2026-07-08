@@ -5,7 +5,9 @@
 > `Sequences(Vec<Instance>)` instance component, the `Intent` set, and the
 > `sequence_sweep` system on the tick pipeline, with two seeded demonstrators (a
 > patrolling sentry and a burning torch). The engine provides only the generic
-> persisted-component plumbing; nothing here is engine-specific. It sits on two
+> persisted-component plumbing. The sweep *loop* is engine-shaped mechanism, but it
+> is fused to the game's `Intent` set, so the whole layer stays game-side for now
+> (see "Promoting the sweep skeleton" below). It sits on two
 > pieces of substrate: the tick-loop **system pipeline** (see
 > [concurrency.md](concurrency.md)) and the **structural-fact channel** the torch
 > converges with (`Fact::Destroyed`; see [actions.md](actions.md)).
@@ -155,3 +157,27 @@ to dust" on the **next** tick. The sequence layer ships zero narration for
 destruction: the existing reaction handles it. A `Move` beat narrates its own
 departure and arrival to the rooms it leaves and enters, the same third-person
 prose `wander` emits.
+
+## Promoting the sweep skeleton (deferred)
+
+The boundary rule is "the engine owns a construct only when engine mechanism reads
+it." The sweep *loop* passes that test in spirit: collect-carriers-first, the
+carrier-despawn abandonment, the 0-delay burst handling and the attach-time guard,
+the cursor write-back-vs-remove. That is generic, fiddly mechanism a second game
+would reimplement identically and get wrong the first time, so the skeleton
+(`attach`, the delay/cursor bookkeeping, the sweep loop) is a real promote-down
+candidate into an engine crate.
+
+What keeps it in the game today is that it is welded to `Intent`, which is pure
+game vocabulary (`Move { dir }` routes through the game's `can_traverse` lock veto;
+`Destroy`). Cleaving the loop from the intents needs a generic `Sweep<I>`
+parameterized over a game-supplied intent type plus a game `fire` callback, and
+because `Intent` is a **serialized** component that ripples into the persistence
+registration layer, that is a migration, not an addition. Under the reversibility
+gate we do not pay it speculatively.
+
+The trigger is a **second intent-driven consumer** (effects proper, with a
+different intent set). When it appears, extract the intent-agnostic parts
+(`attach`, `cycle_delay`, the guard, the sweep loop) into an engine `Sweep<I>`
+seam; `fire` becomes the game-supplied callback and stays in the game. Until then
+the layer stays whole in `musce_ref`: a named deferred decision, not an oversight.

@@ -7,7 +7,7 @@
 //! room graph is free to loop. Modeled on containment.rs. See
 //! docs/architecture/ecs-and-relations.md.
 
-use crate::component::Label;
+use crate::component::Name;
 use crate::id::EntityId;
 use crate::relation::{Cascade, Relation};
 use crate::world::World;
@@ -42,17 +42,17 @@ impl World {
         self.target_of::<LeadsTo>(exit)
     }
 
-    /// An entity's label token, if it has one. General (reads the Label
-    /// component); exits are the first user.
-    pub fn label_of(&self, entity: EntityId) -> Option<String> {
-        self.entity(entity)?.get::<&Label>().map(|l| l.0.clone())
+    /// An entity's name token, if it has one. General (reads the Name
+    /// component); exits are one user.
+    pub fn name_of(&self, entity: EntityId) -> Option<String> {
+        self.entity(entity)?.get::<&Name>().map(|n| n.0.clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{Exit, Label, Room};
+    use crate::component::{Name, Room};
     use hecs::EntityBuilder;
 
     fn room(w: &mut World) -> EntityId {
@@ -62,10 +62,9 @@ mod tests {
     }
 
     /// Spawn an exit entity from `from` to `to`, wired both relations.
-    fn exit(w: &mut World, from: EntityId, to: EntityId, label: &str) -> EntityId {
+    fn exit(w: &mut World, from: EntityId, to: EntityId, name: &str) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Exit);
-        b.add(Label(label.into()));
+        b.add(Name(name.into()));
         let e = w.spawn(b);
         w.relate::<LeadsFrom>(e, from).unwrap();
         w.relate::<LeadsTo>(e, to).unwrap();
@@ -81,7 +80,7 @@ mod tests {
 
         assert_eq!(w.exits_of(hall), vec![north]);
         assert_eq!(w.exit_destination(north), Some(garden));
-        assert_eq!(w.label_of(north), Some("north".to_string()));
+        assert_eq!(w.name_of(north), Some("north".to_string()));
     }
 
     #[test]

@@ -125,8 +125,12 @@ mod tests {
     use super::*;
     use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Id, Player, Room, Staff};
+    use musce_core::{Description, EntityId, Id, Room, Staff};
     use musce_proto::{Audience, Capabilities};
+
+    /// A local stand-in for a game's player kind: the engine has no `Player`
+    /// concept, so the router test defines its own marker to pick an actor by.
+    struct Avatar;
 
     /// An engine-only `Game` so the router can be exercised without depending on
     /// a real game. Its seed makes one described room with a player avatar in it,
@@ -142,7 +146,7 @@ mod tests {
             };
             let avatar = {
                 let mut b = EntityBuilder::new();
-                b.add(Player);
+                b.add(Avatar);
                 b.add(Staff); // staff, so the admin frame is exercisable
                 b.add(Description("a tester".into()));
                 world.spawn(b)
@@ -153,7 +157,7 @@ mod tests {
         fn choose_actor(world: &World) -> Option<EntityId> {
             world
                 .ecs
-                .query::<(&Id, &Player)>()
+                .query::<(&Id, &Avatar)>()
                 .iter()
                 .next()
                 .map(|(id, _)| id.0)
@@ -320,17 +324,22 @@ mod tests {
     #[test]
     fn run_systems_runs_every_registered_system() {
         use musce_action::SystemCtx;
-        use musce_core::{Container, Item};
         use std::time::SystemTime;
 
-        fn add_item(ctx: &mut SystemCtx) {
+        // Two distinct local marks: each system leaves its own, so both present
+        // proves both systems ran (not one twice). Plain markers, since the engine
+        // has no kinds of its own to borrow.
+        struct MarkA;
+        struct MarkB;
+
+        fn add_a(ctx: &mut SystemCtx) {
             let mut b = EntityBuilder::new();
-            b.add(Item);
+            b.add(MarkA);
             ctx.world.spawn(b);
         }
-        fn add_container(ctx: &mut SystemCtx) {
+        fn add_b(ctx: &mut SystemCtx) {
             let mut b = EntityBuilder::new();
-            b.add(Container);
+            b.add(MarkB);
             ctx.world.spawn(b);
         }
 
@@ -339,7 +348,7 @@ mod tests {
             admin: CommandTable::new(),
             seed: |_| {},
             choose_actor: |_| None,
-            systems: vec![add_item, add_container],
+            systems: vec![add_a, add_b],
             register: |_| {},
         };
         let dispatch = Dispatch::new(game);
@@ -351,7 +360,7 @@ mod tests {
 
         dispatch.run_systems(&mut world, &ctx, &mut |_| {});
 
-        assert_eq!(world.ecs.query::<&Item>().iter().count(), 1);
-        assert_eq!(world.ecs.query::<&Container>().iter().count(), 1);
+        assert_eq!(world.ecs.query::<&MarkA>().iter().count(), 1);
+        assert_eq!(world.ecs.query::<&MarkB>().iter().count(), 1);
     }
 }

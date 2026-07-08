@@ -27,13 +27,15 @@ impl NamedComponent for Description {
     const TAG: &'static str = "description";
 }
 
-/// A short token a player types or sees to refer to an entity (an exit label
-/// like "north", later an item keyword). General, not exit-specific; the match
-/// key the name resolver keys off. Distinct from Description, which is prose.
+/// The short prose name a player types or sees to refer to an entity (an exit's
+/// direction like "north", an item's noun phrase like "a brass key"). The primary
+/// in-character handle: the match key the name resolver keys off and the token
+/// narration displays. General, not exit-specific. Distinct from Description,
+/// which is the longer prose a `look`/`examine` reveals.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Label(pub String);
-impl NamedComponent for Label {
-    const TAG: &'static str = "label";
+pub struct Name(pub String);
+impl NamedComponent for Name {
+    const TAG: &'static str = "name";
 }
 
 // Kind markers. Zero-sized; let archetypal queries filter by kind.
@@ -47,18 +49,18 @@ macro_rules! marker {
     };
 }
 
+// The kinds the engine itself reasons about. `Room` is the perception boundary
+// (`enclosing_room`, `Audience::Room`, the `Fact` channel's `last_room` snapshot).
+// `Staff` is the one built-in permission tier the admin `Gate` checks. Kinds the
+// engine only stores and never interprets (item, creature, container, a player
+// avatar, an exit) are game vocabulary and live in the game, registered through
+// `Game.register`; see docs/architecture/engine-and-game.md. The exit *kind marker*
+// is game vocabulary for the same reason (no engine code reads it), even though the
+// engine owns exit *connectivity* itself (the `LeadsFrom`/`LeadsTo` relations in
+// exit.rs): an exit entity is engine-owned relations plus a game-owned kind tag.
 marker!(Room, "room");
-marker!(Item, "item");
-// An exit is its own entity, not a field on a room: this marks the kind,
-// filters exits in queries, and keeps them out of takeable. Its label is the
-// general Label component; its origin and destination are the LeadsFrom and
-// LeadsTo relations (see exit.rs).
-marker!(Exit, "exit");
-marker!(Creature, "creature");
-marker!(Container, "container");
-marker!(Player, "player");
 // Permission marker: an actor carrying it may run staff-gated (admin) verbs. A
-// stand-in until accounts own permissions; seeded for now, like `Player`.
+// stand-in until accounts own permissions; seeded for now.
 marker!(Staff, "staff");
 
 // --- typed blob builder --------------------------------------------------
@@ -261,12 +263,12 @@ mod tests {
     #[test]
     fn component_blob_keys_by_tag_with_marker_null_and_newtype_inner() {
         let blob = ComponentBlob::new()
-            .with(Item)
+            .with(Room)
             .with(Description("x".into()))
             .build();
         assert_eq!(
             blob,
-            serde_json::json!({ "item": null, "description": "x" })
+            serde_json::json!({ "room": null, "description": "x" })
         );
     }
 }

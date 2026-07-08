@@ -70,10 +70,10 @@ Built:
 
 - `musce_core`: world, identity, relation layer, containment and control (the
   `Controls` and `Focus` relations behind durable embodiment), relation-backed exit
-  entities (an `Exit` marker plus the general `Label` component, wired by
-  `LeadsFrom`/`LeadsTo` with the `DespawnSources` cascade), the `Staff`
-  permission marker, the structural-fact buffer (`Fact`, emitted at the `despawn`
-  mutator layer), JSON snapshot.
+  connectivity (the `LeadsFrom`/`LeadsTo` relations plus the general `Name`
+  component, wired with the `DespawnSources` cascade; the `Exit` kind marker itself
+  is game vocabulary), the `Staff` permission marker, the structural-fact buffer
+  (`Fact`, emitted at the `despawn` mutator layer), JSON snapshot.
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
@@ -105,12 +105,16 @@ Built:
   (`Actors`, derived from the floor's session attachments resolved through
   `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
-  the engine. Owns the bare verbs (`look`, `go`/bare direction, `take`, `drop`,
-  `pilot`, `release`, `say`, `help`) and the admin/builder verbs
+  the engine. Owns the bare verbs (`look`, `examine`/`x`, `inventory`/`i`,
+  `go`/bare direction, `take`, `drop`, `pilot`, `release`, `say`, `help`) and the
+  admin/builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   and their parsing, the unified
-  name resolver (movement resolves an exit through it, matching a `Label`
-  exact-then-prefix with a description-substring fallback), the takeable rule and
+  name resolver (a typed noun matches a thing's `Name` exact-then-word-prefix, then
+  its game-side `Aliases`, then a `Description` substring; movement resolves an exit
+  through the same path), its own kind markers
+  (`item`/`creature`/`container`/`exit`/the player avatar, all game vocabulary the
+  engine never interprets), the takeable rule and
   the control rule, the shared `do_move` traversal helper (the one rule-checked
   move path, with a `Locked`-exit veto, run by `go`, `wander`, and sequences
   alike), narration prose, the

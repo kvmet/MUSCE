@@ -6,8 +6,9 @@
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
 
 use musce_action::SystemCtx;
-use musce_core::{Controls, Description, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
+use musce_core::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
+use crate::names::display_name;
 use crate::verbs::{Locked, MoveOutcome, do_move};
 use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ impl NamedComponent for Wander {
 pub fn register(world: &mut World) {
     world.register_component::<Wander>();
     world.register_component::<Locked>();
+    crate::kinds::register(world);
+    crate::names::register(world);
     crate::sequences::register(world);
 }
 
@@ -108,7 +111,7 @@ pub fn wander(ctx: &mut SystemCtx) {
 /// room, narrate its demise to that room. The reaction half of gate 2, reading the
 /// tick's `Fact` batch rather than being driven by a command. It fires only for a
 /// `Direct` removal that was both named and located, so a cascade removal (an exit
-/// going down with its room), an unnamed entity (an exit has a `Label`, no
+/// going down with its room), an unnamed entity (an exit has a `Name`, no
 /// `Description`), or a location-less one (a top-level room or box) stays silent.
 pub fn death_cry(ctx: &mut SystemCtx) {
     // `ctx.facts` is a `&[Fact]` whose lifetime outlives `ctx`, so reading it is a
@@ -131,23 +134,13 @@ pub fn death_cry(ctx: &mut SystemCtx) {
     }
 }
 
-/// A name for narration, the creature's `Description`, with a neutral fallback.
-/// Mirrors the verb layer's `display_name`.
-fn display_name(world: &World, entity: EntityId) -> String {
-    world
-        .entity(entity)
-        .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-        .unwrap_or_else(|| "something".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kinds::{Creature, Exit, Player};
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{
-        Creature, Description, DestroyCause, Exit, Fact, Label, LeadsFrom, LeadsTo, Player, Room,
-    };
+    use musce_core::{Description, DestroyCause, Fact, LeadsFrom, LeadsTo, Name, Room};
     use musce_proto::Audience;
     use std::time::SystemTime;
 
@@ -192,7 +185,7 @@ mod tests {
     fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
         let exit = spawn(w, |b| {
             b.add(Exit);
-            b.add(Label(dir.into()));
+            b.add(Name(dir.into()));
         });
         w.relate::<LeadsFrom>(exit, from).unwrap();
         w.relate::<LeadsTo>(exit, to).unwrap();
