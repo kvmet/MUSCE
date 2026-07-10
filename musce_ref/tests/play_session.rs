@@ -543,3 +543,62 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 }
+
+/// Combat end to end: descend to the cellar's giant rat, land a non-lethal blow
+/// (its Health drops but it lives), then a second blow that kills it. The killing
+/// blow's own feedback and the `death_cry` reaction (`Fact::Destroyed` -> "crumbles
+/// to dust") both reach the client in the same tick's burst.
+#[tokio::test]
+async fn attack_wears_a_foe_down_then_kills_it() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // Down to the cellar, where the rat stands.
+    send(&mut writer, "go down").await;
+    let arrived = read_burst(&mut reader).await;
+    assert!(
+        arrived.contains("cellar") && arrived.contains("giant rat"),
+        "arrival shows the cellar and the rat, got: {arrived:?}"
+    );
+
+    // First blow: Strength 5 off 8 HP, so the rat survives.
+    send(&mut writer, "attack rat").await;
+    let hit = read_burst(&mut reader).await;
+    assert!(
+        hit.contains("You hit a giant rat for 5 damage"),
+        "the first blow lands but does not kill, got: {hit:?}"
+    );
+
+    // Second blow empties its Health: the kill line and the death cry arrive
+    // together, the reaction converging on the same fact channel gate 2 built.
+    send(&mut writer, "attack rat").await;
+    let kill = read_burst(&mut reader).await;
+    assert!(
+        kill.contains("You strike a giant rat down"),
+        "the killing blow's feedback, got: {kill:?}"
+    );
+    assert!(
+        kill.contains("giant rat crumbles to dust"),
+        "the death cry reacts to the kill in the same burst, got: {kill:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}

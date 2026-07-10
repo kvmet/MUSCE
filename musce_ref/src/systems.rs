@@ -9,7 +9,7 @@ use musce_action::SystemCtx;
 use musce_core::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
 use crate::names::display_name;
-use crate::verbs::{Locked, MoveOutcome, do_move};
+use crate::verbs::{Health, Locked, MoveOutcome, Special, do_move};
 use musce_proto::EventKind;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,8 @@ impl NamedComponent for Wander {
 pub fn register(world: &mut World) {
     world.register_component::<Wander>();
     world.register_component::<Locked>();
+    world.register_component::<Special>();
+    world.register_component::<Health>();
     crate::kinds::register(world);
     crate::names::register(world);
     crate::sequences::register(world);

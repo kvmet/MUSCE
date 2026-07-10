@@ -11,6 +11,7 @@ use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room
 use crate::kinds::{Creature, Exit, Item, Player};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
+use crate::verbs::{Health, Special};
 
 /// Ticks between the patrolling sentry's steps, and the torch's burn-out lifetime.
 /// Sized against the e2e harness rather than arbitrarily small: at its 10ms tick
@@ -113,6 +114,19 @@ pub fn seed(world: &mut World) {
     });
     world.move_entity(torch, hall).expect("seed: place torch");
     attach(world, torch, burn, false).expect("seed: attach torch burn-out");
+
+    // A stationary foe for combat: a giant rat in the cellar, with hit points but
+    // no `Wander` marker so it holds still to be fought. The avatar's Strength-5
+    // blows drop its 8 HP in two hits, the second firing the death cry.
+    let rat = spawn(world, |b| {
+        b.add(Creature);
+        b.add(Name("a giant rat".into()));
+        b.add(Description(
+            "A giant rat the size of a dog, yellow teeth bared, cornered and hissing.".into(),
+        ));
+        b.add(Health { current: 8, max: 8 });
+    });
+    world.move_entity(rat, cellar).expect("seed: place rat");
 }
 
 /// Spawn a program entity carrying a `Steps` list. A program is location-less,
@@ -165,6 +179,13 @@ fn avatar(world: &mut World, name: &str, desc: &str) -> EntityId {
         // docs/architecture/authorization.md.
         b.add(Name(name.into()));
         b.add(Description(desc.into()));
+        // A stat block so the avatar can fight: `attack` reads Strength for damage.
+        // No `Health` yet, because nothing damages the player back (retaliation is
+        // a later consumer).
+        b.add(Special {
+            strength: 5,
+            ..Default::default()
+        });
     })
 }
 

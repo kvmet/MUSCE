@@ -14,6 +14,7 @@
 use musce_action::{CommandTable, Ctx, Gate};
 use musce_proto::EventKind;
 
+mod combat;
 mod control;
 mod manipulate;
 mod movement;
@@ -22,6 +23,7 @@ mod social;
 #[cfg(test)]
 mod tests;
 
+pub use combat::attack;
 pub use control::{pilot, release};
 pub use manipulate::{drop, take};
 pub use movement::go;
@@ -31,6 +33,9 @@ pub use social::{say, tell, wave};
 // Shared with the tick-loop movers (`wander`, sequences), which route through the
 // one rule-checked move path; the `Locked` marker is registered for persistence.
 pub(crate) use movement::{Locked, MoveOutcome, do_move};
+// The combat stat components: read by `attack`, seeded on the avatar and its foes,
+// and registered for persistence in `systems::register`.
+pub(crate) use combat::{Health, Special};
 
 /// Build the reference game's command table. Movement is registered first so
 /// single-letter direction abbreviations win their prefix ties (`s` is south, so
@@ -55,6 +60,8 @@ pub fn commands() -> CommandTable {
     t.register("say", Gate::Open, say);
     t.register("tell", Gate::Open, tell);
     t.register("wave", Gate::Open, wave);
+    t.register("attack", Gate::Open, attack);
+    t.register("kill", Gate::Open, attack);
     t.register("help", Gate::Open, help);
     t
 }
@@ -67,6 +74,6 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
         "You can: look, examine <thing> (or x), inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
          pilot <thing>, release, say <message>, tell <someone> <message>, \
-         wave (or wave at <someone>), help.",
+         wave (or wave at <someone>), attack <thing> (or kill), help.",
     );
 }
