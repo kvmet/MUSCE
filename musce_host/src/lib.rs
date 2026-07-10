@@ -82,7 +82,7 @@ pub type Register = fn(&mut World);
 pub struct Game {
     /// Bare in-game verbs, driven through the embodiment frame.
     pub commands: CommandTable,
-    /// `@`-namespace admin/builder verbs, staff-gated, driven through the admin
+    /// `@`-namespace admin/builder verbs, capability-gated, driven through the admin
     /// frame. Empty for a game with no builder surface.
     pub admin: CommandTable,
     pub seed: Seed,

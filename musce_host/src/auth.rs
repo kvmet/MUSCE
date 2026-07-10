@@ -322,10 +322,12 @@ mod tests {
 
     #[test]
     fn guest_verdict_has_no_authority() {
-        let reg = CapRegistry::new();
+        let mut reg = CapRegistry::new();
+        let build = reg.register_cap("build");
         let auth = Accounts::boot(&MemoryAccountStore::new(), &reg).unwrap();
         let v = auth.verdict_for(None, false);
         assert!(!v.is_su());
+        assert!(!v.permits(build), "a guest holds no capability");
     }
 
     #[test]

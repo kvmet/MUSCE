@@ -75,10 +75,12 @@ in-band at all) are sim-thread calls, the guards below are in-memory invariants,
 durability rides a **store backend** the way the world rides `Snapshot`. That settles the "single-writer" claim
 honestly: the authority is sim-thread-owned like the world, the store is its
 save/load target, and slice 2's web/oauth writer is the second writer that will need
-real serialization. Slice 1 stands up **no parallel async save task**: the trivial
-backend loads accounts once at boot and saves on the existing shutdown/cadence beat
-the loop already runs. The store *trait* is the seam worth reserving now; a dedicated
-channel and task like the entity persistence path wait for the real backend.
+real serialization. Slice 1 stands up **no parallel async save task and no save wiring
+at all**: `boot` loads the store once, and the trivial in-memory backend has no
+cross-restart durability to preserve, so nothing writes it back on any beat. The store
+*trait* (with its `save`) is the seam worth reserving now; the save-on-beat wiring, a
+dedicated channel, and a task like the entity persistence path all wait for the durable
+backend in slice 2.
 
 The store backend is the genuine decide-now artifact:
 
