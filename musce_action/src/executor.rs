@@ -129,7 +129,7 @@ pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError>
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Controls, Description, Map, MutateError, Room, Staff};
+    use musce_core::{Controls, Description, Map, MutateError, Room};
 
     fn room(w: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();
@@ -148,12 +148,12 @@ mod tests {
         w.spawn(EntityBuilder::new())
     }
 
-    /// A component blob `{ "staff": null, "description": <desc> }`, built through
+    /// A component blob `{ "room": null, "description": <desc> }`, built through
     /// the re-exported JSON types (the action layer has no serde_json of its own).
-    /// `staff` stands in as a core-registered marker so `create` accepts the blob.
-    fn staff_blob(desc: &str) -> Value {
+    /// `room` stands in as a core-registered marker so `create` accepts the blob.
+    fn room_blob(desc: &str) -> Value {
         let mut m = Map::new();
-        m.insert("staff".into(), Value::Null);
+        m.insert("room".into(), Value::Null);
         m.insert("description".into(), Value::String(desc.into()));
         Value::Object(m)
     }
@@ -233,12 +233,12 @@ mod tests {
         let id = execute(
             &mut w,
             Action::Create {
-                components: staff_blob("a torch"),
+                components: room_blob("a torch"),
             },
         )
         .unwrap();
 
-        assert!(w.has::<Staff>(id));
+        assert!(w.has::<Room>(id));
         assert_eq!(
             w.entity(id).unwrap().get::<&Description>().unwrap().0,
             "a torch"

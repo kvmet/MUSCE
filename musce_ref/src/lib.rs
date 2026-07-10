@@ -16,15 +16,20 @@ mod verbs;
 use musce_action::{Action, execute};
 use musce_core::World;
 use musce_host::Game;
+use musce_host::auth::CapRegistry;
 
 /// Build the reference game: its bare and admin command tables, its world seed,
-/// its `@play` actor policy, the tick-loop systems it runs, and the world-type
-/// registration the runtime applies before load. `main` (and the end-to-end test)
-/// pass this to `musce_host::run`.
+/// its `@play` actor policy, the tick-loop systems it runs, the world-type
+/// registration the runtime applies before load, and its capability vocabulary. The
+/// admin table interns its caps into the registry as it wires its gates, so the
+/// registry is built first and handed over alongside the tables. `main` (and the
+/// end-to-end test) pass this to `musce_host::run`.
 pub fn game() -> Game {
+    let mut caps = CapRegistry::new();
+    let admin = admin::commands(&mut caps);
     Game {
         commands: verbs::commands(),
-        admin: admin::commands(),
+        admin,
         seed: seed::seed,
         choose_actor: seed::choose_actor,
         systems: vec![
@@ -33,6 +38,7 @@ pub fn game() -> Game {
             systems::death_cry,
         ],
         register: systems::register,
+        caps,
     }
 }
 

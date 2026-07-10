@@ -239,6 +239,8 @@ async fn possess_then_pilot_drives_a_created_thing() {
 
     let (mut reader, mut writer) = connect(addr).await;
     let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _op = read_burst(&mut reader).await;
     send(&mut writer, "@play").await;
     let _played = read_burst(&mut reader).await;
 
@@ -300,6 +302,8 @@ async fn a_wandering_creature_moves_with_no_input() {
 
     let (mut reader, mut writer) = connect(addr).await;
     let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _op = read_burst(&mut reader).await;
     send(&mut writer, "@play").await;
     let _played = read_burst(&mut reader).await;
 
@@ -349,6 +353,8 @@ async fn destroying_a_thing_cries_out_in_the_room() {
 
     let (mut reader, mut writer) = connect(addr).await;
     let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _op = read_burst(&mut reader).await;
     send(&mut writer, "@play").await;
     let _played = read_burst(&mut reader).await;
 
@@ -373,9 +379,10 @@ async fn destroying_a_thing_cries_out_in_the_room() {
     let _ = handle.await.unwrap();
 }
 
-/// The admin frame end to end: the seeded avatar is staff, so `@create`/`@set`/
-/// `@dig` reach the admin table and mutate the world. Verified by chaining on the
-/// id `@create` reports and reading the result back through a bare `look`.
+/// The admin frame end to end: the connection elevates to the operator account via
+/// the loopback `@operator` stub, so `@create`/`@set`/`@dig` reach the admin table
+/// (su bypasses their capability gates) and mutate the world. Verified by chaining on
+/// the id `@create` reports and reading the result back through a bare `look`.
 #[tokio::test]
 async fn admin_verbs_build_the_world() {
     let addr = free_port().await;
@@ -396,6 +403,8 @@ async fn admin_verbs_build_the_world() {
 
     let (mut reader, mut writer) = connect(addr).await;
     let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _op = read_burst(&mut reader).await;
     send(&mut writer, "@play").await;
     let _played = read_burst(&mut reader).await;
 

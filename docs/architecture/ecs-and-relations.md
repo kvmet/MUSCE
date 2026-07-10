@@ -34,9 +34,11 @@ across persistence or shard boundaries. So every entity also carries a global
 ## Kinds
 
 An entity's kind is a zero-sized marker component. This lets archetypal queries
-filter by kind, e.g. "all rooms with coordinates". The engine defines only the
-kinds it reads: `Room` (the perception boundary) and `Staff` (the admin gate).
-Game kinds like `Item`/`Creature`/`Container`/an exit/a player avatar are game
+filter by kind, e.g. "all rooms with coordinates". The engine defines only the one
+kind it reads: `Room` (the perception boundary). Permissions are not a kind:
+authorization is account-scoped, not a marker on the actor (see
+[authorization.md](authorization.md)). Game kinds like
+`Item`/`Creature`/`Container`/an exit/a player avatar are game
 vocabulary and live in the game, registered through `Game.register` (see
 [engine-and-game.md](engine-and-game.md)); the engine stores them but never
 interprets them. The `Exit` marker is game-side too, even though the engine owns

@@ -14,15 +14,23 @@ use musce_core::{EntityId, Fact, World};
 use musce_proto::{ConnectionId, Event, EventKind};
 
 use crate::audience::Outbound;
+use crate::caps::{CapId, Verdict};
 
 /// The per-command context handed to a handler: the world it mutates, the actor
 /// it acts through, the connection that issued it, and the output buffer it emits
 /// into. The actor is explicit so handlers are callable directly in tests and,
 /// later, by AI and sequences.
+///
+/// It also carries the resolved authorization [`Verdict`], read-only, so a game's
+/// inline rules can be superuser-aware (waving su through a scoped check the flat
+/// gate cannot express) exactly as the gate is. The verdict keys off the account,
+/// never the actor, so reading it here cannot borrow authority from a possessed
+/// body.
 pub struct Ctx<'a> {
     pub world: &'a mut World,
     pub actor: EntityId,
     pub conn: ConnectionId,
+    verdict: &'a Verdict,
     out: &'a mut Vec<Outbound>,
 }
 
@@ -31,14 +39,28 @@ impl<'a> Ctx<'a> {
         world: &'a mut World,
         actor: EntityId,
         conn: ConnectionId,
+        verdict: &'a Verdict,
         out: &'a mut Vec<Outbound>,
     ) -> Self {
         Ctx {
             world,
             actor,
             conn,
+            verdict,
             out,
         }
+    }
+
+    /// Whether superuser is in force for this command. A game's inline rule reads
+    /// this to wave su through a restriction the flat gate cannot express.
+    pub fn is_su(&self) -> bool {
+        self.verdict.is_su()
+    }
+
+    /// Whether this command's account holds `cap` (or su is in force). Lets an inline
+    /// rule ask the same question a `Gate::Cap` asks.
+    pub fn has_cap(&self, cap: CapId) -> bool {
+        self.verdict.permits(cap)
     }
 
     /// First-person output, straight to the acting connection.

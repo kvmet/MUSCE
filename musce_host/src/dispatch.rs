@@ -10,6 +10,7 @@ use musce_action::{CommandTable, Outbound, SystemCtx, dispatch_command, resolve}
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
 
+use crate::auth::Accounts;
 use crate::session::{Sessions, resolve_actor};
 use crate::{Game, TickCtx};
 
@@ -21,13 +22,17 @@ pub struct Dispatch {
     /// `choose_actor` policy backs the floor's `@play`. The runtime holds no game
     /// content beyond this value.
     game: Game,
+    /// The account authority: resolves a connection's account to the authorization
+    /// verdict a gate (and a game's inline rules) run under. Sim-thread-owned.
+    accounts: Accounts,
 }
 
 impl Dispatch {
-    pub fn new(game: Game) -> Self {
+    pub fn new(game: Game, accounts: Accounts) -> Self {
         Self {
             floor: Sessions::default(),
             game,
+            accounts,
         }
     }
 
@@ -37,7 +42,7 @@ impl Dispatch {
     pub fn handle(&mut self, cmd: Command, world: &mut World, emit: &mut impl FnMut(Outgoing)) {
         let id = cmd.connection;
         match cmd.input {
-            Input::Connected { .. } => self.floor.connect(id, emit),
+            Input::Connected { peer, .. } => self.floor.connect(id, peer, emit),
             Input::Disconnected => self.floor.disconnect(id),
             Input::Line(line) => self.handle_line(id, line.trim(), world, emit),
         }
@@ -79,18 +84,38 @@ impl Dispatch {
         }
 
         if let Some(rest) = line.strip_prefix('@') {
-            // The floor owns the lifecycle verbs (@quit/@who/@help/@play); any
-            // other @-verb is an admin/builder command, dispatched against the
-            // game's admin table with the same actor resolution the bare frame
-            // uses. The floor reports whether it recognized the verb.
-            if !self
-                .floor
-                .account_command(id, rest, world, self.game.choose_actor, emit)
-            {
-                dispatch_through_actor(&self.floor, &self.game.admin, id, rest, world, emit);
+            // The floor owns the lifecycle and account verbs (@quit/@who/@help/@play,
+            // @operator/@quell); any other @-verb is an admin/builder command,
+            // dispatched against the game's admin table with the same actor resolution
+            // the bare frame uses. The floor reports whether it recognized the verb.
+            if !self.floor.account_command(
+                id,
+                rest,
+                world,
+                &self.accounts,
+                self.game.choose_actor,
+                emit,
+            ) {
+                dispatch_through_actor(
+                    &self.floor,
+                    &self.accounts,
+                    &self.game.admin,
+                    id,
+                    rest,
+                    world,
+                    emit,
+                );
             }
         } else {
-            dispatch_through_actor(&self.floor, &self.game.commands, id, line, world, emit);
+            dispatch_through_actor(
+                &self.floor,
+                &self.accounts,
+                &self.game.commands,
+                id,
+                line,
+                world,
+                emit,
+            );
         }
     }
 }
@@ -101,6 +126,7 @@ impl Dispatch {
 /// connection with no character has nothing to act through and is told to `@play`.
 fn dispatch_through_actor(
     floor: &Sessions,
+    accounts: &Accounts,
     table: &CommandTable,
     id: ConnectionId,
     line: &str,
@@ -116,17 +142,23 @@ fn dispatch_through_actor(
         return;
     };
     let actor = resolve_actor(world, character);
+    // The verdict keys off the connection's account and quell state, never the
+    // resolved actor, so a possessed or `@play`-selected body cannot borrow
+    // authority. Resolved once here, gating the game table and the admin table alike.
+    let verdict = accounts.verdict_for(floor.account_of(id), floor.is_quelled(id));
     let actors = floor.audience_index(world);
-    dispatch_command(table, world, &actors, actor, id, line, emit);
+    dispatch_command(table, world, &actors, actor, id, &verdict, line, emit);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{CapRegistry, MemoryAccountStore};
     use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Id, Room, Staff};
+    use musce_core::{Description, EntityId, Id, Room};
     use musce_proto::{Audience, Capabilities};
+    use std::net::SocketAddr;
 
     /// A local stand-in for a game's player kind: the engine has no `Player`
     /// concept, so the router test defines its own marker to pick an actor by.
@@ -147,7 +179,6 @@ mod tests {
             let avatar = {
                 let mut b = EntityBuilder::new();
                 b.add(Avatar);
-                b.add(Staff); // staff, so the admin frame is exercisable
                 b.add(Description("a tester".into()));
                 world.spawn(b)
             };
@@ -182,8 +213,13 @@ mod tests {
 
         let mut commands = CommandTable::new();
         commands.register("look", Gate::Open, look);
+        // `poke` is capability-gated, so only su (the operator) or an account holding
+        // the cap runs it. No account is granted the cap in these tests; the operator
+        // passes by su bypass.
+        let mut caps = CapRegistry::new();
+        let poke_cap = caps.register_cap("poke");
         let mut admin = CommandTable::new();
-        admin.register("poke", Gate::Staff, poke);
+        admin.register("poke", Gate::Cap(poke_cap), poke);
         Game {
             commands,
             admin,
@@ -191,10 +227,18 @@ mod tests {
             choose_actor,
             systems: vec![],
             register: |_| {},
+            caps,
         }
     }
 
-    fn caps() -> Capabilities {
+    /// Build a dispatcher for `game`, booting its account authority (an empty store,
+    /// so one su operator is bootstrapped).
+    fn dispatcher(game: Game) -> Dispatch {
+        let accounts = Accounts::boot(&MemoryAccountStore::new(), &game.caps).unwrap();
+        Dispatch::new(game, accounts)
+    }
+
+    fn client_caps() -> Capabilities {
         Capabilities {
             color: false,
             line_mode_only: true,
@@ -202,18 +246,32 @@ mod tests {
         }
     }
 
-    fn connect(d: &mut Dispatch, world: &mut World, id: ConnectionId) {
+    fn loopback() -> Option<SocketAddr> {
+        Some("127.0.0.1:9000".parse().unwrap())
+    }
+
+    fn connect_from(
+        d: &mut Dispatch,
+        world: &mut World,
+        id: ConnectionId,
+        peer: Option<SocketAddr>,
+    ) {
         d.handle(
             Command {
                 connection: id,
                 input: Input::Connected {
-                    caps: caps(),
-                    peer: None,
+                    caps: client_caps(),
+                    peer,
                 },
             },
             world,
             &mut |_| {},
         );
+    }
+
+    /// Connect from a loopback peer, so `@operator` elevation is available.
+    fn connect(d: &mut Dispatch, world: &mut World, id: ConnectionId) {
+        connect_from(d, world, id, loopback());
     }
 
     fn line(d: &mut Dispatch, world: &mut World, id: ConnectionId, s: &str) -> Vec<Outgoing> {
@@ -232,7 +290,7 @@ mod tests {
     /// The `@`-namespace still reaches the floor: connect then `@quit` closes.
     #[test]
     fn at_command_routes_to_floor() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = dispatcher(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -244,17 +302,19 @@ mod tests {
         );
     }
 
-    /// A non-lifecycle `@`-verb routes to the game's admin table (and runs, since
-    /// the seeded avatar is staff), rather than being swallowed by the floor.
+    /// A non-lifecycle `@`-verb routes to the game's admin table and runs, once the
+    /// connection has elevated to the su operator (via the loopback `@operator` stub),
+    /// rather than being swallowed by the floor.
     #[test]
     fn at_admin_verb_routes_to_admin_table() {
         let game = test_game();
         let mut world = World::new();
         (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        let mut d = dispatcher(game);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
+        line(&mut d, &mut world, id, "@operator");
         line(&mut d, &mut world, id, "@play");
         let out = line(&mut d, &mut world, id, "@poke");
 
@@ -275,7 +335,7 @@ mod tests {
     /// A bare command before `@play` reports having no character.
     #[test]
     fn bare_without_actor_reports_no_character() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = dispatcher(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -297,7 +357,7 @@ mod tests {
         let game = test_game();
         let mut world = World::new();
         (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        let mut d = dispatcher(game);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -350,8 +410,9 @@ mod tests {
             choose_actor: |_| None,
             systems: vec![add_a, add_b],
             register: |_| {},
+            caps: CapRegistry::new(),
         };
-        let dispatch = Dispatch::new(game);
+        let dispatch = dispatcher(game);
         let mut world = World::new();
         let ctx = TickCtx {
             tick: 1,
@@ -362,5 +423,132 @@ mod tests {
 
         assert_eq!(world.ecs.query::<&MarkA>().iter().count(), 1);
         assert_eq!(world.ecs.query::<&MarkB>().iter().count(), 1);
+    }
+
+    /// The connection-addressed feedback texts in an output batch.
+    fn conn_texts(out: &[Outgoing]) -> Vec<String> {
+        out.iter()
+            .filter_map(|o| match o {
+                Outgoing::Event(Event {
+                    text,
+                    to: Audience::Connection(_),
+                    ..
+                }) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A guest (a connection that never elevated) is refused a capability-gated verb:
+    /// no account means no caps and no su.
+    #[test]
+    fn guest_is_refused_a_capability_gated_verb() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = dispatcher(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        line(&mut d, &mut world, id, "@play");
+        let out = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "a guest should be refused the gated verb, got: {out:?}"
+        );
+    }
+
+    /// `@quell` drops the operator to its own (empty) caps: su suppressed, the gated
+    /// verb is refused; un-quelling restores su and it passes again.
+    #[test]
+    fn quell_drops_the_operator_to_guest_authority() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = dispatcher(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        line(&mut d, &mut world, id, "@operator");
+        line(&mut d, &mut world, id, "@play");
+
+        line(&mut d, &mut world, id, "@quell");
+        let refused = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&refused)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "a quelled operator holds no poke cap, got: {refused:?}"
+        );
+
+        line(&mut d, &mut world, id, "@quell");
+        let allowed = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&allowed).iter().any(|t| t.contains("poked")),
+            "un-quelled, su is restored, got: {allowed:?}"
+        );
+    }
+
+    /// The loopback-only stub refuses a peerless (in-process) connection: a `None`
+    /// peer must read as not-loopback, never default-permit, and the connection stays
+    /// unable to run the gated verb.
+    #[test]
+    fn operator_refused_from_a_non_loopback_peer() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = dispatcher(game);
+        let id = ConnectionId(1);
+        connect_from(&mut d, &mut world, id, None);
+
+        let out = line(&mut d, &mut world, id, "@operator");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("only available locally")),
+            "a peerless connection must be refused elevation, got: {out:?}"
+        );
+
+        line(&mut d, &mut world, id, "@play");
+        let poke = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&poke)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "still a guest, so still refused, got: {poke:?}"
+        );
+    }
+
+    /// Authority is per-account, not per-body. Two connections drive the *same*
+    /// seeded avatar; only the one elevated to the operator account passes the gated
+    /// verb, so no shared body can lend its authority to the other.
+    #[test]
+    fn authority_follows_the_account_not_the_body() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = dispatcher(game);
+        let op = ConnectionId(1);
+        let guest = ConnectionId(2);
+        connect(&mut d, &mut world, op);
+        connect(&mut d, &mut world, guest);
+
+        line(&mut d, &mut world, op, "@operator");
+        line(&mut d, &mut world, op, "@play");
+        line(&mut d, &mut world, guest, "@play");
+
+        let op_out = line(&mut d, &mut world, op, "@poke");
+        let guest_out = line(&mut d, &mut world, guest, "@poke");
+        assert!(
+            conn_texts(&op_out).iter().any(|t| t.contains("poked")),
+            "the operator passes, got: {op_out:?}"
+        );
+        assert!(
+            conn_texts(&guest_out)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "the guest is refused driving the same body, got: {guest_out:?}"
+        );
     }
 }

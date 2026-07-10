@@ -6,7 +6,7 @@
 //! `docs/architecture/engine-and-game.md`.
 
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, Staff, World};
+use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, World};
 
 use crate::kinds::{Creature, Exit, Item, Player};
 use crate::names::Aliases;
@@ -160,9 +160,9 @@ fn item(world: &mut World, name: &str, desc: &str) -> EntityId {
 fn avatar(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Player);
-        // The reference avatar is staff so the admin verbs are playable out of the
-        // box; a real game gates staff through accounts, not the seed.
-        b.add(Staff);
+        // No permission marker on the body: admin authority is account-scoped now
+        // (the loopback `@operator` stub in slice 1). See
+        // docs/architecture/authorization.md.
         b.add(Name(name.into()));
         b.add(Description(desc.into()));
     })

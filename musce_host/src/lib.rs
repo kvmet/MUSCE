@@ -20,6 +20,7 @@ use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
+use crate::auth::{Accounts, CapRegistry, MemoryAccountStore};
 use crate::dispatch::Dispatch;
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
@@ -94,6 +95,11 @@ pub struct Game {
     /// load or seed. The runtime calls this so a wanderer (or any game type)
     /// deserializes and persists. No-op for a game that adds no types.
     pub register: Register,
+    /// The game's capability vocabulary, interned to `CapId`s while it wired its
+    /// gates. The runtime resolves account grant strings against this same registry,
+    /// so a gate's id and a grant's id denote the same capability. Empty for a game
+    /// with no capability-gated verbs. See `docs/architecture/authorization.md`.
+    pub caps: CapRegistry,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -217,7 +223,22 @@ fn sim_loop(
         tracing::info!("seeded starter world");
     }
 
-    let mut dispatch = Dispatch::new(game);
+    // Bring up the account authority, resolving grants against the game's caps
+    // registry. An empty store bootstraps one su operator; a populated store with no
+    // su, or an unknown grant, refuses to boot rather than run mis-authorized. Slice 1
+    // stands up a trivial in-memory backend; a durable one lands with authentication.
+    let account_store = MemoryAccountStore::new();
+    let accounts = match Accounts::boot(&account_store, &game.caps) {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            let msg = format!("account authority refused to boot: {e}");
+            tracing::error!(error = %e, "account authority refused to boot");
+            let _ = done_tx.send(Err(msg));
+            return;
+        }
+    };
+
+    let mut dispatch = Dispatch::new(game, accounts);
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -342,6 +363,7 @@ mod tests {
             choose_actor: |_| None,
             systems: vec![],
             register: |_| {},
+            caps: CapRegistry::new(),
         }
     }
 

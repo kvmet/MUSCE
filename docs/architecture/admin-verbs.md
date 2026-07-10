@@ -3,7 +3,7 @@
 > Status: **built.** The structural action set and the reflection operation it
 > needs exist in `musce_core`/`musce_action` (engine); the admin builder verbs
 > (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
-> are built in `musce_ref` over the engine's admin frame (a `Gate::Staff`
+> are built in `musce_ref` over the engine's admin frame (a `Gate::Cap`
 > `CommandTable` reached through the `@`-namespace).
 
 This is the building half of the action layer: the admin/builder `@`-verbs and the
@@ -14,10 +14,12 @@ the `@`-namespace (see actions.md's "Dispatch" and "Three buckets" sections).
 
 ## The admin verbs
 
-The admin frame is a staff-gated `CommandTable` reached through the `@`-namespace.
-Frame selection and the gate are engine mechanism (the floor's lifecycle verbs vs
-the admin table vs the embodiment frame; `Gate::Staff` checks a `Staff` marker on
-the actor); the verbs themselves are game content in `musce_ref`. Each compiles
+The admin frame is a capability-gated `CommandTable` reached through the
+`@`-namespace. Frame selection and the gate are engine mechanism (the floor's
+lifecycle verbs vs the admin table vs the embodiment frame; `Gate::Cap` checks the
+command's account verdict, and su bypasses it, see
+[authorization.md](authorization.md)); the verbs themselves are game content in
+`musce_ref`, which gates them on its own `build`/`possess` capabilities. Each compiles
 straight to the structural action set, skipping the gameplay rules a player command
 runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
 

@@ -17,9 +17,7 @@ pub use hecs;
 // serde_json dependency.
 pub use serde_json::{Map, Value};
 
-pub use component::{
-    ComponentBlob, Description, Id, Name, NamedComponent, RegistryError, Room, Staff,
-};
+pub use component::{ComponentBlob, Description, Id, Name, NamedComponent, RegistryError, Room};
 pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
 pub use exit::{LeadsFrom, LeadsTo};
@@ -268,13 +266,13 @@ mod tests {
         let before = w.index().len();
         let id = w
             .create(&serde_json::json!({
-                "staff": null,
+                "room": null,
                 "description": "a brass lamp",
             }))
             .unwrap();
 
         // The components landed, a fresh Id was assigned, and the index grew.
-        assert!(w.has::<Staff>(id));
+        assert!(w.has::<Room>(id));
         assert_eq!(w.index().len(), before + 1);
         let er = w.entity(id).unwrap();
         assert_eq!(er.get::<&Description>().unwrap().0, "a brass lamp");

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::component::{
-    ComponentRegistry, Description, Id, Name, NamedComponent, RegistryError, Room, Staff,
+    ComponentRegistry, Description, Id, Name, NamedComponent, RegistryError, Room,
 };
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
@@ -70,7 +70,6 @@ impl World {
         self.register_component::<Description>();
         self.register_component::<Name>();
         self.register_component::<Room>();
-        self.register_component::<Staff>();
         self.register_relation::<Containment>();
         self.register_relation::<Controls>();
         self.register_relation::<Focus>();

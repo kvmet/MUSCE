@@ -49,19 +49,17 @@ macro_rules! marker {
     };
 }
 
-// The kinds the engine itself reasons about. `Room` is the perception boundary
+// The one kind the engine itself reasons about: `Room`, the perception boundary
 // (`enclosing_room`, `Audience::Room`, the `Fact` channel's `last_room` snapshot).
-// `Staff` is the one built-in permission tier the admin `Gate` checks. Kinds the
-// engine only stores and never interprets (item, creature, container, a player
-// avatar, an exit) are game vocabulary and live in the game, registered through
-// `Game.register`; see docs/architecture/engine-and-game.md. The exit *kind marker*
-// is game vocabulary for the same reason (no engine code reads it), even though the
-// engine owns exit *connectivity* itself (the `LeadsFrom`/`LeadsTo` relations in
-// exit.rs): an exit entity is engine-owned relations plus a game-owned kind tag.
+// Kinds the engine only stores and never interprets (item, creature, container, a
+// player avatar, an exit) are game vocabulary and live in the game, registered
+// through `Game.register`; see docs/architecture/engine-and-game.md. The exit *kind
+// marker* is game vocabulary for the same reason (no engine code reads it), even
+// though the engine owns exit *connectivity* itself (the `LeadsFrom`/`LeadsTo`
+// relations in exit.rs): an exit entity is engine-owned relations plus a game-owned
+// kind tag. Permissions are no longer a marker on the actor: authorization is
+// account-scoped now (see docs/architecture/authorization.md).
 marker!(Room, "room");
-// Permission marker: an actor carrying it may run staff-gated (admin) verbs. A
-// stand-in until accounts own permissions; seeded for now.
-marker!(Staff, "staff");
 
 // --- typed blob builder --------------------------------------------------
 

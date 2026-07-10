@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::kinds::{Container, Creature, Item, Player};
-use musce_action::Outbound;
+use musce_action::{Outbound, Verdict};
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Description, Room, Staff};
+use musce_core::{Description, Room};
 use musce_proto::{Audience, ConnectionId};
 
 fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
@@ -20,7 +20,9 @@ fn described(w: &mut World, marker: impl FnOnce(&mut EntityBuilder), desc: &str)
     })
 }
 
-/// A world with a staff builder standing in a hall: (world, hall, builder).
+/// A world with a builder standing in a hall: (world, hall, builder). These tests
+/// call the admin handlers directly, past the capability gate, so the builder needs
+/// no grant; the gate itself is covered in the dispatch layer.
 fn world_with_builder() -> (World, EntityId, EntityId) {
     let mut w = World::new();
     // `@create` builds a component blob and spawns it through the registry, so the
@@ -35,7 +37,6 @@ fn world_with_builder() -> (World, EntityId, EntityId) {
     );
     let builder = spawn(&mut w, |b| {
         b.add(Player);
-        b.add(Staff);
         b.add(Description("a builder".into()));
     });
     w.move_entity(builder, hall).unwrap();
@@ -44,7 +45,10 @@ fn world_with_builder() -> (World, EntityId, EntityId) {
 
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
     let mut out = Vec::new();
-    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
+    // A handler-level verdict; these tests exercise the verbs past the gate, and the
+    // admin handlers read no authority of their own.
+    let verdict = Verdict::guest();
+    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
     f(&mut ctx);
     out
 }

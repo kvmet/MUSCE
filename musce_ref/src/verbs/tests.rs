@@ -2,7 +2,7 @@ use super::movement::Locked;
 use super::{drop, examine, go, help, inventory, look, pilot, release, say, take, tell, wave};
 use crate::kinds::{Creature, Exit, Item, Player};
 use crate::names::{self, Scope};
-use musce_action::{Ctx, Outbound};
+use musce_action::{Ctx, Outbound, Verdict};
 use musce_core::hecs::EntityBuilder;
 use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, World};
 use musce_proto::{Audience, ConnectionId};
@@ -70,7 +70,8 @@ fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
 /// Run a handler and return its emitted (pre-resolution) outbound buffer.
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
     let mut out = Vec::new();
-    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
+    let verdict = Verdict::guest();
+    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
     f(&mut ctx);
     out
 }

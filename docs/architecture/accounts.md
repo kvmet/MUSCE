@@ -1,10 +1,12 @@
 # Accounts: the authority, its store, and how the check resolves
 
-> Status: **proposed; converged across four adversarial-review rounds, ready to
-> implement.** This is the implementation half of the authorization design: where
-> account records live, how a connection's grants reach the gate, and how the system
-> boots. The permission *model* it serves (capabilities, the superuser bit, quell)
-> lives in [authorization.md](authorization.md); read that first.
+> Status: **slice 1 built; slice 2 (authentication) not started.** This is the
+> implementation half of the authorization design: where account records live, how a
+> connection's grants reach the gate, and how the system boots. The permission *model*
+> it serves (capabilities, the superuser bit, quell) lives in
+> [authorization.md](authorization.md); read that first. Slice 1's backend is the
+> in-memory `MemoryAccountStore` (in `musce_host::auth`); the durable backend behind
+> the same `AccountStore` trait lands with slice 2.
 
 The model says the engine authorizes accounts on a flat set of capabilities plus a
 superuser bit. This covers the machinery that makes that real: resolving a

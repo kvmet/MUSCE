@@ -14,22 +14,28 @@
 //! `docs/architecture/engine-and-game.md`.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use musce_action::Actors;
 use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
 
 use crate::ChooseActor;
+use crate::auth::{AccountId, Accounts};
 
-/// One live session. Holds the connection's attachment: the character it drives,
-/// set by `@play`. The driven actor is resolved live from that character's
-/// `Focus` (see [`resolve_actor`]), so piloting redirects bare commands without
-/// changing this attachment. It is session state (connections are ephemeral, so
-/// it cannot live in the world); it will grow to hold the account id and the
-/// character slots.
+/// One live session: the per-connection state the floor owns. The character it
+/// drives (set by `@play`; the driven actor is resolved live from its `Focus`, see
+/// [`resolve_actor`]), the account it is authorized as (thin: an id, the authority
+/// holds the grants), whether superuser is suppressed for this connection
+/// (`@quell`), and whether its peer is loopback (gates the slice-1 operator stub).
+/// All of it is session state, since connections are ephemeral and cannot live in
+/// the world.
 #[derive(Default)]
 struct Session {
     character: Option<EntityId>,
+    account: Option<AccountId>,
+    quelled: bool,
+    loopback: bool,
 }
 
 /// Resolve the entity a character's bare commands drive: the entity it is
@@ -68,9 +74,23 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    /// Allocate a session for a freshly connected client and greet it.
-    pub fn connect(&mut self, id: ConnectionId, emit: &mut impl FnMut(Outgoing)) {
-        self.map.insert(id, Session::default());
+    /// Allocate a session for a freshly connected client and greet it. `peer` is the
+    /// connection's remote address (`None` for an in-process connection); a loopback
+    /// peer is what gates the slice-1 operator stub, so it is recorded now.
+    pub fn connect(
+        &mut self,
+        id: ConnectionId,
+        peer: Option<SocketAddr>,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        let loopback = peer.is_some_and(|p| p.ip().is_loopback());
+        self.map.insert(
+            id,
+            Session {
+                loopback,
+                ..Default::default()
+            },
+        );
         emit(Outgoing::Event(Event::to_connection(
             id,
             EventKind::System,
@@ -98,6 +118,18 @@ impl Sessions {
     /// live actor is derived from this through [`resolve_actor`].
     pub fn character_of(&self, id: ConnectionId) -> Option<EntityId> {
         self.map.get(&id).and_then(|s| s.character)
+    }
+
+    /// The account a connection is authorized as, if any. `None` is a guest:
+    /// `Open`-only, no caps, no su. The authority resolves this to a verdict.
+    pub fn account_of(&self, id: ConnectionId) -> Option<AccountId> {
+        self.map.get(&id).and_then(|s| s.account)
+    }
+
+    /// Whether superuser is suppressed for this connection (`@quell`). A quelled
+    /// connection is evaluated on its account's actual caps, su set aside.
+    pub fn is_quelled(&self, id: ConnectionId) -> bool {
+        self.map.get(&id).is_some_and(|s| s.quelled)
     }
 
     /// Attach a connection to the character its bare commands will drive.
@@ -131,6 +163,7 @@ impl Sessions {
         id: ConnectionId,
         rest: &str,
         world: &World,
+        accounts: &Accounts,
         choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) -> bool {
@@ -151,12 +184,55 @@ impl Sessions {
             "help" => {
                 // The floor documents only its own account commands; in-game and
                 // admin verbs are the game's surface, not the engine's to enumerate.
-                feedback(id, "Commands: @play, @quit, @who, @help.", emit);
+                feedback(
+                    id,
+                    "Commands: @play, @operator, @quell, @quit, @who, @help.",
+                    emit,
+                );
             }
             "play" => self.play(id, world, choose_actor, emit),
+            "operator" => self.operator(id, accounts, emit),
+            "quell" => self.quell(id, emit),
             _ => return false,
         }
         true
+    }
+
+    /// `@operator`: the slice-1 authentication stub. Attaches the connection to the
+    /// seeded superuser operator account, but **loopback-only**: a remote or
+    /// in-process connection is refused, so an unauthenticated god-mode is never
+    /// reachable over a bound port. Slice 2 replaces this with a real credential
+    /// check resolving to the same account.
+    fn operator(&mut self, id: ConnectionId, accounts: &Accounts, emit: &mut impl FnMut(Outgoing)) {
+        if !self.map.get(&id).is_some_and(|s| s.loopback) {
+            feedback(id, "Operator elevation is only available locally.", emit);
+            return;
+        }
+        match accounts.stub_operator() {
+            Some(op) => {
+                if let Some(s) = self.map.get_mut(&id) {
+                    s.account = Some(op);
+                }
+                feedback(id, "You are now the operator.", emit);
+            }
+            None => feedback(id, "There is no operator account.", emit),
+        }
+    }
+
+    /// `@quell`: toggle superuser suppression for this connection. Quelled, an su
+    /// account is evaluated on its actual caps; toggling again restores su. Per
+    /// connection and ephemeral, so a fresh connection always starts with su live and
+    /// there is no lockout.
+    fn quell(&mut self, id: ConnectionId, emit: &mut impl FnMut(Outgoing)) {
+        if let Some(s) = self.map.get_mut(&id) {
+            s.quelled = !s.quelled;
+            let msg = if s.quelled {
+                "Superuser suppressed for this connection. @quell again to restore."
+            } else {
+                "Superuser restored for this connection."
+            };
+            feedback(id, msg, emit);
+        }
     }
 
     /// `@play`: attach this connection to an actor so its bare commands have
@@ -194,6 +270,7 @@ fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{CapRegistry, MemoryAccountStore};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Controls, Description, EntityId, Id};
     use musce_proto::Audience;
@@ -201,6 +278,17 @@ mod tests {
     /// A local stand-in for a game's player kind: the engine has no `Player`
     /// concept, so these tests define their own marker to pick an actor by.
     struct Avatar;
+
+    /// An account authority with one bootstrapped su operator, for the `@operator`
+    /// and `@quell` floor commands.
+    fn accounts() -> Accounts {
+        Accounts::boot(&MemoryAccountStore::new(), &CapRegistry::new()).unwrap()
+    }
+
+    /// A loopback peer, so `@operator` elevation is available.
+    fn loopback() -> Option<std::net::SocketAddr> {
+        Some("127.0.0.1:9000".parse().unwrap())
+    }
 
     /// An engine-only `@play` policy for tests: choose the first `Avatar` in the
     /// world. Stands in for a game's injected `choose_actor`.
@@ -226,7 +314,7 @@ mod tests {
         let mut s = Sessions::default();
         let id = ConnectionId(1);
         let mut out = Vec::new();
-        s.connect(id, &mut |o| out.push(o));
+        s.connect(id, None, &mut |o| out.push(o));
         assert!(matches!(
             out.as_slice(),
             [Outgoing::Event(Event { kind: EventKind::System, to: Audience::Connection(c), .. })] if *c == id
@@ -238,13 +326,19 @@ mod tests {
     fn quit_emits_close() {
         let mut s = Sessions::default();
         let world = World::new();
+        let accounts = accounts();
         let id = ConnectionId(7);
-        s.connect(id, &mut |_| {});
+        s.connect(id, None, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(id, "quit", &world, first_player_choose, &mut |o| {
-            out.push(o)
-        });
+        s.account_command(
+            id,
+            "quit",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |o| out.push(o),
+        );
         assert!(matches!(
             out[0],
             Outgoing::Event(Event {
@@ -259,14 +353,20 @@ mod tests {
     fn play_attaches_through_the_injected_policy() {
         let mut s = Sessions::default();
         let mut world = World::new();
+        let accounts = accounts();
         let avatar = spawn_avatar(&mut world);
         let id = ConnectionId(3);
-        s.connect(id, &mut |_| {});
+        s.connect(id, None, &mut |_| {});
 
         let mut out = Vec::new();
-        s.account_command(id, "play", &world, first_player_choose, &mut |o| {
-            out.push(o)
-        });
+        s.account_command(
+            id,
+            "play",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |o| out.push(o),
+        );
         assert!(matches!(
             out.as_slice(),
             [Outgoing::Event(Event {
@@ -285,15 +385,21 @@ mod tests {
     fn unknown_at_command_is_unhandled_and_silent() {
         let mut s = Sessions::default();
         let world = World::new();
+        let accounts = accounts();
         let id = ConnectionId(2);
-        s.connect(id, &mut |_| {});
+        s.connect(id, None, &mut |_| {});
 
         // The floor does not recognize it: it reports "unhandled" and emits
         // nothing, leaving the caller to route it to the admin table.
         let mut out = Vec::new();
-        let handled = s.account_command(id, "bogus", &world, first_player_choose, &mut |o| {
-            out.push(o)
-        });
+        let handled = s.account_command(
+            id,
+            "bogus",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |o| out.push(o),
+        );
         assert!(!handled);
         assert!(out.is_empty());
     }
@@ -302,10 +408,81 @@ mod tests {
     fn lifecycle_command_is_handled() {
         let mut s = Sessions::default();
         let world = World::new();
+        let accounts = accounts();
         let id = ConnectionId(2);
-        s.connect(id, &mut |_| {});
-        let handled = s.account_command(id, "who", &world, first_player_choose, &mut |_| {});
+        s.connect(id, None, &mut |_| {});
+        let handled = s.account_command(
+            id,
+            "who",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |_| {},
+        );
         assert!(handled);
+    }
+
+    #[test]
+    fn operator_attaches_only_from_loopback() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let accounts = accounts();
+        let op = accounts.stub_operator().expect("a bootstrapped operator");
+
+        // A loopback peer may elevate to the operator account.
+        let local = ConnectionId(1);
+        s.connect(local, loopback(), &mut |_| {});
+        s.account_command(
+            local,
+            "operator",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert_eq!(s.account_of(local), Some(op));
+
+        // A peerless (in-process) connection is refused: no account attached.
+        let remote = ConnectionId(2);
+        s.connect(remote, None, &mut |_| {});
+        s.account_command(
+            remote,
+            "operator",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert_eq!(s.account_of(remote), None);
+    }
+
+    #[test]
+    fn quell_toggles_suppression() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let accounts = accounts();
+        let id = ConnectionId(1);
+        s.connect(id, loopback(), &mut |_| {});
+
+        assert!(!s.is_quelled(id));
+        s.account_command(
+            id,
+            "quell",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert!(s.is_quelled(id));
+        s.account_command(
+            id,
+            "quell",
+            &world,
+            &accounts,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert!(!s.is_quelled(id));
     }
 
     #[test]

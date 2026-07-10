@@ -66,9 +66,9 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
 
 - **`commands: CommandTable`** the in-game verb registry the embodiment frame
   dispatches against.
-- **`admin: CommandTable`** the `@`-namespace builder verbs, staff-gated and
+- **`admin: CommandTable`** the `@`-namespace builder verbs, capability-gated and
   rule-bypassing, dispatched through the admin frame. Same `CommandTable`
-  mechanism as `commands`; the gate (`Gate::Staff`) carries the difference. Empty
+  mechanism as `commands`; the gate (`Gate::Cap`) carries the difference. Empty
   for a game with no builder surface.
 - **`seed: fn(&mut World)`** builds the starting world when the database loads
   empty; a loaded world is left untouched.
@@ -87,6 +87,10 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
   built-in. The reference game registers its kind markers (`item`, `creature`,
   `container`, a player avatar, an exit) and its behavior components (`Wander`,
   `Locked`, `Aliases`, the sequence types) here.
+- **`caps: CapRegistry`** the game's capability vocabulary, interned to `CapId`s as
+  it wires its `Gate::Cap` gates. The runtime resolves account grant strings against
+  this same registry (see [authorization.md](authorization.md)). Empty for a game
+  with no capability-gated verbs.
 
 ### The component boundary
 
@@ -101,18 +105,18 @@ read only by game rules (`go`, `is_takeable`), so an exit entity is engine-owned
 relations plus a game-owned kind tag. A game built on the engine defines its own
 kinds the same way, without modifying it.
 
-Two kinds stay in core, and not by accident: they *are* the engine's model.
+One kind stays in core, and not by accident: it *is* the engine's model.
 
 - **`Room`** is the perception boundary. `enclosing_room`, `Audience::Room`, and
   the `Fact` channel's `last_room` snapshot are all room-scoped, because MUSCE is a
   room-based substrate.
-- **`Staff`** is the one built-in permission tier the admin `Gate` checks.
 
-A game wanting a non-room world or account-role permissions instead of a `Staff`
-marker would need the engine to grow a parameterization seam (a game-supplied
-perception boundary; a game-supplied privilege predicate). Neither is built,
-because neither is needed yet; they are the two deliberate model assumptions the
-"a game never modifies the engine" rule is scoped within.
+Permissions are *not* such a kind: authorization is account-scoped, resolved to a
+verdict at dispatch, not a marker the engine reads off the actor (see
+[authorization.md](authorization.md)). A game wanting a non-room world would need the
+engine to grow a parameterization seam (a game-supplied perception boundary); it is
+not built, because it is not needed yet. That room assumption is the one deliberate
+model assumption the "a game never modifies the engine" rule is scoped within.
 
 A plain struct of values plus fn pointers, matching the style the command and
 component registries already use. A `trait Game` is the alternative if a game ever
@@ -130,7 +134,7 @@ programs against. This is the real design work the split forces; the rest is
 moving files.
 
 - **`CommandTable` registration.** A public way to register a verb: a name, a
-  permission `Gate` (`Open` for in-game verbs, `Staff` for admin/builder verbs), a
+  permission `Gate` (`Open` for in-game verbs, `Cap` for capability-gated verbs), a
   handler. The lookup (exact name, then first registered prefix), the gate check,
   and `dispatch_command` (which both the embodiment and admin frames run through)
   stay engine mechanism; the verbs and their parsing are the game's.

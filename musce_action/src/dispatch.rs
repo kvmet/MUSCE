@@ -6,11 +6,12 @@
 //! mechanism; the verbs themselves are game content. See
 //! `docs/architecture/actions.md`.
 
-use musce_core::{EntityId, Staff, World};
+use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Outgoing};
 
 use crate::audience::{self, Outbound};
 use crate::bindings::Actors;
+use crate::caps::{CapId, Verdict};
 use crate::ctx::Ctx;
 
 /// A verb's parse-and-act function. Receives the command context and the
@@ -18,21 +19,23 @@ use crate::ctx::Ctx;
 /// registers them; the engine only invokes them.
 pub type Handler = fn(&mut Ctx, &str);
 
-/// Permission required to run a verb, checked at dispatch before the handler
-/// runs. `Open` is every in-game verb; `Staff` gates the rule-bypassing admin
-/// verbs on the actor carrying the `Staff` marker. A single boolean tier is the
-/// whole model for now; finer tiers and account-owned permissions come later.
+/// Permission required to run a verb, checked at dispatch before the handler runs.
+/// `Open` is every in-game verb; `Cap` gates a verb on an account capability. The
+/// capability is game vocabulary (an interned [`CapId`] the game's caps registry
+/// mints); the engine owns only this membership check. su bypasses gates, so a
+/// superuser passes any `Cap` gate regardless of its grants. See
+/// `docs/architecture/authorization.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gate {
     Open,
-    Staff,
+    Cap(CapId),
 }
 
 impl Gate {
-    fn permits(self, world: &World, actor: EntityId) -> bool {
+    fn permits(self, verdict: &Verdict) -> bool {
         match self {
             Gate::Open => true,
-            Gate::Staff => world.has::<Staff>(actor),
+            Gate::Cap(cap) => verdict.permits(cap),
         }
     }
 }
@@ -89,12 +92,14 @@ impl Default for CommandTable {
 /// admin) is the host's job; this runs whichever table the host hands it, so it
 /// serves both the bare embodiment frame (the game table) and the admin frame
 /// (the `@`-verb table), the gate carrying the difference.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch_command(
     table: &CommandTable,
     world: &mut World,
     actors: &Actors,
     actor: EntityId,
     conn: ConnectionId,
+    verdict: &Verdict,
     line: &str,
     emit: &mut impl FnMut(Outgoing),
 ) {
@@ -106,9 +111,9 @@ pub fn dispatch_command(
 
     let mut out: Vec<Outbound> = Vec::new();
     {
-        let mut ctx = Ctx::new(world, actor, conn, &mut out);
+        let mut ctx = Ctx::new(world, actor, conn, verdict, &mut out);
         match table.lookup(&word.to_lowercase()) {
-            Some(verb) if verb.gate.permits(ctx.world, actor) => (verb.handler)(&mut ctx, rest),
+            Some(verb) if verb.gate.permits(verdict) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
             None => ctx.feedback(format!("I don't understand \"{word}\".")),
         }
@@ -122,8 +127,9 @@ pub fn dispatch_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CapSet;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Room, Staff};
+    use musce_core::{Description, Room};
     use musce_proto::{Audience, Event, EventKind};
 
     /// Two test verbs over the public emit API, standing in for game content so
@@ -165,9 +171,16 @@ mod tests {
     ) -> Vec<String> {
         let table = table();
         let mut out = Vec::new();
-        dispatch_command(&table, world, actors, actor, conn, line, &mut |o| {
-            out.push(o)
-        });
+        dispatch_command(
+            &table,
+            world,
+            actors,
+            actor,
+            conn,
+            &Verdict::guest(),
+            line,
+            &mut |o| out.push(o),
+        );
         out.into_iter()
             .map(|o| match o {
                 Outgoing::Event(Event {
@@ -212,9 +225,16 @@ mod tests {
             c.emit_self(EventKind::Narration, "loud")
         });
         let mut out = Vec::new();
-        dispatch_command(&t, &mut world, &actors, actor, conn, "yell", &mut |o| {
-            out.push(o)
-        });
+        dispatch_command(
+            &t,
+            &mut world,
+            &actors,
+            actor,
+            conn,
+            &Verdict::guest(),
+            "yell",
+            &mut |o| out.push(o),
+        );
         assert!(matches!(
             out.as_slice(),
             [Outgoing::Event(Event {
@@ -224,36 +244,70 @@ mod tests {
         ));
     }
 
-    /// A `Gate::Staff` verb runs for an actor carrying the `Staff` marker and is
-    /// refused (handler never runs) for one without it.
+    /// A `Gate::Cap` verb runs under a verdict holding the capability and is refused
+    /// (handler never runs) under one without it. The verdict is what carries the
+    /// permission, not anything on the actor.
     #[test]
-    fn staff_gate_permits_only_staff() {
+    fn cap_gate_permits_only_with_the_cap() {
         let (mut world, actors, actor, conn) = world_with_player();
+        let cap = CapId(0);
 
         let mut t = CommandTable::new();
-        t.register("smite", Gate::Staff, |c, _| c.feedback("zap"));
+        t.register("smite", Gate::Cap(cap), |c, _| c.feedback("zap"));
 
-        // Non-staff: refused.
+        // Guest verdict lacks the cap: refused.
+        let guest = Verdict::guest();
         let mut out = Vec::new();
-        dispatch_command(&t, &mut world, &actors, actor, conn, "smite", &mut |o| {
-            out.push(o)
-        });
+        dispatch_command(
+            &t,
+            &mut world,
+            &actors,
+            actor,
+            conn,
+            &guest,
+            "smite",
+            &mut |o| out.push(o),
+        );
         let text = match &out[..] {
             [Outgoing::Event(Event { text, .. })] => text.clone(),
             other => panic!("expected one event, got {other:?}"),
         };
         assert!(text.contains("aren't allowed"), "got: {text:?}");
 
-        // Mark the actor staff: now it runs.
-        let e = world.index().get(actor).unwrap();
-        world.ecs.insert_one(e, Staff).unwrap();
+        // A verdict holding the cap: now it runs.
+        let granted = Verdict::new([cap].into_iter().collect(), false);
         let mut out = Vec::new();
-        dispatch_command(&t, &mut world, &actors, actor, conn, "smite", &mut |o| {
-            out.push(o)
-        });
+        dispatch_command(
+            &t,
+            &mut world,
+            &actors,
+            actor,
+            conn,
+            &granted,
+            "smite",
+            &mut |o| out.push(o),
+        );
         assert!(
             matches!(&out[..], [Outgoing::Event(Event { text, .. })] if text.contains("zap")),
-            "staff actor should run the verb, got: {out:?}"
+            "the granted verdict should run the verb, got: {out:?}"
+        );
+
+        // su bypasses the gate with no grant at all.
+        let su = Verdict::new(CapSet::new(), true);
+        let mut out = Vec::new();
+        dispatch_command(
+            &t,
+            &mut world,
+            &actors,
+            actor,
+            conn,
+            &su,
+            "smite",
+            &mut |o| out.push(o),
+        );
+        assert!(
+            matches!(&out[..], [Outgoing::Event(Event { text, .. })] if text.contains("zap")),
+            "su should bypass the gate, got: {out:?}"
         );
     }
 }

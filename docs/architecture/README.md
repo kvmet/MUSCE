@@ -53,12 +53,13 @@ These hold across every subsystem:
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
-- [authorization.md](authorization.md): the permission model that replaces the
+- [authorization.md](authorization.md): the permission model that replaced the
   `Staff` gate: account-scoped capabilities, the superuser account bit, `@quell`, and
-  the out-of-band boundaries on su. *(Proposed.)*
+  the out-of-band boundaries on su. *(Slice 1 built; slice 2 authentication pending.)*
 - [accounts.md](accounts.md): the implementation half of authorization: resolving a
   connection to a verdict at dispatch, the in-memory account authority and its store
-  seam, account identity, and bootstrapping. *(Proposed.)*
+  seam, account identity, and bootstrapping. *(Slice 1 built; slice 2 authentication
+  pending.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
@@ -78,16 +79,21 @@ Built:
   `Controls` and `Focus` relations behind durable embodiment), relation-backed exit
   connectivity (the `LeadsFrom`/`LeadsTo` relations plus the general `Name`
   component, wired with the `DespawnSources` cascade; the `Exit` kind marker itself
-  is game vocabulary), the `Staff` permission marker, the structural-fact buffer
-  (`Fact`, emitted at the `despawn` mutator layer), JSON snapshot.
+  is game vocabulary), the structural-fact buffer
+  (`Fact`, emitted at the `despawn` mutator layer), JSON snapshot. (Permissions are
+  no longer a core marker: authorization is account-scoped, see authorization.md.)
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
-  account floor (`@quit`/`@who`/`@help`/`@play`, the actor choice game-injected),
-  and a single command dispatcher draining the inbox each tick: lifecycle `@`-verbs
-  to the floor, other `@`-verbs to the game's staff-gated admin table, bare
-  commands to the embodiment frame. After draining commands it runs the game's
+  account floor (`@quit`/`@who`/`@help`/`@play` plus `@operator`/`@quell`, the actor
+  choice game-injected), and a single command dispatcher draining the inbox each tick:
+  lifecycle `@`-verbs to the floor, other `@`-verbs to the game's capability-gated
+  admin table, bare commands to the embodiment frame. It also owns the account
+  authority (`musce_host::auth`: the caps registry, the account records, the
+  `AccountStore` trait with a slice-1 in-memory backend, first-account-su bootstrap
+  and the last-su boot check), resolving each connection's account to an authorization
+  verdict at the dispatch seam. After draining commands it runs the game's
   injected systems (`Game.systems`) on the phase pipeline, resolving their output
   through the same audience resolver, and runs `Game.register` against a fresh
   world before load so a game's own component types deserialize and persist. Holds
@@ -102,8 +108,9 @@ Built:
   structural executor (the full `Action` set:
   `Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`,
   returning the action's subject), the `CommandTable` lookup and public `register`,
-  the `Gate`
-  tiers (`Open`/`Staff`) and `dispatch_command` (run by both the embodiment and
+  the `Gate` variants (`Open`/`Cap(CapId)`) with the account-scoped capability check
+  (`CapId`/`CapSet`/`Verdict`/`permits`, plus the verdict carried read-only on `Ctx`),
+  and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface a game's verb handlers
   program against), `SystemCtx` and the `System` type (the tick-loop analogue of
   `Ctx`/`Handler`: a system mutates through `execute` and emits room-addressed
@@ -115,7 +122,8 @@ Built:
   `go`/bare direction, `take`, `drop`, `pilot`, `release`, `say`, `tell`, `wave`, `help`) and the
   admin/builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
-  and their parsing, the unified
+  and their parsing (gated on the game's own `build`/`possess` capabilities), the
+  unified
   name resolver (a typed noun matches a thing's `Name` exact-then-word-prefix, then
   its game-side `Aliases`, then a `Description` substring; movement resolves an exit
   through the same path), its own kind markers
@@ -144,11 +152,14 @@ Deferred (with seams in place where noted):
   intents (the scripting layer below), bounded-repeat effects (a repeat-count),
   and the seeded-world RNG for stochastic beats. The admin builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
-  are built, riding the structural action set through the staff-gated admin frame.
-- Networking: WebSocket/SSH transports, real accounts/auth, the gameplay
-  possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays (designed in
-  networking-and-sessions.md). Raw TCP, the session floor, the session attachment
-  that `@play` sets, durable `Controls`/`Focus` embodiment, and the
+  are built, riding the structural action set through the capability-gated admin
+  frame.
+- Networking: WebSocket/SSH transports, real authentication (slice 2 of the
+  authorization design; the loopback-only `@operator` stub stands in for now), the
+  gameplay possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays
+  (designed in networking-and-sessions.md). Raw TCP, the session floor, the session
+  attachment that `@play` sets, durable `Controls`/`Focus` embodiment, the account
+  authority and capability gate (authorization slice 1), and the
   `@possess`/`@unpossess` admin verbs are built.
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit

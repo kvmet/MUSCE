@@ -1,10 +1,12 @@
 # Authorization: capabilities, superuser, and quell
 
-> Status: **proposed; converged across four adversarial-review rounds, ready to
-> implement.** Today the only authorization is `Gate::Open | Gate::Staff` in
-> `musce_action`, where `Staff` reads a marker off the world actor; accounts and
-> auth are stubbed (every connection is an anonymous guest). This is the model
-> that replaces that stub.
+> Status: **slice 1 (authorization) built; slice 2 (authentication) not started.**
+> The capability model, the superuser bit, `@quell`, and the account authority are
+> live: `Gate` is `Open | Cap` in `musce_action`, the authority resolves a
+> connection's account to a verdict at the dispatch seam, and the reference game
+> re-gates its admin verbs on capabilities. What remains for slice 2 is real
+> authentication (passwords, tokens, oauth) behind the same store seam; until then a
+> connection is a guest unless it elevates through the loopback-only `@operator` stub.
 
 This covers the permission **model**: **who may do what**. The account as the bearer
 of permissions, the capability model that gates verbs, the superuser bit, and how to

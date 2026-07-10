@@ -1,8 +1,9 @@
-//! The reference game's admin (builder) verbs: the `@`-namespace, staff-gated,
-//! rule-bypassing commands that compile straight to the structural action set,
-//! skipping the gameplay rules a player command runs. They are game content (which
-//! verbs exist, how they parse, their prose) over the engine's admin frame
-//! (`CommandTable` + `Gate::Staff` + dispatch); the engine owns that mechanism.
+//! The reference game's admin (builder) verbs: the `@`-namespace,
+//! capability-gated, rule-bypassing commands that compile straight to the
+//! structural action set, skipping the gameplay rules a player command runs. They
+//! are game content (which verbs exist, how they parse, their prose, which
+//! capability gates each) over the engine's admin frame (`CommandTable` +
+//! `Gate::Cap` + dispatch); the engine owns that mechanism.
 //! See `docs/architecture/actions.md` (the three buckets) and
 //! `docs/architecture/engine-and-game.md`.
 //!
@@ -12,6 +13,7 @@
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
 use musce_core::{ComponentBlob, Controls, Description, EntityId, Name, Room, Value, World};
+use musce_host::auth::CapRegistry;
 use musce_proto::EventKind;
 
 use crate::commit_or_log;
@@ -22,23 +24,27 @@ use crate::systems::Wander;
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
 const KINDS: &str = "torch, rock, goblin, box, rat";
 
-/// Build the reference game's admin command table. All verbs are `Gate::Staff`;
-/// only an actor carrying the `Staff` marker reaches them. Registration order
-/// settles prefix ties: `summon` before `set` so the `s` prefix resolves to
-/// `summon`; `dig` before `destroy` so the `d` prefix resolves to `dig`; and
-/// `possess` before `purge` so the `p` prefix resolves to `possess`.
-pub fn commands() -> CommandTable {
+/// Build the reference game's admin command table, interning its capability
+/// vocabulary into `caps`: the world-building verbs gate on `build`, the possession
+/// verbs on `possess`. These are game vocabulary; the engine only checks membership,
+/// and a superuser bypasses both. Registration order settles prefix ties: `summon`
+/// before `set` so the `s` prefix resolves to `summon`; `dig` before `destroy` so the
+/// `d` prefix resolves to `dig`; and `possess` before `purge` so the `p` prefix
+/// resolves to `possess`.
+pub fn commands(caps: &mut CapRegistry) -> CommandTable {
+    let build = caps.register_cap("build");
+    let possess_cap = caps.register_cap("possess");
     let mut t = CommandTable::new();
-    t.register("tel", Gate::Staff, tel);
-    t.register("goto", Gate::Staff, goto);
-    t.register("summon", Gate::Staff, summon);
-    t.register("create", Gate::Staff, create);
-    t.register("dig", Gate::Staff, dig);
-    t.register("destroy", Gate::Staff, destroy);
-    t.register("set", Gate::Staff, set);
-    t.register("possess", Gate::Staff, possess);
-    t.register("purge", Gate::Staff, purge);
-    t.register("unpossess", Gate::Staff, unpossess);
+    t.register("tel", Gate::Cap(build), tel);
+    t.register("goto", Gate::Cap(build), goto);
+    t.register("summon", Gate::Cap(build), summon);
+    t.register("create", Gate::Cap(build), create);
+    t.register("dig", Gate::Cap(build), dig);
+    t.register("destroy", Gate::Cap(build), destroy);
+    t.register("set", Gate::Cap(build), set);
+    t.register("possess", Gate::Cap(possess_cap), possess);
+    t.register("purge", Gate::Cap(build), purge);
+    t.register("unpossess", Gate::Cap(possess_cap), unpossess);
     t
 }
 
