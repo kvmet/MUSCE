@@ -289,4 +289,20 @@ mod tests {
         assert!(f.world.entity(key).is_some());
         assert!(f.world.take_facts().is_empty());
     }
+
+    #[test]
+    fn a_statless_attacker_still_lands_one_damage() {
+        let mut f = fixture();
+        // A brawler with no `Special`: the Strength floor of 1 still lands a blow,
+        // so the damage formula never zeroes out.
+        let brawler = spawn(&mut f.world, |b| {
+            b.add(Player);
+            b.add(Name("a brawler".into()));
+        });
+        f.world.move_entity(brawler, f.room).unwrap();
+
+        let out = run(&mut f.world, brawler, |c| attack(c, "rat"));
+        assert_eq!(hp(&f.world, f.rat), 7); // 8 - 1
+        assert!(feedback(&out).iter().any(|t| t.contains("for 1 damage")));
+    }
 }

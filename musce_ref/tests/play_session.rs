@@ -586,9 +586,10 @@ async fn attack_wears_a_foe_down_then_kills_it() {
         "the first blow lands but does not kill, got: {hit:?}"
     );
 
-    // Second blow empties its Health: the kill line and the death cry arrive
-    // together, the reaction converging on the same fact channel gate 2 built.
-    send(&mut writer, "attack rat").await;
+    // Second blow empties its Health (via the `kill` alias): the kill line and the
+    // death cry arrive together, the reaction converging on the same fact channel
+    // gate 2 built.
+    send(&mut writer, "kill rat").await;
     let kill = read_burst(&mut reader).await;
     assert!(
         kill.contains("You strike a giant rat down"),
