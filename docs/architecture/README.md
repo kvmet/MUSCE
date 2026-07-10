@@ -53,6 +53,12 @@ These hold across every subsystem:
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
+- [authorization.md](authorization.md): the permission model that replaces the
+  `Staff` gate: account-scoped capabilities, the superuser account bit, `@quell`, and
+  the out-of-band boundaries on su. *(Proposed.)*
+- [accounts.md](accounts.md): the implementation half of authorization: resolving a
+  connection to a verdict at dispatch, the in-memory account authority and its store
+  seam, account identity, and bootstrapping. *(Proposed.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
