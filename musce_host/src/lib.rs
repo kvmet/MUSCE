@@ -3,6 +3,7 @@
 //! until networking lands). The world is loaded before the first tick and saved
 //! synchronously on shutdown.
 
+pub mod auth;
 mod dispatch;
 mod session;
 

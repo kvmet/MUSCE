@@ -17,6 +17,7 @@
 
 mod audience;
 mod bindings;
+mod caps;
 mod ctx;
 mod dispatch;
 mod executor;
@@ -25,6 +26,7 @@ use musce_core::{EntityId, World};
 
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
+pub use caps::{CapId, CapSet, Verdict};
 pub use ctx::{Ctx, System, SystemCtx};
 pub use dispatch::{CommandTable, Gate, Handler, dispatch_command};
 pub use executor::{Action, ExecError, execute};
