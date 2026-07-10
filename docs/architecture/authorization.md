@@ -117,9 +117,24 @@ operator who quells one connection still has su live on another; this is a footg
 not an escalation (it is the operator's own account), and is documented rather than
 prevented. Reconnect resetting the flag is the never-locked-out guarantee, so quell
 is deliberately *not* account-durable session state that survives disconnect.
-Suppressing su is the whole MVP; a finer grain (per control-stack, or an arbitrary
-reduced grant set) is an additive later refinement with no present consumer,
-deferred.
+
+Suppressing su is what slice 1 builds. **Quell also dropping elevated capabilities is
+a locked design, deferred to slice 2.** A `build` cap is elevated authority a builder
+sets aside for the same reason su is: to verify how the game plays for a normal
+account (that a non-builder genuinely cannot build), so quell should drop it too. The
+mechanism: each capability carries a **quellable** flag, default quellable, so the
+common admin cap drops on quell with no configuration; a rare baseline right (a
+`member` cap gating member areas) opts out, so quelling still shows the *member's*
+view rather than a bare guest's. `verdict_for` removes the quellable caps from a
+quelled connection's verdict, so `Gate::Cap` **and** a game's inline `ctx.has_cap`
+respect it with no per-handler quell check. It defers to slice 2 because a non-su
+account that actually *holds* a cap (and a way to log in as it) only exists once the
+grant/login surface does; it is a pure addition (the verdict shape and the persisted
+record are unchanged, and `register_cap` keeps its signature since caps default
+quellable), so nothing is lost by landing it alongside that surface, and the
+falsifying test (log in as a builder, quell, `@create` refused, un-quell, allowed)
+becomes expressible exactly then. A still-finer grain (per control-stack, an arbitrary
+reduced grant set) stays deferred with no consumer.
 
 `@quell` is a **floor command handled in the host loop, like `@quit`**, not a
 `CommandTable` entry: it writes host-only `Session` state, which a `CommandTable`
