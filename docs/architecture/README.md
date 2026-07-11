@@ -119,8 +119,8 @@ Built:
   `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the bare verbs (`look`, `examine`/`x`, `inventory`/`i`,
-  `go`/bare direction, `take`, `drop`, `pilot`, `release`, `say`, `tell`, `wave`,
-  `attack`/`kill`, `help`) and the
+  `go`/bare direction, `take`, `drop`, `put`, `give`, `pilot`, `release`, `say`,
+  `tell`, `wave`, `attack`/`kill`, `help`) and the
   admin/builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   and their parsing (gated on the game's own `build`/`possess` capabilities), the
@@ -129,7 +129,9 @@ Built:
   its game-side `Aliases`, then a `Description` substring; movement resolves an exit
   through the same path), its own kind markers
   (`item`/`creature`/`container`/`exit`/the player avatar, all game vocabulary the
-  engine never interprets), the combat stat components (`Special`, the seven-stat
+  engine never interprets, with `container` its first consumers: `put` stashes a
+  held thing in it, `give` hands one to a being, and `examine` reveals its
+  contents), the combat stat components (`Special`, the seven-stat
   block, and `Health`) landed with their first consumer `attack` (Strength drains a
   foe's `Health`; a lethal blow destroys it, converging on the `death_cry` reaction),
   the takeable rule and

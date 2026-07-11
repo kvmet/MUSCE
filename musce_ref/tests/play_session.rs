@@ -603,3 +603,114 @@ async fn attack_wears_a_foe_down_then_kills_it() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 }
+
+/// Containers end to end: take the seeded coin off the hall floor, stash it in the
+/// wooden chest with `put`, then `examine` the chest to see the coin listed inside.
+/// This exercises the container-contents view that keeps `put` from being a black
+/// hole, rendered over the wire.
+#[tokio::test]
+async fn put_a_coin_in_the_chest_then_see_it_inside() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // The hall shows both the chest and the loose coin.
+    send(&mut writer, "look").await;
+    let looked = read_burst(&mut reader).await;
+    assert!(
+        looked.contains("wooden chest") && looked.contains("copper coin"),
+        "the hall holds the chest and the coin, got: {looked:?}"
+    );
+
+    send(&mut writer, "take coin").await;
+    let took = read_burst(&mut reader).await;
+    assert!(
+        took.contains("You take a copper coin"),
+        "take feedback, got: {took:?}"
+    );
+
+    send(&mut writer, "put coin in chest").await;
+    let stashed = read_burst(&mut reader).await;
+    assert!(
+        stashed.contains("You put a copper coin in a wooden chest"),
+        "put feedback, got: {stashed:?}"
+    );
+
+    // Examining the chest now lists the coin inside it.
+    send(&mut writer, "examine chest").await;
+    let inside = read_burst(&mut reader).await;
+    assert!(
+        inside.contains("It contains: a copper coin"),
+        "the chest reveals its contents, got: {inside:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
+/// `give` end to end: hand the seeded coin to the patrol drone (a `Creature`, a
+/// valid recipient) standing in the hall, exercising the three-party emit through
+/// real audience resolution over the wire.
+#[tokio::test]
+async fn give_a_coin_to_the_drone() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    send(&mut writer, "take coin").await;
+    let took = read_burst(&mut reader).await;
+    assert!(
+        took.contains("You take a copper coin"),
+        "take feedback, got: {took:?}"
+    );
+
+    send(&mut writer, "give coin to drone").await;
+    let gave = read_burst(&mut reader).await;
+    assert!(
+        gave.contains("You give a copper coin to a patrol drone"),
+        "give feedback, got: {gave:?}"
+    );
+
+    // The coin left the actor's hands, so it is no longer in inventory.
+    send(&mut writer, "inventory").await;
+    let inv = read_burst(&mut reader).await;
+    assert!(
+        !inv.contains("copper coin"),
+        "the coin is no longer carried, got: {inv:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}

@@ -6,6 +6,7 @@ use musce_action::Ctx;
 use musce_core::{Description, EntityId, World};
 use musce_proto::EventKind;
 
+use crate::kinds::Container;
 use crate::names::{self, display_name, short_name};
 
 /// `look`: describe the actor's current room, its exits, and its contents. With
@@ -35,15 +36,34 @@ pub fn examine(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
-    match description(ctx.world, target) {
-        Some(text) => ctx.emit_self(EventKind::Narration, text),
-        None => {
-            let name = display_name(ctx.world, target);
-            ctx.emit_self(
-                EventKind::Narration,
-                format!("You see nothing special about {name}."),
-            );
-        }
+    let mut text = match description(ctx.world, target) {
+        Some(text) => text,
+        None => format!(
+            "You see nothing special about {}.",
+            display_name(ctx.world, target)
+        ),
+    };
+    // A container reveals what is inside it when looked at closely, so `put` is not
+    // a black hole; a container kind with no contents reads as empty.
+    if ctx.world.has::<Container>(target) {
+        text.push('\n');
+        text.push_str(&contents_line(ctx.world, target));
+    }
+    ctx.emit_self(EventKind::Narration, text);
+}
+
+/// A one-line inventory of a container's contents for `examine`: "It contains: a,
+/// b." or "It is empty." when nothing inside carries a nameable handle.
+fn contents_line(world: &World, container: EntityId) -> String {
+    let items: Vec<String> = world
+        .contents(container)
+        .into_iter()
+        .filter_map(|e| short_name(world, e))
+        .collect();
+    if items.is_empty() {
+        "It is empty.".to_string()
+    } else {
+        format!("It contains: {}.", items.join(", "))
     }
 }
 

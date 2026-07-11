@@ -8,7 +8,7 @@
 use musce_core::hecs::EntityBuilder;
 use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, World};
 
-use crate::kinds::{Creature, Exit, Item, Player};
+use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
 use crate::verbs::{Health, Special};
@@ -47,6 +47,24 @@ pub fn seed(world: &mut World) {
         "A small brass key, its teeth worn smooth. It may fit an old lock.",
     );
     world.move_entity(key, garden).expect("seed: place key");
+
+    // A container and a loose item to exercise `put`/`give`: a heavy chest that
+    // stays put (no `Item` marker, so it is not takeable) and a coin the player can
+    // pick up and either stash in the chest or hand to a being.
+    let chest = spawn(world, |b| {
+        b.add(Container);
+        b.add(Name("a wooden chest".into()));
+        b.add(Description(
+            "A banded wooden chest, lid thrown back, roomy enough to stash things in.".into(),
+        ));
+    });
+    world.move_entity(chest, hall).expect("seed: place chest");
+    let coin = item(
+        world,
+        "a copper coin",
+        "A dull copper coin, edges worn round.",
+    );
+    world.move_entity(coin, hall).expect("seed: place coin");
 
     let avatar = avatar(
         world,

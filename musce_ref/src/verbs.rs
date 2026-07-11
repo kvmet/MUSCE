@@ -15,6 +15,7 @@ use musce_action::{CommandTable, Ctx, Gate};
 use musce_proto::EventKind;
 
 mod combat;
+mod containers;
 mod control;
 mod manipulate;
 mod movement;
@@ -24,6 +25,7 @@ mod social;
 mod tests;
 
 pub use combat::attack;
+pub use containers::{give, put};
 pub use control::{pilot, release};
 pub use manipulate::{drop, take};
 pub use movement::go;
@@ -55,6 +57,8 @@ pub fn commands() -> CommandTable {
     t.register("go", Gate::Open, go);
     t.register("take", Gate::Open, take);
     t.register("drop", Gate::Open, drop);
+    t.register("put", Gate::Open, put);
+    t.register("give", Gate::Open, give);
     t.register("pilot", Gate::Open, pilot);
     t.register("release", Gate::Open, release);
     t.register("say", Gate::Open, say);
@@ -73,6 +77,7 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
         EventKind::Feedback,
         "You can: look, examine <thing> (or x), inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
+         put <item> in <container>, give <item> to <someone>, \
          pilot <thing>, release, say <message>, tell <someone> <message>, \
          wave (or wave at <someone>), attack <thing> (or kill), help.",
     );

@@ -1,6 +1,6 @@
 use super::movement::Locked;
 use super::{drop, examine, go, help, inventory, look, pilot, release, say, take, tell, wave};
-use crate::kinds::{Creature, Exit, Item, Player};
+use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::{self, Scope};
 use musce_action::{Ctx, Outbound, Verdict};
 use musce_core::hecs::EntityBuilder;
@@ -431,6 +431,41 @@ fn examine_a_thing_not_present_rejects() {
         self_feedback(&out)
             .iter()
             .any(|t| t.contains("don't see that here"))
+    );
+}
+
+#[test]
+fn examine_a_container_reveals_its_contents() {
+    let mut f = fixture();
+    let chest = spawn(&mut f.world, |b| {
+        b.add(Container);
+        b.add(Name("a wooden chest".into()));
+    });
+    f.world.move_entity(chest, f.hall).unwrap();
+
+    // An empty container reads as empty.
+    let empty = run(&mut f.world, f.actor, |c| examine(c, "chest"));
+    assert!(
+        self_feedback(&empty)
+            .iter()
+            .any(|t| t.contains("It is empty.")),
+        "an empty container reports it, got: {:?}",
+        self_feedback(&empty)
+    );
+
+    // With something inside, examine lists it.
+    let coin = spawn(&mut f.world, |b| {
+        b.add(Item);
+        b.add(Name("a copper coin".into()));
+    });
+    f.world.move_entity(coin, chest).unwrap();
+    let full = run(&mut f.world, f.actor, |c| examine(c, "chest"));
+    assert!(
+        self_feedback(&full)
+            .iter()
+            .any(|t| t.contains("It contains: a copper coin.")),
+        "a full container lists its contents, got: {:?}",
+        self_feedback(&full)
     );
 }
 
