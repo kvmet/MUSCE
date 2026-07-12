@@ -23,8 +23,10 @@ pub struct Dispatch {
     /// content beyond this value.
     game: Game,
     /// The account authority: resolves a connection's account to the authorization
-    /// verdict a gate (and a game's inline rules) run under. Sim-thread-owned.
-    accounts: Accounts,
+    /// verdict a gate (and a game's inline rules) run under. Sim-thread-owned;
+    /// crate-visible so the sim loop's persist beat can check `take_dirty` and
+    /// snapshot it.
+    pub(crate) accounts: Accounts,
 }
 
 impl Dispatch {

@@ -13,6 +13,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
+/// A fresh in-memory account store, one per test sim. `run` initializes its
+/// schema; an empty store boots into the operator bootstrap.
+async fn accounts_db() -> musce_host::auth::AccountStore {
+    musce_host::auth::AccountStore::connect("sqlite::memory:")
+        .await
+        .unwrap()
+}
+
 /// Grab a currently-free loopback port by binding and immediately dropping a
 /// listener. `run` does not surface its bound address, so the test picks the port
 /// and hands it in. The brief gap before the sim rebinds is the standard
@@ -94,6 +102,7 @@ async fn connect_play_look_go_take() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -162,6 +171,7 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -232,6 +242,7 @@ async fn possess_then_pilot_drives_a_created_thing() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -295,6 +306,7 @@ async fn a_wandering_creature_moves_with_no_input() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -346,6 +358,7 @@ async fn destroying_a_thing_cries_out_in_the_room() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -396,6 +409,7 @@ async fn admin_verbs_build_the_world() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -470,6 +484,7 @@ async fn a_patrolling_sentry_moves_with_no_input() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -517,6 +532,7 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -560,6 +576,7 @@ async fn attack_wears_a_foe_down_then_kills_it() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -620,6 +637,7 @@ async fn put_a_coin_in_the_chest_then_see_it_inside() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -679,6 +697,7 @@ async fn give_a_coin_to_the_drone() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -732,6 +751,7 @@ async fn a_granted_builder_creates_until_quelled() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
+        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -794,6 +814,88 @@ async fn a_granted_builder_creates_until_quelled() {
     assert!(
         again.contains("Created"),
         "un-quelled, the build cap is back, got: {again:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
+/// Durability end to end: accounts survive a full sim restart. The first sim's
+/// operator mints a builder and grants it `build`; the same account store then
+/// feeds a second sim, where the builder logs straight in and the granted cap
+/// still admits `@create`. That one flow falsifies the whole durable path: the
+/// per-mutation writer persisted the bootstrap operator, the account, and the
+/// grant; the shutdown drain flushed them; and the second boot loaded them
+/// rather than re-bootstrapping (a re-bootstrap would hold only the operator,
+/// so `@login builder` would fail).
+#[tokio::test]
+async fn accounts_survive_a_restart() {
+    // One account store across both sims; the shared pool keeps the in-memory
+    // database alive between them. Each sim gets its own throwaway world DB.
+    let accounts = accounts_db().await;
+    let config = |addr| Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+
+    // Sim 1: mint the builder and grant it build.
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let handle = tokio::spawn(run(
+        store,
+        accounts.clone(),
+        config(addr),
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@account new builder").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@grant builder build").await;
+    let granted = read_burst(&mut reader).await;
+    assert!(
+        granted.contains("Granted \"build\" to builder"),
+        "grant feedback, got: {granted:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+
+    // Sim 2: same account store, fresh world. The builder and its grant must
+    // already be there.
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let handle = tokio::spawn(run(
+        store,
+        accounts.clone(),
+        config(addr),
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@login builder").await;
+    let logged = read_burst(&mut reader).await;
+    assert!(
+        logged.contains("logged in as builder"),
+        "the account survived the restart, got: {logged:?}"
+    );
+    send(&mut writer, "@play").await;
+    let _ = read_burst(&mut reader).await;
+    // An inert torch, not a rat: a `Wander` kind would starve read_burst's gap.
+    send(&mut writer, "@create torch").await;
+    let built = read_burst(&mut reader).await;
+    assert!(
+        built.contains("Created"),
+        "the grant survived the restart, got: {built:?}"
     );
 
     shutdown.store(true, Ordering::Relaxed);

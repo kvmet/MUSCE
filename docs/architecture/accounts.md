@@ -1,13 +1,13 @@
 # Accounts: the authority, its store, and how the check resolves
 
-> Status: **authorization built, including the runtime account surface; real
-> authentication and the durable backend not started.** This is the implementation
-> half of the authorization design: where account records live, how a connection's
-> grants reach the gate, and how the system boots. The permission *model* it serves
-> (capabilities, the superuser bit, quell) lives in
-> [authorization.md](authorization.md); read that first. The authority still boots
-> from an empty snapshot every run (no durability); the relational SQLite store
-> described below is decided and lands next, ahead of authentication.
+> Status: **authorization and the durable account store built; real authentication
+> not started.** This is the implementation half of the authorization design: where
+> account records live, how a connection's grants reach the gate, and how the
+> system boots. The permission *model* it serves (capabilities, the superuser bit,
+> quell) lives in [authorization.md](authorization.md); read that first. Accounts
+> persist in their own relational SQLite database (`musce_auth::AccountStore`);
+> what remains is real credentials replacing the loopback `@operator`/`@login`
+> stubs, and the delete/su-write surface.
 
 The model says the engine authorizes accounts on a flat set of capabilities plus a
 superuser bit. This covers the machinery that makes that real: resolving a
@@ -200,7 +200,7 @@ bootstrap, and "at least one su exists" must hold across every path, not just re
 - **Slice 2b.1 (the durable store).** The relational `accounts.sqlite` store above
   (`accounts` / `account_caps` / `meta` with the persisted `next_id`), loaded in
   `run`'s async context, written by an async writer task fed by the dirty-flag beat.
-  Decided (this design), landing next.
+  Built.
 - **Slice 2b.2 (authentication).** Real credentials (passwords first, then
   tokens/oauth) replacing the `@login`/`@operator` stubs; a nullable `pw_hash`
   column joins the `accounts` table then. Needs the password-hashing dependency

@@ -743,6 +743,7 @@ dependencies = [
  "musce_action",
  "serde",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]

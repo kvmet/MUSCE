@@ -8,3 +8,6 @@ argon2 = "0.5.3"
 musce_action = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

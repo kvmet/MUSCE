@@ -5,11 +5,15 @@
 //! (`CapId`/`CapSet`/`Verdict`) and knows nothing of dispatch, sessions, or the
 //! `World`. See `docs/architecture/accounts.md`.
 
+mod store;
+
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use musce_action::{CapId, CapSet, Verdict};
+
+pub use store::{ACCOUNTS_SCHEMA_VERSION, AccountStore, StoreError};
 
 /// Stable account identity: persisted, the store's primary key. Distinct from the
 /// ephemeral `ConnectionId` and from any `EntityId` (accounts are not world

@@ -23,7 +23,7 @@ use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::auth::{Accounts, AccountsSnapshot, CapRegistry};
+use crate::auth::{AccountStore, Accounts, AccountsSnapshot, CapRegistry};
 use crate::dispatch::Dispatch;
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
@@ -123,9 +123,12 @@ enum Ack {
 }
 
 /// Boot, run the tick loop until `shutdown` is set, then save and stop. The
-/// `World` is built and owned entirely by the sim thread.
+/// `World` is built and owned entirely by the sim thread. Both stores load here,
+/// in the async context, before the sim thread exists; the sim receives plain
+/// data and never holds a store.
 pub async fn run(
     store: SqliteStore,
+    account_store: AccountStore,
     config: Config,
     shutdown: Arc<AtomicBool>,
     game: Game,
@@ -133,9 +136,16 @@ pub async fn run(
     store.init().await?;
     let loaded = store.load().await?; // boot load, before any tick
 
+    // A store that fails to read refuses to boot, never treated as empty: the
+    // empty snapshot is the bootstrap-an-operator path, and minting a fresh
+    // operator over accounts that merely failed to load would fork the store.
+    account_store.init().await?;
+    let account_snap = account_store.load().await?;
+
     let (snap_tx, snap_rx) = tokio::sync::mpsc::unbounded_channel::<Snapshot>();
     let (ack_tx, ack_rx) = crossbeam_channel::unbounded::<Ack>();
     let (done_tx, done_rx) = oneshot::channel::<Result<RunReport, String>>();
+    let (acct_tx, acct_rx) = tokio::sync::mpsc::unbounded_channel::<AccountsSnapshot>();
 
     // The net <-> sim boundary: commands in (crossbeam, drained by the sim
     // thread), events out (tokio mpsc, drained by the net router).
@@ -150,12 +160,23 @@ pub async fn run(
     }
 
     let persist = tokio::spawn(persistence_task(store.clone(), snap_rx, ack_tx));
+    let account_persist = tokio::spawn(account_persistence_task(account_store.clone(), acct_rx));
 
     let sim = std::thread::Builder::new()
         .name("musce-sim".into())
         .spawn(move || {
             sim_loop(
-                loaded, snap_tx, ack_rx, cmd_rx, event_tx, shutdown, config, game, done_tx,
+                loaded,
+                account_snap,
+                snap_tx,
+                acct_tx,
+                ack_rx,
+                cmd_rx,
+                event_tx,
+                shutdown,
+                config,
+                game,
+                done_tx,
             )
         })
         .expect("spawn sim thread");
@@ -166,8 +187,25 @@ pub async fn run(
         .await?
         .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
     let _ = persist.await; // ends once the sim thread drops snap_tx
+    // Awaited explicitly: the channel buffers unwritten snapshots after the sim
+    // drops its sender, and returning before the drain would cancel them mid-write.
+    let _ = account_persist.await;
     let _ = sim.join();
     Ok(report)
+}
+
+/// Receives account snapshots and writes each in full. No ack channel: every
+/// message is the complete set, so a failed write is repaired by the next one
+/// (and the shutdown drain runs this task to empty before `run` returns).
+async fn account_persistence_task(
+    store: AccountStore,
+    mut acct_rx: UnboundedReceiver<AccountsSnapshot>,
+) {
+    while let Some(snap) = acct_rx.recv().await {
+        if let Err(e) = store.save(&snap).await {
+            tracing::error!(error = %e, "account save failed; the next full-set save heals it");
+        }
+    }
 }
 
 /// Receives snapshots, writes them, and acks. A failed save sends `Failed` (not
@@ -193,7 +231,9 @@ async fn persistence_task(
 #[allow(clippy::too_many_arguments)]
 fn sim_loop(
     loaded: Loaded,
+    account_snap: AccountsSnapshot,
     snap_tx: UnboundedSender<Snapshot>,
+    acct_tx: UnboundedSender<AccountsSnapshot>,
     ack_rx: Receiver<Ack>,
     cmd_rx: Receiver<Command>,
     event_tx: UnboundedSender<Outgoing>,
@@ -228,11 +268,11 @@ fn sim_loop(
         tracing::info!("seeded starter world");
     }
 
-    // Bring up the account authority, resolving grants against the game's caps
-    // registry. An empty snapshot bootstraps one su operator; a populated one with no
-    // su, or an unknown grant, refuses to boot rather than run mis-authorized. The
-    // durable store lands with authentication; until then every boot starts empty.
-    let accounts = match Accounts::boot(AccountsSnapshot::empty(), game.caps.clone()) {
+    // Bring up the account authority from the loaded snapshot, resolving grants
+    // against the game's caps registry. An empty snapshot bootstraps one su
+    // operator; a populated one with no su, or an unknown grant, refuses to boot
+    // rather than run mis-authorized.
+    let accounts = match Accounts::boot(account_snap, game.caps.clone()) {
         Ok(accounts) => accounts,
         Err(e) => {
             let msg = format!("account authority refused to boot: {e}");
@@ -255,6 +295,9 @@ fn sim_loop(
         }
 
         if shutdown.load(Ordering::Relaxed) {
+            // Belt and suspenders: the per-tick beat below already persisted any
+            // mutation, but a final check here costs one bool read.
+            persist_accounts(&mut dispatch, &acct_tx);
             send_snapshot(&mut world, &snap_tx, &mut pending_saves, &mut saves);
             // Block until every outstanding save (including the final one) is
             // durable. This is the one place the sim waits on the DB.
@@ -288,6 +331,10 @@ fn sim_loop(
         while let Ok(cmd) = cmd_rx.try_recv() {
             dispatch.handle(cmd, &mut world, &mut emit);
         }
+
+        // The account persist beat: commands are the only account mutators, so
+        // right after the drain is the one place a mutation can be freshly dirty.
+        persist_accounts(&mut dispatch, &acct_tx);
 
         dispatch.run_systems(&mut world, &ctx, &mut emit);
 
@@ -326,6 +373,16 @@ fn migrate_blobs(from: u32, _entities: &mut [EntityBlob]) {
     );
 }
 
+/// Send a full account snapshot to the writer task if anything mutated since the
+/// last check. Every mutator marks the authority dirty (the one choke point, so
+/// none can forget), and every save carries the complete set, so a lost or failed
+/// write is healed by the next one.
+fn persist_accounts(dispatch: &mut Dispatch, acct_tx: &UnboundedSender<AccountsSnapshot>) {
+    if dispatch.accounts.take_dirty() && acct_tx.send(dispatch.accounts.snapshot()).is_err() {
+        tracing::error!("account persistence channel closed; snapshot dropped");
+    }
+}
+
 fn apply_ack(world: &mut World, ack: Ack, pending: &mut u32) {
     *pending = pending.saturating_sub(1);
     match ack {
@@ -354,6 +411,11 @@ mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, World};
+
+    /// A fresh in-memory account store; `run` initializes its schema.
+    async fn mem_accounts() -> AccountStore {
+        AccountStore::connect("sqlite::memory:").await.unwrap()
+    }
 
     /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
     /// nothing, no systems, and a no-op `register`. The runtime, not game content,
@@ -403,9 +465,15 @@ mod tests {
             save_every: 2,
             listen_addr: None, // headless: no real socket in the lifecycle test
         };
-        let report = run(store.clone(), config, shutdown, test_game())
-            .await
-            .unwrap();
+        let report = run(
+            store.clone(),
+            mem_accounts().await,
+            config,
+            shutdown,
+            test_game(),
+        )
+        .await
+        .unwrap();
 
         // Shutdown always saves at least once, regardless of timing.
         assert!(report.saves >= 1);
@@ -448,7 +516,14 @@ mod tests {
             save_every: 1000,
             listen_addr: None,
         };
-        let result = run(store.clone(), config, shutdown, test_game()).await;
+        let result = run(
+            store.clone(),
+            mem_accounts().await,
+            config,
+            shutdown,
+            test_game(),
+        )
+        .await;
         assert!(
             result.is_err(),
             "boot should fail on an unreadable world, got: {result:?}"

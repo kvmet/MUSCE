@@ -59,10 +59,10 @@ These hold across every subsystem:
   *(Authorization built, incl. the runtime account surface; real authentication
   pending.)*
 - [accounts.md](accounts.md): the implementation half of authorization: resolving a
-  connection to a verdict at dispatch, the in-memory account authority and its store
-  seam, account identity, the runtime account mutators, and bootstrapping.
-  *(Built on the in-memory backend; real authentication and the durable backend
-  pending.)*
+  connection to a verdict at dispatch, the account authority (its own `musce_auth`
+  crate) and its relational SQLite store, account identity, the runtime account
+  mutators, and bootstrapping. *(Built, including the durable store; real
+  authentication pending.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
@@ -94,15 +94,22 @@ Built:
   actor choice game-injected), and a single command dispatcher draining the inbox each
   tick:
   lifecycle `@`-verbs to the floor, other `@`-verbs to the game's capability-gated
-  admin table, bare commands to the embodiment frame. It also owns the account
-  authority (`musce_host::auth`: the caps registry, the account records, the
-  `AccountStore` trait with a slice-1 in-memory backend, first-account-su bootstrap
-  and the last-su boot check), resolving each connection's account to an authorization
-  verdict at the dispatch seam. After draining commands it runs the game's
+  admin table, bare commands to the embodiment frame. It resolves each connection's
+  account to an authorization verdict at the dispatch seam (the authority itself
+  lives in `musce_auth`, re-exported as `musce_host::auth`), and persists account
+  mutations through an async writer task fed by the sim loop's dirty-flag beat,
+  the account analogue of the snapshot path. After draining commands it runs the game's
   injected systems (`Game.systems`) on the phase pipeline, resolving their output
   through the same audience resolver, and runs `Game.register` against a fresh
   world before load so a game's own component types deserialize and persist. Holds
   no game content; library-only (no binary).
+- `musce_auth`: the account authority as its own leaf crate, so account identity
+  can serve consumers beyond the sim host (a web or oauth frontend, admin
+  tooling). The caps registry, the account records and `AccountsSnapshot`, the
+  live `Accounts` authority (first-account-su bootstrap, the last-su boot check,
+  the runtime mutators, `verdict_for`), and the durable relational store: its own
+  SQLite database (`accounts` / `account_caps` / `meta` with the persisted
+  `next_id` high-water mark, so a deleted account's id is never reissued).
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
