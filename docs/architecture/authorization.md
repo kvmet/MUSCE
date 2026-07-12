@@ -37,6 +37,31 @@ without flying blind, the resolved permission verdict (see [accounts.md](account
 is **available to game handlers**: an inline rule can ask "is this actor su / does it
 hold cap X" and decide accordingly.
 
+**Hardcoded rule vs. data-driven scoped grant, both game-side.** The scoped checks
+already in the game (`pilot`'s "you may only pilot what you control") are *hardcoded*:
+the policy is written into the handler. A game may also want *data-driven, runtime
+admin-grantable* scoped authority ("grant builder Bob edit rights to the market zone"),
+a `(principal, capability, scope)` record an operator creates live and a handler queries.
+Both are game-side, and neither touches the engine grant set. The scope-bearing record
+persists in **game state**, parallel to the account's flat engine caps; widening the
+persisted account grant to carry a scope is the one path this boundary forbids, because
+it drags scope into the engine. The engine keeps answering only "holds cap C," and the
+game composes that verdict with a scope check it owns. The scope shapes are game data,
+resolved however the game likes: a single entity id (match), a subtree (walk
+`enclosing_locus` up to the named zone), a tag or typeclass (a component check). Nothing
+here needs a precomputed scope-label index; the containment tree is shallow and
+authorization fires on a typed command, not per tick, so the walk is cheap until a
+profile says otherwise. Building this table is deferred until a scoped verb needs it; the
+commitment recorded now is only where it lives.
+
+**Creation confers no authority, and ownership is never an engine concept.** Recording
+who created an entity is audit provenance only: it grants nothing, and the engine never
+reads it to authorize. "Ownership" (a principal with standing authority over a thing it
+made) is a MUD convention, not an engine primitive. A game that wants it (player housing,
+say) builds it on top as a scoped grant or an authorization predicate it registers, over
+the same game-side machinery above. The engine ships no owner field and no `IsOwner`
+check, so it cannot couple provenance to authority by accident.
+
 ## Capabilities, not tiers
 
 There is no `guest < builder < admin` ladder; a linear hierarchy cannot express
