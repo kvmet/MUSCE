@@ -15,19 +15,19 @@ pub fn say(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Say what?");
         return;
     }
-    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
         ctx.emit_self(EventKind::Feedback, "There is no one to hear you.");
         return;
     };
 
     let who = display_name(ctx.world, ctx.actor);
     ctx.emit_self(EventKind::Feedback, format!("You say, \"{msg}\""));
-    ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} says, \"{msg}\""));
+    ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} says, \"{msg}\""));
 }
 
 /// `tell <target> <message>`: speak privately to one person in the room. Only the
 /// sender and the target see it; the room does not overhear, by design. (The room
-/// broadcast that would carry an overhear line, `emit_room_except`, now exists and
+/// broadcast that would carry an overhear line, `emit_locus_except`, now exists and
 /// drives `wave at`; `tell` deliberately omits it to stay private.) The first
 /// consumer of `emit_entity`: the message is addressed to the target entity,
 /// resolved to its connection(s) at output time, so an unconnected target hears
@@ -67,7 +67,7 @@ pub fn tell(ctx: &mut Ctx, args: &str) {
 /// `wave`, or `wave at <someone>`: a social gesture. Bare, it waves to the room.
 /// Targeted, it is three-party: the actor, the target, and the rest of the room
 /// each read their own line, so this is the first consumer of the room broadcast
-/// that excludes a *set* (`emit_room_except`), cutting both the actor and the
+/// that excludes a *set* (`emit_locus_except`), cutting both the actor and the
 /// target from the bystander view they already saw addressed to them.
 pub fn wave(ctx: &mut Ctx, args: &str) {
     let rest = args.trim();
@@ -75,7 +75,7 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
         Some(("at", who)) => who.trim(),
         _ => rest,
     };
-    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
         ctx.emit_self(EventKind::Feedback, "There is no one to see you.");
         return;
     };
@@ -83,7 +83,7 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
 
     if query.is_empty() {
         ctx.emit_self(EventKind::Feedback, "You wave.");
-        ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} waves."));
+        ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} waves."));
         return;
     }
 
@@ -97,7 +97,7 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
     let them = display_name(ctx.world, target);
     ctx.emit_self(EventKind::Feedback, format!("You wave at {them}."));
     ctx.emit_entity(target, EventKind::Narration, format!("{who} waves at you."));
-    ctx.emit_room_except(
+    ctx.emit_locus_except(
         room,
         EventKind::Narration,
         format!("{who} waves at {them}."),

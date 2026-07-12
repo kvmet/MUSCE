@@ -88,18 +88,19 @@ impl Event {
         }
     }
 
-    /// Text aimed at everyone in a room. The sim-side audience resolver expands
+    /// Text aimed at everyone directly within a locus (a scope boundary; the
+    /// reference game's rooms are loci). The sim-side audience resolver expands
     /// this into per-connection events; net never sees it.
-    pub fn to_room(room: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
+    pub fn to_locus(locus: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
         Event {
-            to: Audience::Room(room),
+            to: Audience::Locus(locus),
             kind,
             text: text.into(),
         }
     }
 
     /// Text aimed at one entity, resolved to the connection(s) driving it. The
-    /// sim-side resolver expands this like `to_room`; if the entity drives no
+    /// sim-side resolver expands this like `to_locus`; if the entity drives no
     /// connection it reaches no one. Net never sees it.
     pub fn to_entity(entity: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
         Event {
@@ -110,14 +111,16 @@ impl Event {
     }
 }
 
-/// Who an event is for. `Entity`/`Room` are resolved to `Connection` sim-side by
+/// Who an event is for. `Entity`/`Locus` are resolved to `Connection` sim-side by
 /// the action layer's audience resolver (it needs world state and the
-/// connection-to-entity map); net only ever routes `Connection`.
+/// connection-to-entity map); net only ever routes `Connection`. A `Locus` is a
+/// scope boundary: the event reaches every connection whose actor stands directly
+/// within it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Audience {
     Connection(ConnectionId),
     Entity(EntityId),
-    Room(EntityId),
+    Locus(EntityId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

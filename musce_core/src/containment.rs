@@ -1,4 +1,4 @@
-use crate::component::Room;
+use crate::component::Locus;
 use crate::id::EntityId;
 use crate::relation::{Cascade, Relation, RelationError};
 use crate::world::World;
@@ -30,10 +30,12 @@ impl World {
         self.target_of::<Containment>(entity)
     }
 
-    /// Nearest enclosing room, walking up through any nested containers.
-    pub fn enclosing_room(&self, entity: EntityId) -> Option<EntityId> {
+    /// Nearest enclosing [`Locus`], walking up through any nested containers. The
+    /// generic scope-boundary query: no room semantics, just the closest ancestor
+    /// carrying the boundary marker.
+    pub fn enclosing_locus(&self, entity: EntityId) -> Option<EntityId> {
         self.ancestors::<Containment>(entity)
             .into_iter()
-            .find(|&a| self.has::<Room>(a))
+            .find(|&a| self.has::<Locus>(a))
     }
 }

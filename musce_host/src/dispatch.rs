@@ -156,7 +156,7 @@ mod tests {
     use crate::auth::{CapRegistry, MemoryAccountStore};
     use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Id, Room};
+    use musce_core::{Description, EntityId, Id, Locus};
     use musce_proto::{Audience, Capabilities};
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -173,7 +173,7 @@ mod tests {
         fn seed(world: &mut World) {
             let room = {
                 let mut b = EntityBuilder::new();
-                b.add(Room);
+                b.add(Locus);
                 b.add(Description("a test chamber".into()));
                 world.spawn(b)
             };
@@ -198,7 +198,7 @@ mod tests {
         fn look(ctx: &mut Ctx, _args: &str) {
             let text = ctx
                 .world
-                .enclosing_room(ctx.actor)
+                .enclosing_locus(ctx.actor)
                 .and_then(|r| {
                     ctx.world
                         .entity(r)

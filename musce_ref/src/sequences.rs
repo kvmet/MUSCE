@@ -249,13 +249,13 @@ fn fire(ctx: &mut SystemCtx, carrier: EntityId, intent: &Intent) {
                     direction,
                 } => {
                     if let Some(from) = from {
-                        ctx.emit_room(
+                        ctx.emit_locus(
                             from,
                             EventKind::Narration,
                             format!("{who} leaves {direction}."),
                         );
                     }
-                    ctx.emit_room(dest, EventKind::Narration, format!("{who} arrives."));
+                    ctx.emit_locus(dest, EventKind::Narration, format!("{who} arrives."));
                 }
                 // Blocked (a locked exit) or half-wired: a no-op beat, no narration.
                 MoveOutcome::NoDestination | MoveOutcome::Blocked(_) => {}
@@ -297,10 +297,11 @@ fn program_steps(world: &World, program: EntityId) -> Option<Vec<Step>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Item};
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, LeadsFrom, LeadsTo, Name, Room};
+    use musce_core::{Description, Locus, Name};
     use musce_proto::Audience;
     use std::time::SystemTime;
 
@@ -319,14 +320,17 @@ mod tests {
     /// No sequence attached yet; each test attaches what it exercises.
     fn fixture() -> Fixture {
         let mut world = World::new();
-        register(&mut world);
+        // The full game register: exits (`LeadsFrom`/`LeadsTo`) are game-registered
+        // now, so a world that must snapshot its exits needs the game hook, not just
+        // the local sequence types.
+        crate::systems::register(&mut world);
 
         let a = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("room A".into()));
         });
         let b = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("room B".into()));
         });
         link(&mut world, a, b, "north");
@@ -397,7 +401,7 @@ mod tests {
 
     fn room_narration(out: &[Outbound]) -> Vec<String> {
         out.iter()
-            .filter(|o| matches!(o.event.to, Audience::Room(_)))
+            .filter(|o| matches!(o.event.to, Audience::Locus(_)))
             .map(|o| o.event.text.clone())
             .collect()
     }
@@ -428,13 +432,13 @@ mod tests {
 
         // Not due before STEP: the carrier stays put.
         let out = sweep(&mut f.world, STEP as u64 - 1);
-        assert_eq!(f.world.enclosing_room(f.carrier), Some(f.a));
+        assert_eq!(f.world.enclosing_locus(f.carrier), Some(f.a));
         assert!(room_narration(&out).is_empty());
 
         // At STEP the first beat fires: the carrier moves north and the cursor and
         // schedule advance to the second step.
         let out = sweep(&mut f.world, STEP as u64);
-        assert_eq!(f.world.enclosing_room(f.carrier), Some(f.b));
+        assert_eq!(f.world.enclosing_locus(f.carrier), Some(f.b));
         let inst = instance(&f.world, f.carrier).unwrap();
         assert_eq!(inst.cursor, 1);
         assert_eq!(inst.next_at, (STEP * 2) as u64);
@@ -452,7 +456,7 @@ mod tests {
         sweep(&mut f.world, STEP as u64); // north, cursor -> 1
         sweep(&mut f.world, (STEP * 2) as u64); // south, cursor wraps -> 0
 
-        assert_eq!(f.world.enclosing_room(f.carrier), Some(f.a)); // back home
+        assert_eq!(f.world.enclosing_locus(f.carrier), Some(f.a)); // back home
         let inst = instance(&f.world, f.carrier).unwrap();
         assert_eq!(inst.cursor, 0); // looped, did not end
         assert_eq!(inst.next_at, (STEP * 3) as u64);
@@ -474,7 +478,7 @@ mod tests {
 
         sweep(&mut f.world, STEP as u64);
 
-        assert_eq!(f.world.enclosing_room(f.carrier), Some(f.b)); // it ran
+        assert_eq!(f.world.enclosing_locus(f.carrier), Some(f.b)); // it ran
         // Off the end of a one-shot: the Sequences component is removed entirely.
         assert!(!f.world.has::<Sequences>(f.carrier));
     }
@@ -535,7 +539,7 @@ mod tests {
         // Snapshot and reload into a fresh world that registers the sequence types.
         let snap = f.world.snapshot();
         let mut reloaded = World::new();
-        register(&mut reloaded);
+        crate::systems::register(&mut reloaded);
         reloaded.load(&snap.entities, snap.next_id).unwrap();
 
         // The instance (cursor, next_at, program id) round-tripped, and the program
@@ -547,7 +551,7 @@ mod tests {
 
         // Resumes mid-loop: the scheduled south beat fires in the reloaded world.
         sweep(&mut reloaded, before.next_at);
-        assert_eq!(reloaded.enclosing_room(f.carrier), Some(f.a)); // south, back to A
+        assert_eq!(reloaded.enclosing_locus(f.carrier), Some(f.a)); // south, back to A
         assert_eq!(instance(&reloaded, f.carrier).unwrap().cursor, 0); // looped
     }
 }

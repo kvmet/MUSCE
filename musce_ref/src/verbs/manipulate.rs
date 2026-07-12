@@ -26,7 +26,7 @@ pub fn take(ctx: &mut Ctx, args: &str) {
 
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_room(ctx.actor);
+    let room = ctx.world.enclosing_locus(ctx.actor);
 
     // The one structural way this fails is taking a container the actor stands
     // inside (a containment cycle); the executor rejects it and "you can't take
@@ -46,7 +46,7 @@ pub fn take(ctx: &mut Ctx, args: &str) {
 
     ctx.emit_self(EventKind::Feedback, format!("You take {name}."));
     if let Some(room) = room {
-        ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} takes {name}."));
+        ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} takes {name}."));
     }
 }
 
@@ -60,7 +60,7 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "You aren't carrying that.");
         return;
     };
-    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
         ctx.emit_self(EventKind::Feedback, "There is nowhere to drop it.");
         return;
     };
@@ -83,7 +83,7 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
     }
 
     ctx.emit_self(EventKind::Feedback, format!("You drop {name}."));
-    ctx.emit_room_except_self(room, EventKind::Narration, format!("{who} drops {name}."));
+    ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} drops {name}."));
 }
 
 /// Takeable means a movable object, not a fixture or a being: rooms and players
@@ -91,6 +91,7 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
 /// not in `execute`.
 fn is_takeable(world: &World, entity: EntityId) -> bool {
     use crate::kinds::{Creature, Player};
-    use musce_core::Room;
-    !(world.has::<Room>(entity) || world.has::<Player>(entity) || world.has::<Creature>(entity))
+    use musce_core::Locus;
+    // A locus (in this game, a room) is a fixture, not takeable.
+    !(world.has::<Locus>(entity) || world.has::<Player>(entity) || world.has::<Creature>(entity))
 }

@@ -6,6 +6,7 @@
 //! `docs/architecture/engine-and-game.md`.
 
 mod admin;
+mod exits;
 mod kinds;
 mod names;
 mod seed;

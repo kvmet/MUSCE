@@ -4,7 +4,6 @@
 pub mod component;
 pub mod containment;
 pub mod control;
-pub mod exit;
 pub mod fact;
 pub mod id;
 pub mod relation;
@@ -17,10 +16,9 @@ pub use hecs;
 // serde_json dependency.
 pub use serde_json::{Map, Value};
 
-pub use component::{ComponentBlob, Description, Id, Name, NamedComponent, RegistryError, Room};
+pub use component::{ComponentBlob, Description, Id, Locus, Name, NamedComponent, RegistryError};
 pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
-pub use exit::{LeadsFrom, LeadsTo};
 pub use fact::{DestroyCause, Fact};
 pub use id::{EntityId, EntityIndex};
 pub use relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
@@ -32,9 +30,9 @@ mod tests {
     use super::*;
     use hecs::EntityBuilder;
 
-    fn room(w: &mut World, name: &str) -> EntityId {
+    fn locus(w: &mut World, name: &str) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Room);
+        b.add(Locus);
         b.add(Description(name.into()));
         w.spawn(b)
     }
@@ -57,7 +55,7 @@ mod tests {
     #[test]
     fn containment_basic() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let sword = item(&mut w, "sword");
         w.move_entity(sword, hall).unwrap();
 
@@ -66,22 +64,22 @@ mod tests {
     }
 
     #[test]
-    fn enclosing_room_walks_up() {
+    fn enclosing_locus_walks_up() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let bag = container(&mut w, "bag");
         let coin = item(&mut w, "coin");
         w.move_entity(bag, hall).unwrap();
         w.move_entity(coin, bag).unwrap();
 
         assert_eq!(w.container_of(coin), Some(bag));
-        assert_eq!(w.enclosing_room(coin), Some(hall));
+        assert_eq!(w.enclosing_locus(coin), Some(hall));
     }
 
     #[test]
     fn moving_reparents() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let chest = container(&mut w, "chest");
         let gem = item(&mut w, "gem");
         w.move_entity(gem, hall).unwrap();
@@ -105,7 +103,7 @@ mod tests {
     #[test]
     fn despawn_reparents_contents() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let bag = container(&mut w, "bag");
         let coin = item(&mut w, "coin");
         w.move_entity(bag, hall).unwrap();
@@ -115,7 +113,7 @@ mod tests {
 
         // bag's contents spill up to the hall; bag is gone.
         assert_eq!(w.container_of(coin), Some(hall));
-        assert_eq!(w.enclosing_room(coin), Some(hall));
+        assert_eq!(w.enclosing_locus(coin), Some(hall));
         assert!(w.entity(bag).is_none());
         let mut contents = w.contents(hall);
         contents.sort();
@@ -123,51 +121,9 @@ mod tests {
     }
 
     #[test]
-    fn despawn_room_with_exits_emits_direct_and_cascade_facts() {
-        use hecs::EntityBuilder;
+    fn despawn_located_named_entity_captures_locus_and_name() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
-        // An exit leading out of the hall: a `LeadsFrom` source of the hall, so it
-        // cascades (DespawnSources) when the hall dies.
-        let exit = {
-            let mut b = EntityBuilder::new();
-            b.add(Name("north".into()));
-            w.spawn(b)
-        };
-        w.relate::<LeadsFrom>(exit, hall).unwrap();
-
-        w.despawn(hall);
-        let facts = w.take_facts();
-
-        // Order rests on reverse-index order and is not guaranteed; assert by set.
-        let room_fact = facts
-            .iter()
-            .find(|f| matches!(f, Fact::Destroyed { entity, .. } if *entity == hall))
-            .expect("a fact for the room");
-        assert!(matches!(
-            room_fact,
-            Fact::Destroyed {
-                cause: DestroyCause::Direct,
-                ..
-            }
-        ));
-        let exit_fact = facts
-            .iter()
-            .find(|f| matches!(f, Fact::Destroyed { entity, .. } if *entity == exit))
-            .expect("a fact for the cascaded exit");
-        assert!(matches!(
-            exit_fact,
-            Fact::Destroyed {
-                cause: DestroyCause::Cascade,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn despawn_located_named_entity_captures_room_and_name() {
-        let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let coin = item(&mut w, "a gold coin");
         w.move_entity(coin, hall).unwrap();
 
@@ -177,12 +133,12 @@ mod tests {
         assert_eq!(facts.len(), 1);
         let Fact::Destroyed {
             entity,
-            last_room,
+            last_locus,
             name,
             cause,
         } = &facts[0];
         assert_eq!(*entity, coin);
-        assert_eq!(*last_room, Some(hall));
+        assert_eq!(*last_locus, Some(hall));
         assert_eq!(name.as_deref(), Some("a gold coin"));
         assert_eq!(*cause, DestroyCause::Direct);
     }
@@ -207,7 +163,7 @@ mod tests {
     #[test]
     fn descendants_predicate_stops() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let bag = container(&mut w, "bag");
         let coin = item(&mut w, "coin");
         w.move_entity(bag, hall).unwrap();
@@ -266,13 +222,13 @@ mod tests {
         let before = w.index().len();
         let id = w
             .create(&serde_json::json!({
-                "room": null,
+                "locus": null,
                 "description": "a brass lamp",
             }))
             .unwrap();
 
         // The components landed, a fresh Id was assigned, and the index grew.
-        assert!(w.has::<Room>(id));
+        assert!(w.has::<Locus>(id));
         assert_eq!(w.index().len(), before + 1);
         let er = w.entity(id).unwrap();
         assert_eq!(er.get::<&Description>().unwrap().0, "a brass lamp");
@@ -284,7 +240,7 @@ mod tests {
     #[test]
     fn create_rejects_relation_tag_and_spawns_nothing() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let before = w.index().len();
 
         let err = w.create(&serde_json::json!({
@@ -321,7 +277,7 @@ mod tests {
     #[test]
     fn set_component_relation_tag_refused_and_containment_unchanged() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let chest = container(&mut w, "chest");
         let coin = item(&mut w, "coin");
         w.move_entity(coin, hall).unwrap();
@@ -385,7 +341,7 @@ mod tests {
     #[test]
     fn snapshot_roundtrip() {
         let mut w = World::new();
-        let hall = room(&mut w, "hall");
+        let hall = locus(&mut w, "hall");
         let bag = container(&mut w, "bag");
         let coin = item(&mut w, "coin");
         w.move_entity(bag, hall).unwrap();
@@ -399,10 +355,10 @@ mod tests {
         // structure survives, reverse lists rebuilt
         assert_eq!(w2.container_of(coin), Some(bag));
         assert_eq!(w2.container_of(bag), Some(hall));
-        assert_eq!(w2.enclosing_room(coin), Some(hall));
+        assert_eq!(w2.enclosing_locus(coin), Some(hall));
         assert_eq!(w2.contents(bag), vec![coin]);
         // A marker and a newtype both round-trip through the snapshot.
-        assert!(w2.has::<Room>(hall));
+        assert!(w2.has::<Locus>(hall));
         assert_eq!(
             w2.entity(coin).unwrap().get::<&Description>().unwrap().0,
             "coin"

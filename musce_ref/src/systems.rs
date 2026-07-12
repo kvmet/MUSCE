@@ -8,6 +8,7 @@
 use musce_action::SystemCtx;
 use musce_core::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
+use crate::exits::ExitQueries;
 use crate::names::display_name;
 use crate::verbs::{Health, Locked, MoveOutcome, Special, do_move};
 use musce_proto::EventKind;
@@ -32,6 +33,7 @@ pub fn register(world: &mut World) {
     world.register_component::<Special>();
     world.register_component::<Health>();
     crate::kinds::register(world);
+    crate::exits::register(world);
     crate::names::register(world);
     crate::sequences::register(world);
 }
@@ -66,7 +68,7 @@ pub fn wander(ctx: &mut SystemCtx) {
         if ctx.world.target_of::<Controls>(creature).is_some() {
             continue;
         }
-        let Some(room) = ctx.world.enclosing_room(creature) else {
+        let Some(room) = ctx.world.enclosing_locus(creature) else {
             continue;
         };
 
@@ -93,13 +95,13 @@ pub fn wander(ctx: &mut SystemCtx) {
                 // Narration is audience-resolved after the move commits, so the
                 // creature (now in `dest`) is not among the old room's hearers.
                 if let Some(from) = from {
-                    ctx.emit_room(
+                    ctx.emit_locus(
                         from,
                         EventKind::Narration,
                         format!("{who} wanders {direction}."),
                     );
                 }
-                ctx.emit_room(dest, EventKind::Narration, format!("{who} wanders in."));
+                ctx.emit_locus(dest, EventKind::Narration, format!("{who} wanders in."));
             }
             // A locked exit (or a structurally wedged one, already logged by
             // `do_move`) halts the wanderer this tick; it does not try another
@@ -117,17 +119,17 @@ pub fn wander(ctx: &mut SystemCtx) {
 /// `Description`), or a location-less one (a top-level room or box) stays silent.
 pub fn death_cry(ctx: &mut SystemCtx) {
     // `ctx.facts` is a `&[Fact]` whose lifetime outlives `ctx`, so reading it is a
-    // Copy that holds no borrow of `ctx`; the `emit_room` calls below take
+    // Copy that holds no borrow of `ctx`; the `emit_locus` calls below take
     // `&mut ctx` freely while we iterate it.
     for fact in ctx.facts {
         if let Fact::Destroyed {
             cause: DestroyCause::Direct,
-            last_room: Some(room),
+            last_locus: Some(room),
             name: Some(name),
             ..
         } = fact
         {
-            ctx.emit_room(
+            ctx.emit_locus(
                 *room,
                 EventKind::Narration,
                 format!("{name} crumbles to dust."),
@@ -139,10 +141,11 @@ pub fn death_cry(ctx: &mut SystemCtx) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Player};
     use musce_action::Outbound;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, DestroyCause, Fact, LeadsFrom, LeadsTo, Name, Room};
+    use musce_core::{Description, DestroyCause, Fact, Locus, Name};
     use musce_proto::Audience;
     use std::time::SystemTime;
 
@@ -159,11 +162,11 @@ mod tests {
         register(&mut world);
 
         let a = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("room A".into()));
         });
         let b = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("room B".into()));
         });
         link(&mut world, a, b, "north");
@@ -211,7 +214,7 @@ mod tests {
 
     fn room_narration(out: &[Outbound]) -> Vec<String> {
         out.iter()
-            .filter(|o| matches!(o.event.to, Audience::Room(_)))
+            .filter(|o| matches!(o.event.to, Audience::Locus(_)))
             .map(|o| o.event.text.clone())
             .collect()
     }
@@ -222,7 +225,7 @@ mod tests {
         let out = tick(&mut f.world, WANDER_EVERY);
 
         // It stepped from A into B.
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.b));
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.b));
 
         let lines = room_narration(&out);
         assert!(
@@ -243,7 +246,7 @@ mod tests {
         // A genuine non-multiple of WANDER_EVERY: nothing happens.
         let out = tick(&mut f.world, WANDER_EVERY + 1);
 
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.a));
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.a));
         assert!(room_narration(&out).is_empty());
     }
 
@@ -253,7 +256,7 @@ mod tests {
         // Tick 0 is a multiple of WANDER_EVERY but is boot, explicitly excluded.
         let out = tick(&mut f.world, 0);
 
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.a));
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.a));
         assert!(room_narration(&out).is_empty());
     }
 
@@ -269,7 +272,7 @@ mod tests {
         let out = tick(&mut f.world, WANDER_EVERY);
 
         // Controlled: it stays put and says nothing.
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.a));
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.a));
         assert!(room_narration(&out).is_empty());
     }
 
@@ -281,7 +284,7 @@ mod tests {
 
         let out = tick(&mut f.world, WANDER_EVERY);
 
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.b));
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.b));
         assert!(room_narration(&out).is_empty());
     }
 
@@ -301,7 +304,7 @@ mod tests {
 
         let out = tick(&mut f.world, WANDER_EVERY);
 
-        assert_eq!(f.world.enclosing_room(f.rat), Some(f.a)); // didn't move
+        assert_eq!(f.world.enclosing_locus(f.rat), Some(f.a)); // didn't move
         assert!(room_narration(&out).is_empty());
     }
 
@@ -323,7 +326,7 @@ mod tests {
         // Ids round-trip, so the original rat/room handles still address the
         // reloaded world.
         let out = tick(&mut reloaded, WANDER_EVERY);
-        assert_eq!(reloaded.enclosing_room(f.rat), Some(f.b));
+        assert_eq!(reloaded.enclosing_locus(f.rat), Some(f.b));
         assert!(
             room_narration(&out)
                 .iter()
@@ -338,7 +341,7 @@ mod tests {
         let mut f = fixture();
         let fact = Fact::Destroyed {
             entity: f.rat,
-            last_room: Some(f.a),
+            last_locus: Some(f.a),
             name: Some("a sewer rat".into()),
             cause: DestroyCause::Direct,
         };
@@ -358,7 +361,7 @@ mod tests {
         let mut f = fixture();
         let fact = Fact::Destroyed {
             entity: f.rat,
-            last_room: Some(f.a),
+            last_locus: Some(f.a),
             name: Some("a sewer rat".into()),
             cause: DestroyCause::Cascade,
         };
@@ -375,13 +378,13 @@ mod tests {
         let mut f = fixture();
         let unnamed = Fact::Destroyed {
             entity: f.rat,
-            last_room: Some(f.a),
+            last_locus: Some(f.a),
             name: None,
             cause: DestroyCause::Direct,
         };
         let unlocated = Fact::Destroyed {
             entity: f.rat,
-            last_room: None,
+            last_locus: None,
             name: Some("a sewer rat".into()),
             cause: DestroyCause::Direct,
         };

@@ -129,7 +129,7 @@ mod tests {
     use super::*;
     use crate::CapSet;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Room};
+    use musce_core::{Description, Locus};
     use musce_proto::{Audience, Event, EventKind};
 
     /// Two test verbs over the public emit API, standing in for game content so
@@ -144,9 +144,9 @@ mod tests {
 
     fn world_with_player() -> (World, Actors, EntityId, ConnectionId) {
         let mut world = World::new();
-        let room = {
+        let locus = {
             let mut b = EntityBuilder::new();
-            b.add(Room);
+            b.add(Locus);
             world.spawn(b)
         };
         let actor = {
@@ -154,7 +154,7 @@ mod tests {
             b.add(Description("an actor".into()));
             world.spawn(b)
         };
-        world.move_entity(actor, room).unwrap();
+        world.move_entity(actor, locus).unwrap();
 
         let conn = ConnectionId(1);
         let mut actors = Actors::default();

@@ -52,12 +52,12 @@ layer *below* `execute` (a destroyed room takes its exits with it via
 emitting from `execute` would catch the targeted entity and miss its collateral.
 `execute` and every verb call site therefore stay untouched.
 
-The one fact today is `Fact::Destroyed { entity, last_room, name, cause }`.
-`last_room` and `name` are a **pre-removal snapshot** (captured while the entity is
+The one fact today is `Fact::Destroyed { entity, last_locus, name, cause }`.
+`last_locus` and `name` are a **pre-removal snapshot** (captured while the entity is
 still live, between the cascade-handler loop and the index removal, because a
 reaction reads them after it is gone): `name` is the entity's `Name` handle,
-falling back to its `Description` (`None` if it carries neither), and `last_room`
-the `enclosing_room` (`None` for a top-level room or a location-less entity). `cause` is `Direct` for the
+falling back to its `Description` (`None` if it carries neither), and `last_locus`
+the `enclosing_locus` (`None` for a top-level locus or a location-less entity). `cause` is `Direct` for the
 targeted entity and `Cascade` for one swept up by a cascade; this discriminator
 lets one reaction catch every removal in a recursive `@purge` (all `Direct`) yet
 skip the collateral of a single `@destroy <room>` (room `Direct`, exits
@@ -130,11 +130,11 @@ are one `Move`:
 | `give <i> <who>` | `Move` | into `who` | recipient accepts |
 | `put <i> <c>` | `Move` | into container `c` | reachable, `c` accepts |
 | `@tel <t> <dest>` | `Move` | into `dest` | admin |
-| `@goto <t>` | `Move` | into `enclosing_room(t)` | admin |
+| `@goto <t>` | `Move` | into `enclosing_locus(t)` | admin |
 | `@summon <t>` | `Move` | into `container_of(me)` | admin |
 | `@create <kind>` | `Create` | spawn, then `Move` into my room | admin |
 | `@destroy <t>` | `Destroy` | `despawn(t)` | admin |
-| `@dig <dir> [name]` | `Create` + `Relate` | spawn a `Room`, then `Create` + `Relate` an exit entity each way | admin |
+| `@dig <dir> [name]` | `Create` + `Relate` | spawn a room (a `Locus`), then `Create` + `Relate` an exit entity each way | admin |
 
 Communication mutates nothing, so it is not in the action vocabulary: mutation
 funnels through `execute` (which emits no perception events), while output flows
@@ -229,10 +229,10 @@ minimal:
 
 Output is addressed semantically and resolved sim-side: handlers emit first-person
 feedback to the acting connection, a directed line to a specific entity, and
-third-person narration to the room excluding a set of parties (the actor alone, or
-the actor and a target both, so a directed act like `wave at` never shows either
-party the bystander view they already received). The audience resolver expands
-`Room`/`Entity` into the connections that should see it and drops the excluded
+third-person narration to the actor's locus excluding a set of parties (the actor
+alone, or the actor and a target both, so a directed act like `wave at` never shows
+either party the bystander view they already received). The audience resolver expands
+`Locus`/`Entity` into the connections that should see it and drops the excluded
 entities' connections before anything reaches net. Net is left a pure `Connection`
 pipe.
 

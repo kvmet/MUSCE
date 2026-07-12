@@ -1,10 +1,11 @@
 use super::movement::Locked;
 use super::{drop, examine, go, help, inventory, look, pilot, release, say, take, tell, wave};
+use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::{self, Scope};
 use musce_action::{Ctx, Outbound, Verdict};
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, World};
+use musce_core::{Controls, Description, EntityId, Locus, Name, World};
 use musce_proto::{Audience, ConnectionId};
 
 struct Fixture {
@@ -21,11 +22,11 @@ fn fixture() -> Fixture {
     let mut world = World::new();
 
     let hall = spawn(&mut world, |b| {
-        b.add(Room);
+        b.add(Locus);
         b.add(Description("a stone hall".into()));
     });
     let garden = spawn(&mut world, |b| {
-        b.add(Room);
+        b.add(Locus);
         b.add(Description("a quiet garden".into()));
     });
     link(&mut world, hall, garden, "north");
@@ -85,7 +86,7 @@ fn self_feedback(out: &[Outbound]) -> Vec<String> {
 
 fn room_narration(out: &[Outbound]) -> Vec<String> {
     out.iter()
-        .filter(|o| matches!(o.event.to, Audience::Room(_)))
+        .filter(|o| matches!(o.event.to, Audience::Locus(_)))
         .map(|o| o.event.text.clone())
         .collect()
 }
@@ -210,7 +211,7 @@ fn wave_at_target_is_three_party() {
     // The room gets one bystander line, cutting both parties who already saw one.
     let room: Vec<&Outbound> = out
         .iter()
-        .filter(|o| matches!(o.event.to, Audience::Room(_)))
+        .filter(|o| matches!(o.event.to, Audience::Locus(_)))
         .collect();
     assert_eq!(room.len(), 1);
     assert!(room[0].event.text.contains("waves at a stone guard"));
@@ -238,7 +239,7 @@ fn go_traverses_a_valid_exit() {
     let mut f = fixture();
     let out = run(&mut f.world, f.actor, |c| go(c, "north"));
 
-    assert_eq!(f.world.enclosing_room(f.actor), Some(f.garden));
+    assert_eq!(f.world.enclosing_locus(f.actor), Some(f.garden));
     // The auto-look on arrival shows the destination.
     assert!(
         self_feedback(&out)
@@ -252,7 +253,7 @@ fn go_invalid_exit_rejects() {
     let mut f = fixture();
     let out = run(&mut f.world, f.actor, |c| go(c, "west"));
 
-    assert_eq!(f.world.enclosing_room(f.actor), Some(f.hall)); // didn't move
+    assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // didn't move
     assert!(
         self_feedback(&out)
             .iter()
@@ -274,7 +275,7 @@ fn go_through_a_locked_exit_rejects() {
 
     let out = run(&mut f.world, f.actor, |c| go(c, "north"));
 
-    assert_eq!(f.world.enclosing_room(f.actor), Some(f.hall)); // didn't move
+    assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // didn't move
     assert!(self_feedback(&out).iter().any(|t| t.contains("locked")));
 }
 
@@ -312,10 +313,10 @@ fn help_lists_in_world_verbs() {
 #[test]
 fn say_emits_both_views_and_mutates_nothing() {
     let mut f = fixture();
-    let before = f.world.enclosing_room(f.actor);
+    let before = f.world.enclosing_locus(f.actor);
     let out = run(&mut f.world, f.actor, |c| say(c, "hello"));
 
-    assert_eq!(f.world.enclosing_room(f.actor), before);
+    assert_eq!(f.world.enclosing_locus(f.actor), before);
     assert!(
         self_feedback(&out)
             .iter()

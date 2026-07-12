@@ -62,7 +62,7 @@ boundary, addressed and typed.
 
 ```
 Event { to: Audience, kind: EventKind, .. }
-Audience  = Room(id) | Entity(id) | Connection(id)
+Audience  = Locus(id) | Entity(id) | Connection(id)
 EventKind = System | Feedback | Narration
 ```
 
@@ -85,8 +85,8 @@ no channel, which is correct until then. When the need lands, add the field and 
 
 - Showing text to a player is just emitting an Event addressed to them
   (`to: Entity(player), kind: Narration`). No actor, no action. **Audience
-  resolution is sim-side:** turning `Room`/`Entity` into the connections that
-  should see it needs world state (who is in the room) and the
+  resolution is sim-side:** turning `Locus`/`Entity` into the connections that
+  should see it needs world state (who is in the locus) and the
   connection-to-entity map, so the sim expands those audiences into
   `Connection`-addressed events before output reaches net. Net is a pure
   `Connection` pipe and never resolves audiences. (See

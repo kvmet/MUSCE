@@ -194,7 +194,7 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 - Connection lifecycle rides the command channel as `Input::Connected` /
   `Line` / `Disconnected`, so the sim has one entry point for allocating, driving,
   and tearing down a session.
-- Net handles only `Audience::Connection`. Resolving `Entity`/`Room` to the
+- Net handles only `Audience::Connection`. Resolving `Entity`/`Locus` to the
   connections that should see an event is **sim-side** (it needs world state and
   the connection-to-entity map), done by the action layer's audience resolver
   before output reaches net; net never resolves audiences and logs an error if an

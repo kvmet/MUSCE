@@ -117,7 +117,7 @@ pub async fn serve_connection<C: Connection>(
 
 /// Drain the sim's outbox and fan each message into the right connection mailbox.
 /// Net is a pure `Connection` pipe: the action layer's audience resolver expands
-/// `Entity`/`Room` into `Connection` events sim-side before they reach here, so a
+/// `Entity`/`Locus` into `Connection` events sim-side before they reach here, so a
 /// non-connection audience at this point is a bug upstream, not normal traffic.
 pub async fn route_events(mut outbox: mpsc::UnboundedReceiver<Outgoing>, registry: Registry) {
     use musce_proto::Audience;
@@ -126,7 +126,7 @@ pub async fn route_events(mut outbox: mpsc::UnboundedReceiver<Outgoing>, registr
         match out {
             Outgoing::Event(ev) => match ev.to {
                 Audience::Connection(id) => send_to(&registry, id, ConnMsg::Event(ev)),
-                Audience::Entity(_) | Audience::Room(_) => {
+                Audience::Entity(_) | Audience::Locus(_) => {
                     tracing::error!(audience = ?ev.to, "unresolved audience reached net; resolver should have expanded it");
                 }
             },

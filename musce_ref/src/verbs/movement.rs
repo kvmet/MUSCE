@@ -10,6 +10,7 @@ use musce_core::{EntityId, NamedComponent, World};
 use musce_proto::EventKind;
 
 use crate::commit_or_log;
+use crate::exits::ExitQueries;
 use crate::names::{self, Scope, display_name};
 
 use super::observe::look;
@@ -20,7 +21,7 @@ use super::observe::look;
 /// exit resolution, and the player-facing prose.
 pub fn go(ctx: &mut Ctx, dir: &str) {
     let dir = dir.trim();
-    if ctx.world.enclosing_room(ctx.actor).is_none() {
+    if ctx.world.enclosing_locus(ctx.actor).is_none() {
         ctx.emit_self(EventKind::Feedback, "You are nowhere.");
         return;
     }
@@ -45,13 +46,13 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
             // runs, against the committed world, so the actor (now in `dest`) is
             // not among the departure room's hearers.
             if let Some(from) = from {
-                ctx.emit_room_except_self(
+                ctx.emit_locus_except_self(
                     from,
                     EventKind::Narration,
                     format!("{who} leaves {direction}."),
                 );
             }
-            ctx.emit_room_except_self(dest, EventKind::Narration, format!("{who} arrives."));
+            ctx.emit_locus_except_self(dest, EventKind::Narration, format!("{who} arrives."));
             ctx.emit_self(EventKind::Feedback, format!("You go {direction}."));
             look(ctx, "");
         }
@@ -110,7 +111,7 @@ pub(crate) fn do_move(world: &mut World, actor: EntityId, exit: EntityId) -> Mov
 
     // Capture the room being left before the move commits; the caller narrates the
     // departure to it.
-    let from = world.enclosing_room(actor);
+    let from = world.enclosing_locus(actor);
     let direction = world.name_of(exit).unwrap_or_else(|| "away".to_string());
 
     // A being moving into a room cannot close a containment cycle, so this should

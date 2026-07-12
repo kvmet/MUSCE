@@ -6,7 +6,9 @@
 //! `docs/architecture/engine-and-game.md`.
 
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Controls, Description, EntityId, LeadsFrom, LeadsTo, Name, Room, World};
+use musce_core::{Controls, Description, EntityId, Locus, Name, World};
+
+use crate::exits::{LeadsFrom, LeadsTo};
 
 use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::Aliases;
@@ -176,7 +178,7 @@ fn find_player(world: &World) -> Option<EntityId> {
 
 fn room(world: &mut World, desc: &str) -> EntityId {
     spawn(world, |b| {
-        b.add(Room);
+        b.add(Locus);
         b.add(Description(desc.into()));
     })
 }
@@ -239,6 +241,7 @@ fn link(world: &mut World, from: EntityId, to: EntityId, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exits::ExitQueries;
 
     #[test]
     fn seed_links_rooms_and_places_things() {
@@ -247,7 +250,7 @@ mod tests {
 
         // The seed makes exactly one player avatar, standing in a room.
         let avatar = find_player(&w).expect("seed places a player");
-        let start = w.enclosing_room(avatar).expect("avatar is in a room");
+        let start = w.enclosing_locus(avatar).expect("avatar is in a room");
 
         // North out of the start room reaches a room.
         let north = w
@@ -277,7 +280,7 @@ mod tests {
         assert_eq!(controlled.len(), 1);
         let drone = controlled[0];
         assert_eq!(w.target_of::<Controls>(drone), Some(avatar));
-        assert_eq!(w.enclosing_room(drone), w.enclosing_room(avatar));
+        assert_eq!(w.enclosing_locus(drone), w.enclosing_locus(avatar));
     }
 
     #[test]

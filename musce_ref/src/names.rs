@@ -11,6 +11,8 @@
 use musce_core::{Description, EntityId, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
+use crate::exits::ExitQueries;
+
 /// Extra keywords a player may type to refer to an entity, beyond its `Name`
 /// (e.g. `light` for a torch). Purely a resolver convenience with no engine
 /// consumer, so it lives game-side and registers through [`register`]. Never
@@ -50,11 +52,11 @@ pub fn resolve(world: &World, actor: EntityId, scope: Scope, query: &str) -> Opt
     let candidates: Vec<EntityId> = match scope {
         Scope::Inventory => world.contents(actor),
         Scope::Room => world
-            .enclosing_room(actor)
+            .enclosing_locus(actor)
             .map(|r| world.contents(r))
             .unwrap_or_default(),
         Scope::Exits => world
-            .enclosing_room(actor)
+            .enclosing_locus(actor)
             .map(|r| world.exits_of(r))
             .unwrap_or_default(),
     };
@@ -180,9 +182,10 @@ fn name_prefix_match(name: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Exit, Item, Player};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{LeadsFrom, LeadsTo, Name, Room};
+    use musce_core::{Locus, Name};
 
     fn spawn(w: &mut World, builder: EntityBuilder) -> EntityId {
         w.spawn(builder)
@@ -210,7 +213,7 @@ mod tests {
             &mut w,
             described(
                 |b| {
-                    b.add(Room);
+                    b.add(Locus);
                 },
                 "a hall",
             ),
@@ -280,7 +283,7 @@ mod tests {
             &mut w,
             described(
                 |b| {
-                    b.add(Room);
+                    b.add(Locus);
                 },
                 "a garden",
             ),

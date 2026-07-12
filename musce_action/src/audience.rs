@@ -1,6 +1,6 @@
 //! Sim-side audience resolution. Verb handlers address output semantically (to a
-//! room, to an entity, to a connection); turning `Room`/`Entity` into the
-//! connections that should actually see it needs world state (who is in the room)
+//! locus, to an entity, to a connection); turning `Locus`/`Entity` into the
+//! connections that should actually see it needs world state (who is in the locus)
 //! and the connection<->actor map, so it happens here, before output reaches net.
 //! Net is left a pure `Connection` pipe. See `docs/architecture/actions.md`.
 
@@ -11,9 +11,9 @@ use crate::bindings::Actors;
 
 /// One handler-emitted piece of output before audience resolution. `exclude` names
 /// the entities to omit when expanding a broadcast: a verb sends the actor a
-/// first-person line directly and a third-person line to the room *except* the
+/// first-person line directly and a third-person line to the locus *except* the
 /// actor, so the actor never sees both. A directed act (A waves at B) excludes both
-/// parties from the room line, since each already got their own line. Exclusion is
+/// parties from the locus line, since each already got their own line. Exclusion is
 /// by entity, not connection, because handlers speak entities; each excluded entity
 /// resolves to its driving connection(s) here, where the `Actors` index is on hand.
 #[derive(Debug, Clone)]
@@ -40,8 +40,8 @@ impl Outbound {
 
 /// Expand one `Outbound` into `Connection`-addressed `Outgoing` events, pushing
 /// each through `emit`. A `Connection` audience passes through; `Entity` fans out
-/// to every connection driving that entity; `Room` fans out to every connection
-/// whose actor stands directly in the room.
+/// to every connection driving that entity; `Locus` fans out to every connection
+/// whose actor stands directly in the locus.
 pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl FnMut(Outgoing)) {
     let Outbound { event, exclude } = out;
 
@@ -66,8 +66,8 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
                 deliver(conn);
             }
         }
-        Audience::Room(room) => {
-            for occupant in world.contents(room) {
+        Audience::Locus(locus) => {
+            for occupant in world.contents(locus) {
                 for conn in actors.conns_for(occupant) {
                     deliver(conn);
                 }
@@ -80,7 +80,7 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
 mod tests {
     use super::*;
     use musce_core::EntityId;
-    use musce_core::Room;
+    use musce_core::Locus;
     use musce_core::hecs::EntityBuilder;
     use musce_proto::{ConnectionId, EventKind};
 
@@ -97,23 +97,23 @@ mod tests {
     }
 
     #[test]
-    fn room_event_reaches_every_connected_actor() {
+    fn locus_event_reaches_every_connected_actor() {
         let mut w = World::new();
-        let room = {
+        let locus = {
             let mut b = EntityBuilder::new();
-            b.add(Room);
+            b.add(Locus);
             w.spawn(b)
         };
         let alice = player(&mut w);
         let bob = player(&mut w);
-        w.move_entity(alice, room).unwrap();
-        w.move_entity(bob, room).unwrap();
+        w.move_entity(alice, locus).unwrap();
+        w.move_entity(bob, locus).unwrap();
 
         let mut actors = Actors::default();
         actors.bind(ConnectionId(1), alice);
         actors.bind(ConnectionId(2), bob);
 
-        let out = Outbound::new(Event::to_room(room, EventKind::Narration, "a bell rings"));
+        let out = Outbound::new(Event::to_locus(locus, EventKind::Narration, "a bell rings"));
         let events = collect(&w, &actors, out);
 
         assert_eq!(events.len(), 2);
@@ -134,22 +134,22 @@ mod tests {
     #[test]
     fn exclude_drops_the_actor() {
         let mut w = World::new();
-        let room = {
+        let locus = {
             let mut b = EntityBuilder::new();
-            b.add(Room);
+            b.add(Locus);
             w.spawn(b)
         };
         let alice = player(&mut w);
         let bob = player(&mut w);
-        w.move_entity(alice, room).unwrap();
-        w.move_entity(bob, room).unwrap();
+        w.move_entity(alice, locus).unwrap();
+        w.move_entity(bob, locus).unwrap();
 
         let mut actors = Actors::default();
         actors.bind(ConnectionId(1), alice);
         actors.bind(ConnectionId(2), bob);
 
         let out = Outbound::excluding(
-            Event::to_room(room, EventKind::Narration, "Alice waves"),
+            Event::to_locus(locus, EventKind::Narration, "Alice waves"),
             vec![alice],
         );
         let events = collect(&w, &actors, out);
@@ -164,26 +164,26 @@ mod tests {
     #[test]
     fn exclude_drops_a_set() {
         let mut w = World::new();
-        let room = {
+        let locus = {
             let mut b = EntityBuilder::new();
-            b.add(Room);
+            b.add(Locus);
             w.spawn(b)
         };
         let alice = player(&mut w);
         let bob = player(&mut w);
         let carol = player(&mut w);
-        w.move_entity(alice, room).unwrap();
-        w.move_entity(bob, room).unwrap();
-        w.move_entity(carol, room).unwrap();
+        w.move_entity(alice, locus).unwrap();
+        w.move_entity(bob, locus).unwrap();
+        w.move_entity(carol, locus).unwrap();
 
         let mut actors = Actors::default();
         actors.bind(ConnectionId(1), alice);
         actors.bind(ConnectionId(2), bob);
         actors.bind(ConnectionId(3), carol);
 
-        // Alice waves at Bob: both got their own line, so only Carol sees the room's.
+        // Alice waves at Bob: both got their own line, so only Carol sees the locus's.
         let out = Outbound::excluding(
-            Event::to_room(room, EventKind::Narration, "Alice waves at Bob"),
+            Event::to_locus(locus, EventKind::Narration, "Alice waves at Bob"),
             vec![alice, bob],
         );
         let events = collect(&w, &actors, out);

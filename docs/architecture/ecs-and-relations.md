@@ -34,16 +34,17 @@ across persistence or shard boundaries. So every entity also carries a global
 ## Kinds
 
 An entity's kind is a zero-sized marker component. This lets archetypal queries
-filter by kind, e.g. "all rooms with coordinates". The engine defines only the one
-kind it reads: `Room` (the perception boundary). Permissions are not a kind:
-authorization is account-scoped, not a marker on the actor (see
+filter by kind, e.g. "all loci with coordinates". The engine defines only the one
+kind it reads: `Locus` (the perception boundary; a scope in the containment tree
+found by `enclosing_locus`, neutral of any "room" meaning). Permissions are not a
+kind: authorization is account-scoped, not a marker on the actor (see
 [authorization.md](authorization.md)). Game kinds like
 `Item`/`Creature`/`Container`/an exit/a player avatar are game
 vocabulary and live in the game, registered through `Game.register` (see
 [engine-and-game.md](engine-and-game.md)); the engine stores them but never
-interprets them. The `Exit` marker is game-side too, even though the engine owns
-exit *connectivity* itself: an exit entity is engine-owned `LeadsFrom`/`LeadsTo`
-relations plus a game-owned kind tag (see Exits below).
+interprets them. Exit connectivity is game-side in full: an exit entity is a
+game-owned kind tag plus game-owned `LeadsFrom`/`LeadsTo` relations, defined in
+`musce_ref` over the engine's public relation layer (see Exits below).
 
 ## The relation layer
 
@@ -90,7 +91,7 @@ Rooms, containers, and inventories are all containers. See
   acyclicity and keeps both sides consistent. Because that invariant is enforced
   at the one mutation point, every recursive reader is a simple, cycle-free walk.
 - Helpers: `contents` (one level), `container_of` (immediate parent),
-  `enclosing_room` (walk up to the nearest `Room`).
+  `enclosing_locus` (walk up to the nearest `Locus`, the perception boundary).
 
 ## Control and focus
 
@@ -124,16 +125,23 @@ session resolves a driven actor (see
 > `DespawnSources` cascade) and are wired through the `Relate` action. The
 > Portal/Through door layer remains deferred.
 
-A room connects to many rooms and is reachable from many, so room connectivity is
-**many-to-many**, while the relation layer is one-to-many. We do not generalize the
-primitive for it. Connectivity is carried by an intermediate **exit entity** whose
-two endpoints are each one-to-many and so fit the existing layer exactly: an exit
-has one origin and one destination. (This is the general move for many-to-many in
-this engine: an intermediate entity, not a new relation kind.)
+The room graph is **game vocabulary**, not engine machinery: the connectivity
+relations (`LeadsFrom`/`LeadsTo`) and the exit queries live in `musce_ref`
+(`exits.rs`), defined over the engine's public relation layer and registered
+through `Game.register`, exactly like the kind markers. The engine never reads exit
+connectivity; it owns only the generic relation + cascade mechanism that
+connectivity is built on. What follows is the reference game's model.
 
-It also keeps every room cross-reference *inside* the relation layer, so there is
-no raw `EntityId` in a JSON blob invisible to the despawn cascade. As
-relation-wired entities, exits join the cascade like everything else.
+A locus connects to many loci and is reachable from many, so connectivity is
+**many-to-many**, while the relation layer is one-to-many. The game does not
+generalize the primitive for it. Connectivity is carried by an intermediate **exit
+entity** whose two endpoints are each one-to-many and so fit the existing layer
+exactly: an exit has one origin and one destination. (This is the general move for
+many-to-many in this engine: an intermediate entity, not a new relation kind.)
+
+It also keeps every cross-reference *inside* the relation layer, so there is no raw
+`EntityId` in a JSON blob invisible to the despawn cascade. As relation-wired
+entities, exits join the cascade like everything else.
 
 ### The model
 
@@ -184,8 +192,8 @@ doors exist); exits work without it.
 
 Movement through an exit is the usual validate -> mutate -> emit (see
 [actions.md](actions.md)), and the veto is a **game rule, not an engine concept**.
-The engine provides the exit entity and a home for door/lock state; it bakes in no
-lock semantics. The game's `go` handler: (1) finds the exit out of the mover's room
+The game defines the exit entity and a home for door/lock state; the engine bakes
+in no lock semantics. The game's `go` handler: (1) finds the exit out of the mover's room
 whose `Name` matches (reverse index of `LeadsFrom`, resolved through the unified
 name resolver: exact then whole-or-word prefix on the `Name`, then aliases, then a
 description substring), (2) runs a shared `can_traverse(world, mover, exit) -> Result<(),

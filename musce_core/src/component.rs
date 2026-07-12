@@ -49,17 +49,19 @@ macro_rules! marker {
     };
 }
 
-// The one kind the engine itself reasons about: `Room`, the perception boundary
-// (`enclosing_room`, `Audience::Room`, the `Fact` channel's `last_room` snapshot).
-// Kinds the engine only stores and never interprets (item, creature, container, a
-// player avatar, an exit) are game vocabulary and live in the game, registered
-// through `Game.register`; see docs/architecture/engine-and-game.md. The exit *kind
-// marker* is game vocabulary for the same reason (no engine code reads it), even
-// though the engine owns exit *connectivity* itself (the `LeadsFrom`/`LeadsTo`
-// relations in exit.rs): an exit entity is engine-owned relations plus a game-owned
-// kind tag. Permissions are no longer a marker on the actor: authorization is
-// account-scoped now (see docs/architecture/authorization.md).
-marker!(Room, "room");
+// The one kind the engine itself reasons about: `Locus`, a scope boundary in the
+// containment tree. The engine finds an entity's nearest enclosing `Locus`
+// (`enclosing_locus`) and snapshots it at destruction (the `Fact` channel's
+// `last_locus`); it assigns the boundary no further meaning. A game decides what a
+// Locus *is*: the reference game tags its rooms with it, so co-located entities in
+// a room share a perception scope, but a non-MUD application could make its loci
+// anything. Everything the engine only stores and never interprets (item,
+// creature, container, a player avatar, an exit, and the connectivity between
+// loci) is game vocabulary and lives in the game, registered through
+// `Game.register`; see docs/architecture/engine-and-game.md. Permissions are not a
+// marker on the actor: authorization is account-scoped (see
+// docs/architecture/authorization.md).
+marker!(Locus, "locus");
 
 // --- typed blob builder --------------------------------------------------
 
@@ -261,12 +263,12 @@ mod tests {
     #[test]
     fn component_blob_keys_by_tag_with_marker_null_and_newtype_inner() {
         let blob = ComponentBlob::new()
-            .with(Room)
+            .with(Locus)
             .with(Description("x".into()))
             .build();
         assert_eq!(
             blob,
-            serde_json::json!({ "room": null, "description": "x" })
+            serde_json::json!({ "locus": null, "description": "x" })
         );
     }
 }

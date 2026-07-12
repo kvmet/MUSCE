@@ -2,7 +2,7 @@
 //! handlers program against. `Ctx` carries the world a handler mutates, the actor
 //! it acts through, the connection that issued the command, and the output buffer
 //! it emits into. The emit methods address output semantically (first-person to
-//! the actor, third-person to the room with the actor or a set of parties
+//! the actor, third-person to the locus with the actor or a set of parties
 //! excluded, or directed to a specific entity); the dispatcher resolves those
 //! audiences to connections
 //! afterward. See
@@ -77,37 +77,37 @@ impl<'a> Ctx<'a> {
 
     /// Directed output to a specific entity, resolved to the connection(s) driving
     /// it at output time. If the entity drives no connection it reaches no one, the
-    /// same way narration to a room of NPCs does; the in-world act still happened.
+    /// same way narration to a locus of NPCs does; the in-world act still happened.
     pub fn emit_entity(&mut self, target: EntityId, kind: EventKind, text: impl Into<String>) {
         self.out
             .push(Outbound::new(Event::to_entity(target, kind, text)));
     }
 
-    /// Third-person output to everyone in `room` except the actor, so the actor
-    /// does not see both their own first-person line and the room's view of it.
-    pub fn emit_room_except_self(
+    /// Third-person output to everyone in `locus` except the actor, so the actor
+    /// does not see both their own first-person line and the locus's view of it.
+    pub fn emit_locus_except_self(
         &mut self,
-        room: EntityId,
+        locus: EntityId,
         kind: EventKind,
         text: impl Into<String>,
     ) {
         let actor = self.actor;
-        self.emit_room_except(room, kind, text, &[actor]);
+        self.emit_locus_except(locus, kind, text, &[actor]);
     }
 
-    /// Third-person output to everyone in `room` except the named entities. The
-    /// general form of [`Ctx::emit_room_except_self`]: a directed act (A waves at B)
-    /// gives the actor and the target each their own line, then this to the room so
+    /// Third-person output to everyone in `locus` except the named entities. The
+    /// general form of [`Ctx::emit_locus_except_self`]: a directed act (A waves at B)
+    /// gives the actor and the target each their own line, then this to the locus so
     /// neither party reads the bystander view a second time.
-    pub fn emit_room_except(
+    pub fn emit_locus_except(
         &mut self,
-        room: EntityId,
+        locus: EntityId,
         kind: EventKind,
         text: impl Into<String>,
         exclude: &[EntityId],
     ) {
         self.out.push(Outbound::excluding(
-            Event::to_room(room, kind, text),
+            Event::to_locus(locus, kind, text),
             exclude.to_vec(),
         ));
     }
@@ -161,10 +161,10 @@ impl<'a> SystemCtx<'a> {
         }
     }
 
-    /// Third-person output to everyone in `room`. A system has no first person, so
-    /// unlike [`Ctx::emit_room_except_self`] there is no actor to exclude.
-    pub fn emit_room(&mut self, room: EntityId, kind: EventKind, text: impl Into<String>) {
+    /// Third-person output to everyone in `locus`. A system has no first person, so
+    /// unlike [`Ctx::emit_locus_except_self`] there is no actor to exclude.
+    pub fn emit_locus(&mut self, locus: EntityId, kind: EventKind, text: impl Into<String>) {
         self.out
-            .push(Outbound::new(Event::to_room(room, kind, text)));
+            .push(Outbound::new(Event::to_locus(locus, kind, text)));
     }
 }

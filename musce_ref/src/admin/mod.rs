@@ -12,7 +12,9 @@
 //! new id so a builder can chain commands.
 
 use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{ComponentBlob, Controls, Description, EntityId, Name, Room, Value, World};
+use musce_core::{ComponentBlob, Controls, Description, EntityId, Locus, Name, Value, World};
+
+use crate::exits::ExitQueries;
 use musce_host::auth::CapRegistry;
 use musce_proto::EventKind;
 
@@ -92,7 +94,7 @@ pub fn goto(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, bad_ref());
         return;
     };
-    let Some(room) = ctx.world.enclosing_room(target) else {
+    let Some(room) = ctx.world.enclosing_locus(target) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("#{} has no location to go to. Did you mean @tel?", target.0),
@@ -151,7 +153,7 @@ pub fn create(ctx: &mut Ctx, args: &str) {
         );
         return;
     };
-    let Some(room) = ctx.world.enclosing_room(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere to create it.");
         return;
     };
@@ -200,7 +202,7 @@ pub fn dig(ctx: &mut Ctx, args: &str) {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("a freshly dug passage");
-    let Some(here) = ctx.world.enclosing_room(ctx.actor) else {
+    let Some(here) = ctx.world.enclosing_locus(ctx.actor) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere to dig from.");
         return;
     };
@@ -499,7 +501,7 @@ fn kind_blob(kind: &str) -> Option<Value> {
 
 fn room_blob(name: &str) -> Value {
     ComponentBlob::new()
-        .with(Room)
+        .with(Locus)
         .with(Description(name.into()))
         .build()
 }

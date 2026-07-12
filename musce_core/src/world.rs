@@ -3,11 +3,10 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::component::{
-    ComponentRegistry, Description, Id, Name, NamedComponent, RegistryError, Room,
+    ComponentRegistry, Description, Id, Locus, Name, NamedComponent, RegistryError,
 };
 use crate::containment::Containment;
 use crate::control::{Controls, Focus};
-use crate::exit::{LeadsFrom, LeadsTo};
 use crate::fact::{DestroyCause, Fact};
 use crate::id::{EntityId, EntityIndex};
 use crate::relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
@@ -69,12 +68,10 @@ impl World {
         self.register_component::<Id>();
         self.register_component::<Description>();
         self.register_component::<Name>();
-        self.register_component::<Room>();
+        self.register_component::<Locus>();
         self.register_relation::<Containment>();
         self.register_relation::<Controls>();
         self.register_relation::<Focus>();
-        self.register_relation::<LeadsFrom>();
-        self.register_relation::<LeadsTo>();
     }
 
     // --- registration ----------------------------------------------------
@@ -146,19 +143,19 @@ impl World {
         // Snapshot what a reaction needs before the entity leaves the world. It is
         // still live here: a cascade handler may have detached it from a target's
         // reverse list, but never strips its own forward `Containment` link, its
-        // `Name`, or its `Description`, so `enclosing_room` and the name still
+        // `Name`, or its `Description`, so `enclosing_locus` and the name still
         // resolve. After `index.remove` below they would not. The name is the
         // entity's `Name` handle, falling back to its `Description` for content
         // that carries only prose (a quick-create thing), mirroring how the game
         // displays it; `None` if it has neither.
-        let last_room = self.enclosing_room(id);
+        let last_locus = self.enclosing_locus(id);
         let name = self.name_of(id).or_else(|| {
             self.entity(id)
                 .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
         });
         self.emit_fact(Fact::Destroyed {
             entity: id,
-            last_room,
+            last_locus,
             name,
             cause,
         });
@@ -176,6 +173,12 @@ impl World {
     /// before running systems; facts not drained leak into the next tick.
     pub fn take_facts(&mut self) -> Vec<Fact> {
         std::mem::take(&mut self.facts)
+    }
+
+    /// An entity's name token, if it has one. Reads the general `Name` component;
+    /// the despawn snapshot above is one user, game name resolution is another.
+    pub fn name_of(&self, entity: EntityId) -> Option<String> {
+        self.entity(entity)?.get::<&Name>().map(|n| n.0.clone())
     }
 
     pub fn has<C: hecs::Component>(&self, id: EntityId) -> bool {

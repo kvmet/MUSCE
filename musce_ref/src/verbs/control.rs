@@ -24,7 +24,7 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
 
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, character);
-    let room = ctx.world.enclosing_room(character);
+    let room = ctx.world.enclosing_locus(character);
 
     // The control rule lives in `set_focus`: the cursor may only land on something
     // the character controls (transitively, so deep chains pilot too). A reject is
@@ -36,7 +36,7 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
 
     ctx.emit_self(EventKind::Feedback, format!("You take control of {name}."));
     if let Some(room) = room {
-        ctx.emit_room_except_self(
+        ctx.emit_locus_except_self(
             room,
             EventKind::Narration,
             format!("{who} goes still, eyes distant."),
@@ -55,7 +55,7 @@ pub fn release(ctx: &mut Ctx, _args: &str) {
 
     let name = display_name(ctx.world, piloted);
     let who = display_name(ctx.world, character);
-    let room = ctx.world.enclosing_room(character);
+    let room = ctx.world.enclosing_locus(character);
 
     ctx.world.clear_focus(character);
 
@@ -64,7 +64,7 @@ pub fn release(ctx: &mut Ctx, _args: &str) {
         format!("You release {name} and return to yourself."),
     );
     if let Some(room) = room {
-        ctx.emit_room_except_self(
+        ctx.emit_locus_except_self(
             room,
             EventKind::Narration,
             format!("{who} stirs and looks around."),

@@ -97,12 +97,12 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
 
     let who = display_name(ctx.world, ctx.actor);
     let them = display_name(ctx.world, target);
-    let room = ctx.world.enclosing_room(ctx.actor);
+    let room = ctx.world.enclosing_locus(ctx.actor);
 
     if killed {
         ctx.emit_self(EventKind::Feedback, format!("You strike {them} down!"));
         if let Some(room) = room {
-            ctx.emit_room_except_self(
+            ctx.emit_locus_except_self(
                 room,
                 EventKind::Narration,
                 format!("{who} strikes {them} down."),
@@ -129,7 +129,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
         if let Some(room) = room {
             // Three-party like `wave at`: actor and target each read their own line,
             // so cut both from the room's bystander view.
-            ctx.emit_room_except(
+            ctx.emit_locus_except(
                 room,
                 EventKind::Narration,
                 format!("{who} hits {them}."),
@@ -154,7 +154,7 @@ mod tests {
     use crate::kinds::{Creature, Item, Player};
     use musce_action::{Ctx, Outbound, Verdict};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Fact, Name, Room, World};
+    use musce_core::{Description, EntityId, Fact, Locus, Name, World};
     use musce_proto::{Audience, ConnectionId};
 
     struct Fixture {
@@ -169,7 +169,7 @@ mod tests {
         let mut world = World::new();
 
         let room = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("a bare room".into()));
         });
         let actor = spawn(&mut world, |b| {
@@ -246,7 +246,7 @@ mod tests {
         );
         assert!(
             out.iter()
-                .any(|o| matches!(o.event.to, Audience::Room(r) if r == f.room)
+                .any(|o| matches!(o.event.to, Audience::Locus(r) if r == f.room)
                     && o.event.text.contains("a fighter hits a giant rat"))
         );
     }

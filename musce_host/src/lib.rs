@@ -351,7 +351,7 @@ fn send_snapshot(
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Room, World};
+    use musce_core::{Description, Locus, World};
 
     /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
     /// nothing, no systems, and a no-op `register`. The runtime, not game content,
@@ -378,7 +378,7 @@ mod tests {
         {
             let mut w = World::new();
             let mut b = EntityBuilder::new();
-            b.add(Room);
+            b.add(Locus);
             let hall = w.spawn(b);
             let mut b = EntityBuilder::new();
             b.add(Description("a thing".into()));

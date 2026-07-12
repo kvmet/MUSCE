@@ -4,7 +4,7 @@ use super::*;
 use crate::kinds::{Container, Creature, Item, Player};
 use musce_action::{Outbound, Verdict};
 use musce_core::hecs::EntityBuilder;
-use musce_core::{Description, Room};
+use musce_core::{Description, Locus};
 use musce_proto::{Audience, ConnectionId};
 
 fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
@@ -31,7 +31,7 @@ fn world_with_builder() -> (World, EntityId, EntityId) {
     let hall = described(
         &mut w,
         |b| {
-            b.add(Room);
+            b.add(Locus);
         },
         "a stone hall",
     );
@@ -104,7 +104,7 @@ fn goto_travels_to_the_room_a_thing_is_in() {
     let cellar = described(
         &mut w,
         |b| {
-            b.add(Room);
+            b.add(Locus);
         },
         "a damp cellar",
     );
@@ -119,7 +119,7 @@ fn goto_travels_to_the_room_a_thing_is_in() {
 
     run(&mut w, builder, |c| goto(c, &re(lamp)));
 
-    assert_eq!(w.enclosing_room(builder), Some(cellar));
+    assert_eq!(w.enclosing_locus(builder), Some(cellar));
 }
 
 #[test]
@@ -128,14 +128,14 @@ fn goto_refuses_a_thing_with_no_location() {
     let void = described(
         &mut w,
         |b| {
-            b.add(Room);
+            b.add(Locus);
         },
         "a void",
     ); // top-level room
 
     let out = run(&mut w, builder, |c| goto(c, &re(void)));
 
-    assert_eq!(w.enclosing_room(builder), Some(hall)); // did not move
+    assert_eq!(w.enclosing_locus(builder), Some(hall)); // did not move
     assert!(
         feedback(&out)
             .iter()
@@ -149,7 +149,7 @@ fn summon_brings_a_thing_to_you_from_anywhere() {
     let far = described(
         &mut w,
         |b| {
-            b.add(Room);
+            b.add(Locus);
         },
         "a far room",
     );
@@ -204,7 +204,7 @@ fn dig_creates_a_room_with_reciprocal_exits() {
     run(&mut w, builder, |c| dig(c, "north a winding stair"));
 
     let new = exit_to(&w, hall, "north").expect("north exit added to here");
-    assert!(w.has::<Room>(new));
+    assert!(w.has::<Locus>(new));
     assert_eq!(exit_to(&w, new, "south"), Some(hall)); // reciprocal back
 }
 

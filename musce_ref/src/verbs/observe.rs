@@ -6,6 +6,7 @@ use musce_action::Ctx;
 use musce_core::{Description, EntityId, World};
 use musce_proto::EventKind;
 
+use crate::exits::ExitQueries;
 use crate::kinds::Container;
 use crate::names::{self, display_name, short_name};
 
@@ -89,7 +90,7 @@ pub fn inventory(ctx: &mut Ctx, _args: &str) {
 /// it. Shared by `look` and the auto-look on arrival. `None` if the viewer is not
 /// in a room.
 fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
-    let room = world.enclosing_room(viewer)?;
+    let room = world.enclosing_locus(viewer)?;
 
     let mut s = description_or(world, room, "An indistinct space.");
 

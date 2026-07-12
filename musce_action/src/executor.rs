@@ -86,8 +86,8 @@ impl std::error::Error for ExecError {
 /// which the action's source is expected to have already ruled out.
 ///
 /// Structural facts are not emitted here. A mutation can cascade through the
-/// relation layer *below* `execute` (a destroyed room takes its exits with it), so
-/// facts are emitted at the `World` mutator layer (`despawn`), which is the only
+/// relation layer *below* `execute` (a despawn may take related entities with it),
+/// so facts are emitted at the `World` mutator layer (`despawn`), which is the only
 /// place that observes those cascade removals; `execute` stays untouched. A fact
 /// is a typed observation (`Fact::Destroyed`), **not** a perception `Event`, read
 /// by reaction systems via `SystemCtx::facts`. See `docs/architecture/actions.md`.
@@ -129,11 +129,11 @@ pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError>
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Controls, Description, Map, MutateError, Room};
+    use musce_core::{Controls, Description, Locus, Map, MutateError};
 
-    fn room(w: &mut World) -> EntityId {
+    fn locus(w: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();
-        b.add(Room);
+        b.add(Locus);
         w.spawn(b)
     }
 
@@ -148,12 +148,12 @@ mod tests {
         w.spawn(EntityBuilder::new())
     }
 
-    /// A component blob `{ "room": null, "description": <desc> }`, built through
+    /// A component blob `{ "locus": null, "description": <desc> }`, built through
     /// the re-exported JSON types (the action layer has no serde_json of its own).
-    /// `room` stands in as a core-registered marker so `create` accepts the blob.
-    fn room_blob(desc: &str) -> Value {
+    /// `locus` stands in as a core-registered marker so `create` accepts the blob.
+    fn locus_blob(desc: &str) -> Value {
         let mut m = Map::new();
-        m.insert("room".into(), Value::Null);
+        m.insert("locus".into(), Value::Null);
         m.insert("description".into(), Value::String(desc.into()));
         Value::Object(m)
     }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn move_commits() {
         let mut w = World::new();
-        let hall = room(&mut w);
+        let hall = locus(&mut w);
         let sword = item(&mut w);
 
         execute(
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn move_missing_entity_is_exec_error() {
         let mut w = World::new();
-        let hall = room(&mut w);
+        let hall = locus(&mut w);
         let ghost = EntityId(9999); // never spawned
 
         let err = execute(
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn move_returns_its_subject() {
         let mut w = World::new();
-        let hall = room(&mut w);
+        let hall = locus(&mut w);
         let sword = item(&mut w);
         let subject = execute(
             &mut w,
@@ -233,12 +233,12 @@ mod tests {
         let id = execute(
             &mut w,
             Action::Create {
-                components: room_blob("a torch"),
+                components: locus_blob("a torch"),
             },
         )
         .unwrap();
 
-        assert!(w.has::<Room>(id));
+        assert!(w.has::<Locus>(id));
         assert_eq!(
             w.entity(id).unwrap().get::<&Description>().unwrap().0,
             "a torch"
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn destroy_removes_entity_and_reparents_contents() {
         let mut w = World::new();
-        let hall = room(&mut w);
+        let hall = locus(&mut w);
         let bag = container(&mut w);
         let coin = item(&mut w);
         w.move_entity(bag, hall).unwrap();

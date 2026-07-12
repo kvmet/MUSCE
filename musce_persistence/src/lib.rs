@@ -195,14 +195,14 @@ impl Persistence for SqliteStore {
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Room, World};
+    use musce_core::{Description, Locus, World};
 
     #[tokio::test]
     async fn save_load_roundtrip() {
         // Build a world: hall contains bag contains coin.
         let mut w = World::new();
         let mut b = EntityBuilder::new();
-        b.add(Room);
+        b.add(Locus);
         b.add(Description("hall".into()));
         let hall = w.spawn(b);
 
@@ -234,9 +234,9 @@ mod tests {
         // Structure and reverse lists survive the DB round-trip.
         assert_eq!(w2.container_of(coin), Some(bag));
         assert_eq!(w2.container_of(bag), Some(hall));
-        assert_eq!(w2.enclosing_room(coin), Some(hall));
+        assert_eq!(w2.enclosing_locus(coin), Some(hall));
         assert_eq!(w2.contents(bag), vec![coin]);
-        assert!(w2.has::<Room>(hall));
+        assert!(w2.has::<Locus>(hall));
         assert_eq!(
             w2.entity(bag).unwrap().get::<&Description>().unwrap().0,
             "bag"

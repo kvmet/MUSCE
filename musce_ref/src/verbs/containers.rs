@@ -47,7 +47,7 @@ pub fn put(ctx: &mut Ctx, args: &str) {
     let item_name = display_name(ctx.world, item);
     let container_name = display_name(ctx.world, container);
     let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_room(ctx.actor);
+    let room = ctx.world.enclosing_locus(ctx.actor);
 
     // Putting a held container into itself would cycle; the executor rejects it and
     // "you can't put that there" is the right thing for the player to hear.
@@ -69,7 +69,7 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         format!("You put {item_name} in {container_name}."),
     );
     if let Some(room) = room {
-        ctx.emit_room_except_self(
+        ctx.emit_locus_except_self(
             room,
             EventKind::Narration,
             format!("{who} puts {item_name} in {container_name}."),
@@ -112,7 +112,7 @@ pub fn give(ctx: &mut Ctx, args: &str) {
     let item_name = display_name(ctx.world, item);
     let them = display_name(ctx.world, recipient);
     let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_room(ctx.actor);
+    let room = ctx.world.enclosing_locus(ctx.actor);
 
     // The recipient is a being in the room, not something the held item contains,
     // so this move cannot cycle and has no reachable structural failure; a bug here
@@ -139,7 +139,7 @@ pub fn give(ctx: &mut Ctx, args: &str) {
         format!("{who} gives you {item_name}."),
     );
     if let Some(room) = room {
-        ctx.emit_room_except(
+        ctx.emit_locus_except(
             room,
             EventKind::Narration,
             format!("{who} gives {item_name} to {them}."),
@@ -177,7 +177,7 @@ mod tests {
     use crate::kinds::{Container, Creature, Item, Player};
     use musce_action::{Ctx, Outbound, Verdict};
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Name, Room, World};
+    use musce_core::{Description, EntityId, Locus, Name, World};
     use musce_proto::{Audience, ConnectionId};
 
     struct Fixture {
@@ -194,7 +194,7 @@ mod tests {
     fn fixture() -> Fixture {
         let mut world = World::new();
         let room = spawn(&mut world, |b| {
-            b.add(Room);
+            b.add(Locus);
             b.add(Description("a bare room".into()));
         });
         let actor = spawn(&mut world, |b| {
@@ -261,7 +261,7 @@ mod tests {
                 .any(|t| t == "You put a copper coin in a wooden chest.")
         );
         assert!(out.iter().any(|o| {
-            matches!(o.event.to, Audience::Room(r) if r == f.room)
+            matches!(o.event.to, Audience::Locus(r) if r == f.room)
                 && o.event
                     .text
                     .contains("a fighter puts a copper coin in a wooden chest")
@@ -328,7 +328,7 @@ mod tests {
                     && o.event.text.contains("a fighter gives you a copper coin"))
         );
         assert!(out.iter().any(|o| {
-            matches!(o.event.to, Audience::Room(r) if r == f.room)
+            matches!(o.event.to, Audience::Locus(r) if r == f.room)
                 && o.event
                     .text
                     .contains("a fighter gives a copper coin to a giant rat")

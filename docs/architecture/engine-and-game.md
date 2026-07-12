@@ -85,8 +85,11 @@ musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
   precede deserialization. Engine types register themselves in `World::new`; this
   is where a game adds its own, so they round-trip through persistence like any
   built-in. The reference game registers its kind markers (`item`, `creature`,
-  `container`, a player avatar, an exit) and its behavior components (`Wander`,
-  `Locked`, `Aliases`, the sequence types) here.
+  `container`, a player avatar, an exit), its exit-connectivity relations
+  (`LeadsFrom`/`LeadsTo`), and its behavior components (`Wander`, `Locked`,
+  `Aliases`, the sequence types) here. A game-defined relation must be registered
+  before any world that uses it is built or loaded, since registration is what
+  wires its serialization and cascade; `register` runs before load and seed.
 - **`caps: CapRegistry`** the game's capability vocabulary, interned to `CapId`s as
   it wires its `Gate::Cap` gates. The runtime resolves account grant strings against
   this same registry (see [authorization.md](authorization.md)). Empty for a game
@@ -98,24 +101,31 @@ The engine defines a component only when engine code *reads* it. Everything else
 is game vocabulary and lives in the game, registered through `register` above. So
 `Item`/`Creature`/`Container`/`Player`/`Exit` are not engine types: the engine
 stores them but never interprets them (containment holds any entity in any entity;
-what counts as a takeable "item" or a fillable "container" is a game rule). `Exit`
-is the subtle case: the engine owns exit *connectivity* (the `LeadsFrom`/`LeadsTo`
-relations are engine mechanism the despawn cascade reads), but the *kind marker* is
-read only by game rules (`go`, `is_takeable`), so an exit entity is engine-owned
-relations plus a game-owned kind tag. A game built on the engine defines its own
-kinds the same way, without modifying it.
+what counts as a takeable "item" or a fillable "container" is a game rule). The
+whole room graph is game vocabulary too, and it holds together: the reference game
+owns both the room-as-place kind and the connectivity between rooms. Exit
+*connectivity* (the `LeadsFrom`/`LeadsTo` relations) is defined in `musce_ref` over
+the engine's public relation layer and cascades like any other game relation; no
+engine code reads it. A game built on the engine defines its own kinds and
+relations the same way, without modifying it.
 
 One kind stays in core, and not by accident: it *is* the engine's model.
 
-- **`Room`** is the perception boundary. `enclosing_room`, `Audience::Room`, and
-  the `Fact` channel's `last_room` snapshot are all room-scoped, because MUSCE is a
-  room-based substrate.
+- **`Locus`** is the perception boundary: a scope in the containment tree that the
+  engine finds (`enclosing_locus`) and snapshots at destruction (the `Fact`
+  channel's `last_locus`). It is neutral. The engine assigns it no further meaning;
+  the reference game tags its rooms with it, so co-located things in a room share a
+  scope, but a non-MUD application (a data store with logic) could make its loci
+  anything. This is the one world-model commitment the engine makes, and it is
+  load-bearing: `enclosing_locus` and the audience resolver read it. "Room" is not
+  an engine word.
 
 Permissions are *not* such a kind: authorization is account-scoped, resolved to a
 verdict at dispatch, not a marker the engine reads off the actor (see
-[authorization.md](authorization.md)). A game wanting a non-room world would need the
-engine to grow a parameterization seam (a game-supplied perception boundary); it is
-not built, because it is not needed yet. That room assumption is the one deliberate
+[authorization.md](authorization.md)). A game whose perception is not
+containment-hierarchical (a coordinate grid, a radius) would need the engine to
+grow a parameterization seam (a game-supplied scope function); it is not built,
+because it is not needed yet. The containment-scoped `Locus` is the one deliberate
 model assumption the "a game never modifies the engine" rule is scoped within.
 
 A plain struct of values plus fn pointers, matching the style the command and
@@ -154,7 +164,7 @@ moving files.
 Name resolution leaves the engine entirely. Matching a typed noun against
 descriptions is opinionated, English-leaning policy, so it lives in `musce_ref`
 over the world queries the engine already exposes (`contents`, `container_of`,
-`enclosing_room`, component access). The engine owns no naming.
+`enclosing_locus`, component access). The engine owns no naming.
 
 ## What moves where
 
@@ -164,7 +174,9 @@ over the world queries the engine already exposes (`contents`, `container_of`,
 | `CommandTable` lookup + `register`, `Gate` | `musce_action` (engine) |
 | `Ctx` + public emit API, the handler type | `musce_action` (engine) |
 | audience resolver, `Outbound`, `Actors` | `musce_action` (engine) |
+| `Locus` (perception boundary), `enclosing_locus`, containment, the relation layer | `musce_core` (engine) |
 | the runtime, `run`, the `Game` type, the floor | `musce_host` (engine) |
+| exit connectivity (`LeadsFrom`/`LeadsTo`, `exits_of`) | `musce_ref` (game) |
 | verbs (`look`/`go`/`take`/`drop`/`say`) + parsing | `musce_ref` (game) |
 | admin/builder verbs (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`) | `musce_ref` (game) |
 | `Gate` tiers, `dispatch_command`, the admin frame | `musce_action`/`musce_host` (engine) |
