@@ -92,7 +92,8 @@ impl Dispatch {
                 id,
                 rest,
                 world,
-                &self.accounts,
+                &mut self.accounts,
+                &self.game.caps,
                 self.game.choose_actor,
                 emit,
             ) {
@@ -549,6 +550,56 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("aren't allowed")),
             "the guest is refused driving the same body, got: {guest_out:?}"
+        );
+    }
+
+    /// The composable model end to end through the router: the operator creates a
+    /// builder account and grants it the (quellable) poke cap; a second connection
+    /// logs in as the builder, passes the gated verb, and loses it under `@quell`.
+    /// The whole point of the account surface: a non-su account holding a real cap,
+    /// reachable by login, with quell dropping the elevated grant.
+    #[test]
+    fn a_granted_builder_runs_a_gated_verb_and_quell_drops_it() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = dispatcher(game);
+
+        // The operator mints a builder account and grants it poke.
+        let op = ConnectionId(1);
+        connect(&mut d, &mut world, op);
+        line(&mut d, &mut world, op, "@operator");
+        line(&mut d, &mut world, op, "@account new builder");
+        line(&mut d, &mut world, op, "@grant builder poke");
+
+        // A second connection logs in as the builder and takes the seeded body.
+        let builder = ConnectionId(2);
+        connect(&mut d, &mut world, builder);
+        line(&mut d, &mut world, builder, "@login builder");
+        line(&mut d, &mut world, builder, "@play");
+
+        let ok = line(&mut d, &mut world, builder, "@poke");
+        assert!(
+            conn_texts(&ok).iter().any(|t| t.contains("poked")),
+            "the granted builder passes the gated verb, got: {ok:?}"
+        );
+
+        // Quell sets aside the quellable poke cap: refused.
+        line(&mut d, &mut world, builder, "@quell");
+        let refused = line(&mut d, &mut world, builder, "@poke");
+        assert!(
+            conn_texts(&refused)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "a quelled builder loses its elevated cap, got: {refused:?}"
+        );
+
+        // Un-quell restores it.
+        line(&mut d, &mut world, builder, "@quell");
+        let restored = line(&mut d, &mut world, builder, "@poke");
+        assert!(
+            conn_texts(&restored).iter().any(|t| t.contains("poked")),
+            "un-quelled, the cap is back, got: {restored:?}"
         );
     }
 }

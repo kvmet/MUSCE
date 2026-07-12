@@ -30,6 +30,12 @@ impl CapSet {
         self.0.insert(cap)
     }
 
+    /// Remove a capability; returns whether it was present. The account layer's
+    /// revoke path uses it to drop a grant without rebuilding the whole set.
+    pub fn remove(&mut self, cap: CapId) -> bool {
+        self.0.remove(&cap)
+    }
+
     /// Whether this set holds `cap`.
     pub fn contains(&self, cap: CapId) -> bool {
         self.0.contains(&cap)

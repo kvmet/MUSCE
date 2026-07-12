@@ -1,12 +1,14 @@
 # Authorization: capabilities, superuser, and quell
 
-> Status: **slice 1 (authorization) built; slice 2 (authentication) not started.**
-> The capability model, the superuser bit, `@quell`, and the account authority are
-> live: `Gate` is `Open | Cap` in `musce_action`, the authority resolves a
-> connection's account to a verdict at the dispatch seam, and the reference game
-> re-gates its admin verbs on capabilities. What remains for slice 2 is real
-> authentication (passwords, tokens, oauth) behind the same store seam; until then a
-> connection is a guest unless it elevates through the loopback-only `@operator` stub.
+> Status: **authorization built (including quellable caps and the runtime account
+> surface); real authentication not started.** The capability model, the superuser
+> bit, `@quell` (dropping su *and* elevated caps), the account authority, and the
+> operator's `@account`/`@grant`/`@revoke` verbs are live: `Gate` is `Open | Cap` in
+> `musce_action`, the authority resolves a connection's account to a verdict at the
+> dispatch seam, and the reference game re-gates its admin verbs on capabilities. What
+> remains is real authentication (passwords, tokens, oauth) behind the same store
+> seam; until then a connection elevates through the loopback-only `@operator`/`@login`
+> stubs.
 
 This covers the permission **model**: **who may do what**. The account as the bearer
 of permissions, the capability model that gates verbs, the superuser bit, and how to
@@ -118,23 +120,24 @@ not an escalation (it is the operator's own account), and is documented rather t
 prevented. Reconnect resetting the flag is the never-locked-out guarantee, so quell
 is deliberately *not* account-durable session state that survives disconnect.
 
-Suppressing su is what slice 1 builds. **Quell also dropping elevated capabilities is
-a locked design, deferred to slice 2.** A `build` cap is elevated authority a builder
-sets aside for the same reason su is: to verify how the game plays for a normal
-account (that a non-builder genuinely cannot build), so quell should drop it too. The
-mechanism: each capability carries a **quellable** flag, default quellable, so the
-common admin cap drops on quell with no configuration; a rare baseline right (a
-`member` cap gating member areas) opts out, so quelling still shows the *member's*
-view rather than a bare guest's. `verdict_for` removes the quellable caps from a
-quelled connection's verdict, so `Gate::Cap` **and** a game's inline `ctx.has_cap`
-respect it with no per-handler quell check. It defers to slice 2 because a non-su
-account that actually *holds* a cap (and a way to log in as it) only exists once the
-grant/login surface does; it is a pure addition (the verdict shape and the persisted
-record are unchanged, and `register_cap` keeps its signature since caps default
-quellable), so nothing is lost by landing it alongside that surface, and the
-falsifying test (log in as a builder, quell, `@create` refused, un-quell, allowed)
-becomes expressible exactly then. A still-finer grain (per control-stack, an arbitrary
-reduced grant set) stays deferred with no consumer.
+Suppressing su is not the whole of it: **quell also drops elevated capabilities.** A
+`build` cap is elevated authority a builder sets aside for the same reason su is: to
+verify how the game plays for a normal account (that a non-builder genuinely cannot
+build), so quell drops it too. The mechanism: each capability carries a **quellable**
+flag, default quellable, so the common admin cap drops on quell with no configuration;
+a rare baseline right (a `member` cap gating member areas) opts out via
+`register_baseline_cap`, so quelling still shows the *member's* view rather than a bare
+guest's. The authority keeps each account's non-quellable **baseline** set apart from
+its full set at load, and `verdict_for` returns the baseline (and no su) for a quelled
+connection, so `Gate::Cap` **and** a game's inline `ctx.has_cap` respect it with no
+per-handler quell check. It is a pure addition: the verdict shape `{ caps, su_override }`
+and the persisted record are unchanged, and `register_cap` keeps its signature since
+caps default quellable. It landed with the runtime account surface (the operator's
+`@account`/`@grant` verbs plus the `@login` stub) that first made a non-su account
+holding a cap reachable; the falsifying flow (log in as a builder, quell, `@create`
+refused, un-quell, allowed) is exercised end to end by the reference game's
+`a_granted_builder_creates_until_quelled` session test. A still-finer grain (per
+control-stack, an arbitrary reduced grant set) stays deferred with no consumer.
 
 `@quell` is a **floor command handled in the host loop, like `@quit`**, not a
 `CommandTable` entry: it writes host-only `Session` state, which a `CommandTable`

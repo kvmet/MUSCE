@@ -54,11 +54,14 @@ These hold across every subsystem:
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
 - [authorization.md](authorization.md): the permission model that replaced the
-  `Staff` gate: account-scoped capabilities, the superuser account bit, `@quell`, and
-  the out-of-band boundaries on su. *(Slice 1 built; slice 2 authentication pending.)*
+  `Staff` gate: account-scoped capabilities, the superuser account bit, `@quell`
+  (dropping su and quellable caps), and the out-of-band boundaries on su.
+  *(Authorization built, incl. the runtime account surface; real authentication
+  pending.)*
 - [accounts.md](accounts.md): the implementation half of authorization: resolving a
   connection to a verdict at dispatch, the in-memory account authority and its store
-  seam, account identity, and bootstrapping. *(Slice 1 built; slice 2 authentication
+  seam, account identity, the runtime account mutators, and bootstrapping.
+  *(Built on the in-memory backend; real authentication and the durable backend
   pending.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Built, in
@@ -86,8 +89,10 @@ Built:
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
-  account floor (`@quit`/`@who`/`@help`/`@play` plus `@operator`/`@quell`, the actor
-  choice game-injected), and a single command dispatcher draining the inbox each tick:
+  account floor (`@quit`/`@who`/`@help`/`@play`, the `@operator`/`@login` elevation
+  stubs, the operator's `@account`/`@grant`/`@revoke` account admin, and `@quell`, the
+  actor choice game-injected), and a single command dispatcher draining the inbox each
+  tick:
   lifecycle `@`-verbs to the floor, other `@`-verbs to the game's capability-gated
   admin table, bare commands to the embodiment frame. It also owns the account
   authority (`musce_host::auth`: the caps registry, the account records, the
@@ -160,8 +165,8 @@ Deferred (with seams in place where noted):
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the capability-gated admin
   frame.
-- Networking: WebSocket/SSH transports, real authentication (slice 2 of the
-  authorization design; the loopback-only `@operator` stub stands in for now), the
+- Networking: WebSocket/SSH transports, real authentication (the loopback-only
+  `@operator`/`@login` stubs stand in for now, resolving to real accounts), the
   gameplay possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays
   (designed in networking-and-sessions.md). Raw TCP, the session floor, the session
   attachment that `@play` sets, durable `Controls`/`Focus` embodiment, the account

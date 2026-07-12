@@ -21,7 +21,7 @@ use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
 
 use crate::ChooseActor;
-use crate::auth::{AccountId, Accounts};
+use crate::auth::{AccountId, Accounts, CapRegistry};
 
 /// One live session: the per-connection state the floor owns. The character it
 /// drives (set by `@play`; the driven actor is resolved live from its `Focus`, see
@@ -158,12 +158,17 @@ impl Sessions {
     /// on top of the input stack. Returns whether the floor recognized the verb;
     /// the floor is the single authority on its own verbs, so an unrecognized one
     /// returns `false` and the caller routes it onward (to the admin table).
+    // The floor's single entry point coordinates several host-owned pieces (the
+    // world, the account authority and its cap registry, the game's actor policy);
+    // like `dispatch_command`, it carries them as parameters rather than bundling.
+    #[allow(clippy::too_many_arguments)]
     pub fn account_command(
         &mut self,
         id: ConnectionId,
         rest: &str,
         world: &World,
-        accounts: &Accounts,
+        accounts: &mut Accounts,
+        registry: &CapRegistry,
         choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) -> bool {
@@ -186,12 +191,29 @@ impl Sessions {
                 // admin verbs are the game's surface, not the engine's to enumerate.
                 feedback(
                     id,
-                    "Commands: @play, @operator, @quell, @quit, @who, @help.",
+                    "Commands: @play, @operator, @login, @account, @grant, @revoke, \
+                     @quell, @quit, @who, @help.",
                     emit,
                 );
             }
             "play" => self.play(id, world, choose_actor, emit),
             "operator" => self.operator(id, accounts, emit),
+            "login" => self.login(id, parts.next().unwrap_or(""), accounts, emit),
+            "account" => {
+                let sub = parts.next().unwrap_or("");
+                let handle = parts.next().unwrap_or("");
+                self.account_admin(id, sub, handle, accounts, emit);
+            }
+            "grant" => {
+                let handle = parts.next().unwrap_or("");
+                let cap = parts.next().unwrap_or("");
+                self.grant_cap(id, handle, cap, accounts, registry, emit);
+            }
+            "revoke" => {
+                let handle = parts.next().unwrap_or("");
+                let cap = parts.next().unwrap_or("");
+                self.revoke_cap(id, handle, cap, accounts, registry, emit);
+            }
             "quell" => self.quell(id, emit),
             _ => return false,
         }
@@ -217,6 +239,138 @@ impl Sessions {
             }
             None => feedback(id, "There is no operator account.", emit),
         }
+    }
+
+    /// `@login <handle>`: the slice-2a authentication stub. Attaches the connection to
+    /// the account with that handle, **loopback-only** like `@operator` since it takes
+    /// no credential yet. The real credential check that lets this run remotely is the
+    /// next (small) slice; it resolves the same handle to the same account, no shape
+    /// change here.
+    fn login(
+        &mut self,
+        id: ConnectionId,
+        handle: &str,
+        accounts: &Accounts,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        if !self.map.get(&id).is_some_and(|s| s.loopback) {
+            feedback(id, "Login is only available locally.", emit);
+            return;
+        }
+        if handle.is_empty() {
+            feedback(id, "Log in as whom? (@login <handle>)", emit);
+            return;
+        }
+        match accounts.account_by_handle(handle) {
+            Some(acc) => {
+                if let Some(s) = self.map.get_mut(&id) {
+                    s.account = Some(acc);
+                }
+                feedback(id, &format!("You are now logged in as {handle}."), emit);
+            }
+            None => feedback(id, &format!("No account named \"{handle}\"."), emit),
+        }
+    }
+
+    /// `@account new <handle>`: create a plain (non-su) account. Operator-only: an
+    /// account without su in force is refused. This is the runtime account-creation
+    /// surface the composable model needs to hold a second account.
+    fn account_admin(
+        &mut self,
+        id: ConnectionId,
+        sub: &str,
+        handle: &str,
+        accounts: &mut Accounts,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        if !self.is_operator(id, accounts) {
+            feedback(id, "Only the operator may administer accounts.", emit);
+            return;
+        }
+        if sub != "new" {
+            feedback(id, "Usage: @account new <handle>.", emit);
+            return;
+        }
+        if handle.is_empty() {
+            feedback(id, "Name the new account: @account new <handle>.", emit);
+            return;
+        }
+        if accounts.account_by_handle(handle).is_some() {
+            feedback(
+                id,
+                &format!("An account named \"{handle}\" already exists."),
+                emit,
+            );
+            return;
+        }
+        accounts.create_account(handle);
+        feedback(id, &format!("Created account \"{handle}\"."), emit);
+    }
+
+    /// `@grant <handle> <capability>`: add a capability to an account. Operator-only.
+    fn grant_cap(
+        &mut self,
+        id: ConnectionId,
+        handle: &str,
+        cap: &str,
+        accounts: &mut Accounts,
+        registry: &CapRegistry,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        if !self.is_operator(id, accounts) {
+            feedback(id, "Only the operator may grant capabilities.", emit);
+            return;
+        }
+        if handle.is_empty() || cap.is_empty() {
+            feedback(id, "Usage: @grant <handle> <capability>.", emit);
+            return;
+        }
+        let Some(acc) = accounts.account_by_handle(handle) else {
+            feedback(id, &format!("No account named \"{handle}\"."), emit);
+            return;
+        };
+        match accounts.grant(acc, cap, registry) {
+            Ok(()) => feedback(id, &format!("Granted \"{cap}\" to {handle}."), emit),
+            Err(e) => feedback(id, &format!("Can't grant that: {e}."), emit),
+        }
+    }
+
+    /// `@revoke <handle> <capability>`: remove a capability from an account.
+    /// Operator-only.
+    fn revoke_cap(
+        &mut self,
+        id: ConnectionId,
+        handle: &str,
+        cap: &str,
+        accounts: &mut Accounts,
+        registry: &CapRegistry,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        if !self.is_operator(id, accounts) {
+            feedback(id, "Only the operator may revoke capabilities.", emit);
+            return;
+        }
+        if handle.is_empty() || cap.is_empty() {
+            feedback(id, "Usage: @revoke <handle> <capability>.", emit);
+            return;
+        }
+        let Some(acc) = accounts.account_by_handle(handle) else {
+            feedback(id, &format!("No account named \"{handle}\"."), emit);
+            return;
+        };
+        match accounts.revoke(acc, cap, registry) {
+            Ok(()) => feedback(id, &format!("Revoked \"{cap}\" from {handle}."), emit),
+            Err(e) => feedback(id, &format!("Can't revoke that: {e}."), emit),
+        }
+    }
+
+    /// Whether this connection acts with superuser in force: an operator managing
+    /// accounts. Reads the same verdict a gate would, so a quelled operator is refused
+    /// (quell means "act as a normal player"), consistent with the gate check.
+    fn is_operator(&self, id: ConnectionId, accounts: &Accounts) -> bool {
+        accounts
+            .verdict_for(self.account_of(id), self.is_quelled(id))
+            .is_su()
     }
 
     /// `@quell`: toggle superuser suppression for this connection. Quelled, an su
@@ -326,7 +480,8 @@ mod tests {
     fn quit_emits_close() {
         let mut s = Sessions::default();
         let world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let id = ConnectionId(7);
         s.connect(id, None, &mut |_| {});
 
@@ -335,7 +490,8 @@ mod tests {
             id,
             "quit",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -353,7 +509,8 @@ mod tests {
     fn play_attaches_through_the_injected_policy() {
         let mut s = Sessions::default();
         let mut world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let avatar = spawn_avatar(&mut world);
         let id = ConnectionId(3);
         s.connect(id, None, &mut |_| {});
@@ -363,7 +520,8 @@ mod tests {
             id,
             "play",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -385,7 +543,8 @@ mod tests {
     fn unknown_at_command_is_unhandled_and_silent() {
         let mut s = Sessions::default();
         let world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let id = ConnectionId(2);
         s.connect(id, None, &mut |_| {});
 
@@ -396,7 +555,8 @@ mod tests {
             id,
             "bogus",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -408,14 +568,16 @@ mod tests {
     fn lifecycle_command_is_handled() {
         let mut s = Sessions::default();
         let world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let id = ConnectionId(2);
         s.connect(id, None, &mut |_| {});
         let handled = s.account_command(
             id,
             "who",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -426,7 +588,8 @@ mod tests {
     fn operator_attaches_only_from_loopback() {
         let mut s = Sessions::default();
         let world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let op = accounts.stub_operator().expect("a bootstrapped operator");
 
         // A loopback peer may elevate to the operator account.
@@ -436,7 +599,8 @@ mod tests {
             local,
             "operator",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -449,7 +613,8 @@ mod tests {
             remote,
             "operator",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -460,7 +625,8 @@ mod tests {
     fn quell_toggles_suppression() {
         let mut s = Sessions::default();
         let world = World::new();
-        let accounts = accounts();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
         let id = ConnectionId(1);
         s.connect(id, loopback(), &mut |_| {});
 
@@ -469,7 +635,8 @@ mod tests {
             id,
             "quell",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -478,11 +645,86 @@ mod tests {
             id,
             "quell",
             &world,
-            &accounts,
+            &mut accounts,
+            &reg,
             first_player_choose,
             &mut |_| {},
         );
         assert!(!s.is_quelled(id));
+    }
+
+    #[test]
+    fn login_attaches_to_an_account_by_handle() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
+        let builder = accounts.create_account("builder");
+        let id = ConnectionId(1);
+        s.connect(id, loopback(), &mut |_| {});
+
+        s.account_command(
+            id,
+            "login builder",
+            &world,
+            &mut accounts,
+            &reg,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert_eq!(s.account_of(id), Some(builder));
+    }
+
+    #[test]
+    fn login_refused_from_a_non_loopback_peer() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
+        accounts.create_account("builder");
+        let id = ConnectionId(1);
+        s.connect(id, None, &mut |_| {});
+
+        s.account_command(
+            id,
+            "login builder",
+            &world,
+            &mut accounts,
+            &reg,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert_eq!(
+            s.account_of(id),
+            None,
+            "a peerless connection cannot log in via the stub"
+        );
+    }
+
+    #[test]
+    fn account_admin_requires_the_operator() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let mut accounts = accounts();
+        let reg = CapRegistry::new();
+        let id = ConnectionId(1);
+        // Connected but never elevated: a guest cannot create accounts.
+        s.connect(id, loopback(), &mut |_| {});
+
+        s.account_command(
+            id,
+            "account new builder",
+            &world,
+            &mut accounts,
+            &reg,
+            first_player_choose,
+            &mut |_| {},
+        );
+        assert_eq!(
+            accounts.account_by_handle("builder"),
+            None,
+            "a guest cannot create accounts"
+        );
     }
 
     #[test]

@@ -714,3 +714,88 @@ async fn give_a_coin_to_the_drone() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 }
+
+/// Authorization end to end: the operator mints a builder account, grants it the
+/// `build` capability, and logs in as it; the granted `@create` works, `@quell`
+/// sets aside the quellable build cap so `@create` is refused, and un-quelling
+/// restores it. This is the falsifying flow the authorization model could not
+/// exercise until a non-su account with a granted cap and a login existed.
+#[tokio::test]
+async fn a_granted_builder_creates_until_quelled() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+
+    // As the operator, mint a builder account and grant it the build cap.
+    send(&mut writer, "@operator").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@account new builder").await;
+    let acct = read_burst(&mut reader).await;
+    assert!(
+        acct.contains("Created account \"builder\""),
+        "account creation feedback, got: {acct:?}"
+    );
+    send(&mut writer, "@grant builder build").await;
+    let granted = read_burst(&mut reader).await;
+    assert!(
+        granted.contains("Granted \"build\" to builder"),
+        "grant feedback, got: {granted:?}"
+    );
+
+    // Log in as the builder (non-su) and take a body.
+    send(&mut writer, "@login builder").await;
+    let logged = read_burst(&mut reader).await;
+    assert!(
+        logged.contains("logged in as builder"),
+        "login feedback, got: {logged:?}"
+    );
+    send(&mut writer, "@play").await;
+    let _ = read_burst(&mut reader).await;
+
+    // The build cap admits @create. Create an inert torch, not a `rat`: a rat
+    // carries `Wander` and would flood the hall with movement narration every few
+    // ticks, so `read_burst` would never see its inter-burst gap.
+    send(&mut writer, "@create torch").await;
+    let built = read_burst(&mut reader).await;
+    assert!(
+        built.contains("Created"),
+        "the granted builder can create, got: {built:?}"
+    );
+
+    // Quell sets aside the quellable build cap: @create is now refused.
+    send(&mut writer, "@quell").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@create torch").await;
+    let refused = read_burst(&mut reader).await;
+    assert!(
+        refused.contains("aren't allowed"),
+        "quelled, the build cap is set aside, got: {refused:?}"
+    );
+
+    // Un-quell restores it.
+    send(&mut writer, "@quell").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@create torch").await;
+    let again = read_burst(&mut reader).await;
+    assert!(
+        again.contains("Created"),
+        "un-quelled, the build cap is back, got: {again:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}

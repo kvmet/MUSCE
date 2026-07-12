@@ -1,12 +1,13 @@
 # Accounts: the authority, its store, and how the check resolves
 
-> Status: **slice 1 built; slice 2 (authentication) not started.** This is the
-> implementation half of the authorization design: where account records live, how a
-> connection's grants reach the gate, and how the system boots. The permission *model*
-> it serves (capabilities, the superuser bit, quell) lives in
-> [authorization.md](authorization.md); read that first. Slice 1's backend is the
+> Status: **authorization built, including the runtime account surface; real
+> authentication and the durable backend not started.** This is the implementation
+> half of the authorization design: where account records live, how a connection's
+> grants reach the gate, and how the system boots. The permission *model* it serves
+> (capabilities, the superuser bit, quell) lives in
+> [authorization.md](authorization.md); read that first. The backend is still the
 > in-memory `MemoryAccountStore` (in `musce_host::auth`); the durable backend behind
-> the same `AccountStore` trait lands with slice 2.
+> the same `AccountStore` trait lands with authentication.
 
 The model says the engine authorizes accounts on a flat set of capabilities plus a
 superuser bit. This covers the machinery that makes that real: resolving a
@@ -113,23 +114,35 @@ what maps a credential to an `AccountId`, but slice 1 ships the authority model 
 auth exists, so it needs a stand-in that does not prejudge the identity:
 
 - A connection **defaults to guest**: no account, `Open`-only, no caps and no su.
-- The seed creates **one su operator account** with a known `AccountId`.
-- A **stub floor attach** elevates a connection to that operator account. It is
-  unauthenticated in slice 1 but **loopback-only**: it elevates only when the peer is
-  present *and* loopback (`peer.is_some_and(|p| p.ip().is_loopback())`). A peerless
-  connection is **refused, never default-permitted**: the check must not read a `None`
-  peer as trusted, or a `.map_or(true, ..)` slip ships elevation on every peerless
-  connection. Over TCP the kernel fills the accept peer, so a remote client cannot
-  spoof loopback and slice 1 never ships remote god-mode against a bound port. The
-  `peer` rides `Input::Connected` but is dropped at `Sessions::connect` today, so
-  slice 1 threads it through into the `Session`. Gating the *entry* to su this way is
-  consistent with leaving un-quell (the operator's own fallback) ungated. Slice 2
-  replaces the stub with a real credential check resolving to the same `AccountId`, no
-  shape change.
+- The bootstrap creates **one su operator account** with a known `AccountId` and the
+  login handle `operator`.
+- Two **stub floor attaches** elevate a connection without a credential, both
+  **loopback-only**: `@operator` attaches to the su operator, and `@login <handle>`
+  attaches to any account by its handle (the general form the credential check will
+  replace). Loopback means the peer is present *and* loopback
+  (`peer.is_some_and(|p| p.ip().is_loopback())`). A peerless connection is **refused,
+  never default-permitted**: the check must not read a `None` peer as trusted, or a
+  `.map_or(true, ..)` slip ships elevation on every peerless connection. Over TCP the
+  kernel fills the accept peer, so a remote client cannot spoof loopback and the stub
+  never ships remote god-mode against a bound port. The `peer` rides `Input::Connected`
+  and is threaded into the `Session`. Gating the *entry* this way is consistent with
+  leaving un-quell (the operator's own fallback) ungated. Authentication replaces these
+  stubs with a real credential check resolving to the same `AccountId`, no shape change.
 
-So slice 1 is falsifiable end to end: a guest connection is refused a `Gate::Cap`
-verb, the elevated operator passes it, and `@quell` drops the operator to guest-level
-authority, all without a line of real auth.
+The operator manages the account set at runtime through su-gated floor commands:
+`@account new <handle>` creates a plain (non-su) account, `@grant <handle> <cap>` and
+`@revoke <handle> <cap>` adjust its capabilities against the game's registry. These
+are floor commands, not game admin-table verbs, because only the host's `Dispatch`
+owns the account authority; the verb references the game's cap *vocabulary* (resolved
+through the registry) while the *mechanism* (grant a cap to an account) is engine. su
+never enters this way (it is out of band), so these mutators never touch the su count
+and the su-count floor is not engaged by them; the delete / su-write surface that would
+engage it lands with authentication.
+
+So the model is falsifiable end to end: a guest is refused a `Gate::Cap` verb, the
+operator grants a **non-su** account a cap, that account logs in and passes the verb,
+and `@quell` drops the granted cap (and su) back to baseline. No line of real auth is
+needed for any of it.
 
 ## Bootstrapping and the last-su invariant
 
@@ -160,19 +173,25 @@ bootstrap, and "at least one su exists" must hold across every path, not just re
 
 ## Slices
 
-- **Slice 1 (authorization).** Retire `Staff` and strip its seed body marker; the
+- **Slice 1 (authorization core).** Retire `Staff` and strip its seed body marker; the
   capability model, the caps registry (`register_cap` interning names to `CapId`), and
   `Gate::Cap`; the su account bit and the `(cap, verdict)` `permits`; `@quell` on the
   floor; the in-memory account authority with its store trait and trivial backend (the
-  `AccountId` identity, the loopback-only operator stub, first-account-su, the
-  post-image su-count floor, the boot check, a reserved version field on a JSON
-  record); `conn -> account` resolved at the dispatch seam as a verdict pinned to the
-  account and carried on `Ctx`. No runtime grant or su administration ships in
-  slice 1: su is out of band permanently (see [authorization.md](authorization.md)),
-  grants only until a real surface lands. This makes the composable model real end to
-  end.
-- **Slice 2 (authentication).** Passwords, tokens, oauth, as additive backends behind
-  the store trait; nothing here is built now.
+  `AccountId` identity, the loopback-only operator stub, first-account-su, the boot
+  check, a reserved version field on a JSON record); `conn -> account` resolved at the
+  dispatch seam as a verdict pinned to the account and carried on `Ctx`. Built.
+- **Slice 2a (the account surface).** Quellable caps (`register_baseline_cap`, the
+  baseline/quellable split in the verdict); the runtime account mutators
+  (`create_account`/`grant`/`revoke`) and their operator-only floor verbs
+  (`@account`/`@grant`/`@revoke`); a login `handle` on the record and the loopback
+  `@login <handle>` stub. This makes the composable model real end to end (a non-su
+  account holding a granted cap, reachable by login, dropped by quell). Built.
+- **Slice 2b (authentication).** Real credentials (passwords first, then tokens/oauth)
+  replacing the `@login`/`@operator` stubs; the durable `AccountStore` backend behind
+  the trait (with save-on-beat wiring and the version compare/migrate seam); and the
+  delete / su-write surface that finally engages the **post-image su-count floor** (no
+  mutator may drop the su count below one, checked atomically on the post-image). Not
+  started; the credential half needs a password-hashing dependency.
 
 Entity locking stays fully game-side and is untouched (the `Locked`-marker rule
 pattern plus a game-registered key relation; see the roadmap and
