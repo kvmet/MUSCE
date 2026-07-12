@@ -5,9 +5,9 @@
 > half of the authorization design: where account records live, how a connection's
 > grants reach the gate, and how the system boots. The permission *model* it serves
 > (capabilities, the superuser bit, quell) lives in
-> [authorization.md](authorization.md); read that first. The backend is still the
-> in-memory `MemoryAccountStore` (in the `musce_auth` crate); the durable backend
-> behind the same `AccountStore` trait lands with authentication.
+> [authorization.md](authorization.md); read that first. The authority still boots
+> from an empty snapshot every run (no durability); the relational SQLite store
+> described below is decided and lands next, ahead of authentication.
 
 The model says the engine authorizes accounts on a flat set of capabilities plus a
 superuser bit. This covers the machinery that makes that real: resolving a
@@ -70,36 +70,46 @@ the same struct.
 
 Accounts are **not world entities**, so they are never in a `Snapshot` and do not
 round-trip through the entity store. The live authority is an **in-memory structure
-the sim thread owns**, mirroring World-as-truth: what grant and su mutations exist
-(boot load, and eventually the slice-2 writer; never a table verb, and never su
-in-band at all) are sim-thread calls, the guards below are in-memory invariants, and
-durability rides a **store backend** the way the world rides `Snapshot`. That settles the "single-writer" claim
-honestly: the authority is sim-thread-owned like the world, the store is its
-save/load target, and slice 2's web/oauth writer is the second writer that will need
-real serialization. Slice 1 stands up **no parallel async save task and no save wiring
-at all**: `boot` loads the store once, and the trivial in-memory backend has no
-cross-restart durability to preserve, so nothing writes it back on any beat. The store
-*trait* (with its `save`) is the seam worth reserving now; the save-on-beat wiring, a
-dedicated channel, and a task like the entity persistence path all wait for the durable
-backend in slice 2.
+the sim thread owns**, mirroring World-as-truth: grant and account mutations (and
+never su in-band at all) are sim-thread calls, the guards below are in-memory
+invariants, and durability rides the authority's own persisted form the way the
+world rides `Snapshot`. The whole persisted state is one value, **`AccountsSnapshot`**
+(every record plus the `next_id` high-water mark): it is the boot input, the
+per-mutation persist message, and what the store reads and writes. There is no store
+trait: the sim thread never holds a store at all (`boot` takes the loaded snapshot as
+plain data; tests build one in place), and a second backend can earn a trait when it
+exists.
 
-The store backend is the genuine decide-now artifact:
+Two invariants ride the snapshot's shape:
 
-- A **trait taking no `World` and no host types** (auth needs neither the ECS nor host
-  internals), which is what keeps it liftable.
-- Its **own storage home**, not the `entities` table: an account has no `EntityId`, no
-  zone, and no place in the O(world) snapshot, so bolting it in inherits all three and
-  is the migration to avoid.
-- A **version field in the record from day one** (a `u32` beside the grant set and su
-  bit), so the record is self-describing. The record serializes as a **JSON blob**
-  (mirroring `EntityBlob`), so the reserved version has a concrete encoding the later
-  seam can compare and migrate. The compare-on-load and migration-*seam* machinery is
-  deferred until the real backend lands (building it for a trivial slice-1 backend is
-  a speculative parallel persistence layer); the reserved field is the addition-cheap
-  hedge that makes the later seam possible.
+- **`next_id` is persisted, never rebuilt from `max(id) + 1`.** Once anything
+  references an `AccountId` (provenance, a characters table), a deleted account's id
+  must never be reissued to a new account; the persisted high-water mark is what
+  survives the delete.
+- **Every save is the full snapshot, so writes are idempotent and self-healing.** A
+  failed or lost write is repaired by the next one, and no ordering of partial writes
+  can strand the store populated-but-su-less: the operator record rides along in
+  every save.
+
+Mutation durability hangs on **one choke point**: every mutator (including the
+boot-time bootstrap that mints the operator) marks the authority dirty, and the sim
+loop checks `take_dirty()` once per tick, sending a fresh snapshot to the async
+writer task (the same channel-to-task shape as entity persistence, so the sim thread
+never blocks on the write). No mutator can forget to save, because none of them save.
+
+**Accounts are first-class relational data**, unlike the world's opaque entity
+blobs: a future web or oauth frontend, admin tooling, and offline queries all read
+the same account set, and the account id is the foreign-key target for provenance
+and a later characters table. So the durable store is its **own SQLite database**
+(`accounts.sqlite`, separate from the world DB, which a dev reseed deletes) with
+real columns: an `accounts` table (`id` primary key app-assigned by the authority,
+unique `handle`, `is_su`), an `account_caps` join table (`account_id`, `cap_name`),
+and a `meta` table carrying the schema version and the persisted `next_id`. The
+world's blob rule exists because world data is never queried at rest; accounts are,
+so they take the queryable shape.
 
 The authority is its **own leaf crate**, `musce_auth`: the caps registry, the account
-records, the `AccountStore` trait, and the `Accounts` authority, as one cohesive unit.
+records and snapshot, and the `Accounts` authority, as one cohesive unit.
 Account identity is the one piece of the system a consumer beyond the sim host (a web
 or oauth frontend, admin tooling) will read, so it does not live inside the host; the
 host re-exports it as `musce_host::auth` so a game keeps one import surface. The check
@@ -178,9 +188,8 @@ bootstrap, and "at least one su exists" must hold across every path, not just re
 - **Slice 1 (authorization core).** Retire `Staff` and strip its seed body marker; the
   capability model, the caps registry (`register_cap` interning names to `CapId`), and
   `Gate::Cap`; the su account bit and the `(cap, verdict)` `permits`; `@quell` on the
-  floor; the in-memory account authority with its store trait and trivial backend (the
-  `AccountId` identity, the loopback-only operator stub, first-account-su, the boot
-  check, a reserved version field on a JSON record); `conn -> account` resolved at the
+  floor; the in-memory account authority (the `AccountId` identity, the loopback-only
+  operator stub, first-account-su, the boot check); `conn -> account` resolved at the
   dispatch seam as a verdict pinned to the account and carried on `Ctx`. Built.
 - **Slice 2a (the account surface).** Quellable caps (`register_baseline_cap`, the
   baseline/quellable split in the verdict); the runtime account mutators
@@ -188,12 +197,18 @@ bootstrap, and "at least one su exists" must hold across every path, not just re
   (`@account`/`@grant`/`@revoke`); a login `handle` on the record and the loopback
   `@login <handle>` stub. This makes the composable model real end to end (a non-su
   account holding a granted cap, reachable by login, dropped by quell). Built.
-- **Slice 2b (authentication).** Real credentials (passwords first, then tokens/oauth)
-  replacing the `@login`/`@operator` stubs; the durable `AccountStore` backend behind
-  the trait (with save-on-beat wiring and the version compare/migrate seam); and the
-  delete / su-write surface that finally engages the **post-image su-count floor** (no
-  mutator may drop the su count below one, checked atomically on the post-image). Not
-  started; the credential half needs a password-hashing dependency.
+- **Slice 2b.1 (the durable store).** The relational `accounts.sqlite` store above
+  (`accounts` / `account_caps` / `meta` with the persisted `next_id`), loaded in
+  `run`'s async context, written by an async writer task fed by the dirty-flag beat.
+  Decided (this design), landing next.
+- **Slice 2b.2 (authentication).** Real credentials (passwords first, then
+  tokens/oauth) replacing the `@login`/`@operator` stubs; a nullable `pw_hash`
+  column joins the `accounts` table then. Needs the password-hashing dependency
+  (argon2, already parked in `musce_auth`).
+- **Slice 2b.3 (delete and su writes).** The surface that finally engages the
+  **post-image su-count floor** (no mutator may drop the su count below one, checked
+  atomically on the post-image); id reuse is already impossible via the persisted
+  `next_id`.
 
 Entity locking stays fully game-side and is untouched (the `Locked`-marker rule
 pattern plus a game-registered key relation; see the roadmap and

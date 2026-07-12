@@ -23,7 +23,7 @@ use musce_proto::{Command, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::auth::{Accounts, CapRegistry, MemoryAccountStore};
+use crate::auth::{Accounts, AccountsSnapshot, CapRegistry};
 use crate::dispatch::Dispatch;
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
@@ -229,11 +229,10 @@ fn sim_loop(
     }
 
     // Bring up the account authority, resolving grants against the game's caps
-    // registry. An empty store bootstraps one su operator; a populated store with no
-    // su, or an unknown grant, refuses to boot rather than run mis-authorized. Slice 1
-    // stands up a trivial in-memory backend; a durable one lands with authentication.
-    let account_store = MemoryAccountStore::new();
-    let accounts = match Accounts::boot(&account_store, game.caps.clone()) {
+    // registry. An empty snapshot bootstraps one su operator; a populated one with no
+    // su, or an unknown grant, refuses to boot rather than run mis-authorized. The
+    // durable store lands with authentication; until then every boot starts empty.
+    let accounts = match Accounts::boot(AccountsSnapshot::empty(), game.caps.clone()) {
         Ok(accounts) => accounts,
         Err(e) => {
             let msg = format!("account authority refused to boot: {e}");

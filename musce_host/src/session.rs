@@ -417,7 +417,7 @@ fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{CapRegistry, MemoryAccountStore};
+    use crate::auth::{AccountsSnapshot, CapRegistry};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Controls, Description, EntityId, Id};
     use musce_proto::Audience;
@@ -430,7 +430,7 @@ mod tests {
     /// An account authority with one bootstrapped su operator, for the `@operator`
     /// and `@quell` floor commands.
     fn accounts() -> Accounts {
-        Accounts::boot(&MemoryAccountStore::new(), Arc::new(CapRegistry::new())).unwrap()
+        Accounts::boot(AccountsSnapshot::empty(), Arc::new(CapRegistry::new())).unwrap()
     }
 
     /// A loopback peer, so `@operator` elevation is available.

@@ -11,11 +11,6 @@ use std::sync::Arc;
 
 use musce_action::{CapId, CapSet, Verdict};
 
-/// The version stamped on a freshly written account record, so the record is
-/// self-describing and a later durable backend can migrate its shape. Bumped when
-/// the record's fields change; no migrations exist yet.
-pub const RECORD_VERSION: u32 = 2;
-
 /// Stable account identity: persisted, the store's primary key. Distinct from the
 /// ephemeral `ConnectionId` and from any `EntityId` (accounts are not world
 /// entities), so the two never get confused at a call site.
@@ -24,59 +19,45 @@ pub struct AccountId(pub u64);
 
 /// The persisted form of an account: identity, a login **handle** (the name a
 /// connection authenticates against), grants **by string name** (stable across id
-/// churn, and the game's vocabulary rather than the engine's), the superuser bit,
-/// and a self-describing version. The live authority resolves the grant strings to
-/// `CapId`s at load against the same registry the gates were built from.
-#[derive(Clone, Debug)]
+/// churn, and the game's vocabulary rather than the engine's), and the superuser
+/// bit. The live authority resolves the grant strings to `CapId`s at load against
+/// the same registry the gates were built from.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountRecord {
     pub id: AccountId,
     pub handle: String,
     pub caps: Vec<String>,
     pub is_su: bool,
-    pub version: u32,
 }
 
-/// The durable backing for accounts: load every record at boot, save the full set.
-/// Takes no `World` and no host types, so it lifts with the rest of the auth module.
-/// The slice-1 backend is in-memory ([`MemoryAccountStore`]); a durable backend with
-/// its own storage home (not the entities table) lands with authentication.
-pub trait AccountStore {
-    /// Every persisted record. The slice-1 in-memory backend cannot fail; a durable
-    /// backend's load error is a refuse-to-boot at the call site, never treated as an
-    /// empty store.
-    fn load(&self) -> Vec<AccountRecord>;
-    /// Replace the persisted set with `records`.
-    fn save(&mut self, records: &[AccountRecord]);
+/// The authority's full persisted state: every record plus the id high-water mark.
+/// One value is the whole story, so it is the boot input, the per-mutation persist
+/// message, and what the store reads and writes. `next_id` is carried explicitly
+/// (never rebuilt from `max(id) + 1`) so a deleted account's id is never reissued to
+/// a later account: anything that comes to reference an `AccountId` (provenance, a
+/// characters table) must never watch it change owners.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountsSnapshot {
+    pub records: Vec<AccountRecord>,
+    pub next_id: u64,
 }
 
-/// The slice-1 account backend: records in memory, no durability across a restart.
-/// The `AccountStore` trait is the reserved seam; a durable backend is slice 2's,
-/// alongside authentication. Constructible with seed records so a test can drive the
-/// populated boot cases.
-#[derive(Default)]
-pub struct MemoryAccountStore {
-    records: Vec<AccountRecord>,
-}
-
-impl MemoryAccountStore {
-    /// An empty store: first boot bootstraps its operator.
-    pub fn new() -> Self {
-        Self::default()
+impl AccountsSnapshot {
+    /// The empty store: no accounts yet, ids start at 1. Booting from this
+    /// bootstraps the operator.
+    pub fn empty() -> Self {
+        AccountsSnapshot {
+            records: Vec::new(),
+            next_id: 1,
+        }
     }
 
-    /// A store pre-populated with `records`, for exercising the populated boot paths.
-    pub fn with_records(records: Vec<AccountRecord>) -> Self {
-        Self { records }
-    }
-}
-
-impl AccountStore for MemoryAccountStore {
-    fn load(&self) -> Vec<AccountRecord> {
-        self.records.clone()
-    }
-
-    fn save(&mut self, records: &[AccountRecord]) {
-        self.records = records.to_vec();
+    /// A snapshot for a fresh store seeded with `records`, the high-water mark
+    /// taken from the records themselves. A convenience for tests and seeding; a
+    /// durable store loads the persisted `next_id` instead, which survives deletes.
+    pub fn from_records(records: Vec<AccountRecord>) -> Self {
+        let next_id = records.iter().map(|r| r.id.0).max().unwrap_or(0) + 1;
+        AccountsSnapshot { records, next_id }
     }
 }
 
@@ -217,19 +198,25 @@ pub struct Accounts {
     /// The cap vocabulary this authority resolves grants against, shared with the game
     /// it was booted from. Immutable (registration finished at game construction).
     registry: Arc<CapRegistry>,
+    /// Set by every mutation (including the boot-time bootstrap), cleared by
+    /// [`take_dirty`]. The one choke point durability hangs off: the host checks it
+    /// each tick and persists a fresh [`snapshot`], so no mutator can forget to save.
+    ///
+    /// [`take_dirty`]: Accounts::take_dirty
+    /// [`snapshot`]: Accounts::snapshot
+    dirty: bool,
 }
 
 impl Accounts {
-    /// Build the authority from a store, resolving each record's grant strings to
-    /// `CapId`s against `registry` (which the authority then holds for its runtime
-    /// grant surface). Enforces the boot cases: an **empty** store bootstraps one su
-    /// operator; a **populated** store with **zero** su refuses; an **unknown grant**
-    /// refuses. (A store *load* error is the caller's refuse-to-boot, never routed here
-    /// as empty.)
-    pub fn boot(store: &impl AccountStore, registry: Arc<CapRegistry>) -> Result<Self, AuthError> {
+    /// Build the authority from a loaded snapshot, resolving each record's grant
+    /// strings to `CapId`s against `registry` (which the authority then holds for its
+    /// runtime grant surface). Enforces the boot cases: an **empty** snapshot
+    /// bootstraps one su operator; a **populated** snapshot with **zero** su refuses;
+    /// an **unknown grant** refuses. (A store *load* error is the caller's
+    /// refuse-to-boot, never routed here as empty.)
+    pub fn boot(snapshot: AccountsSnapshot, registry: Arc<CapRegistry>) -> Result<Self, AuthError> {
         let mut accounts = BTreeMap::new();
-        let mut max_id = 0;
-        for rec in store.load() {
+        for rec in snapshot.records {
             let mut caps = CapSet::new();
             let mut baseline = CapSet::new();
             for name in &rec.caps {
@@ -244,7 +231,6 @@ impl Accounts {
                     baseline.insert(id);
                 }
             }
-            max_id = max_id.max(rec.id.0);
             accounts.insert(
                 rec.id,
                 Account {
@@ -259,8 +245,9 @@ impl Accounts {
 
         let mut authority = Accounts {
             accounts,
-            next_id: max_id + 1,
+            next_id: snapshot.next_id,
             registry,
+            dirty: false,
         };
 
         if authority.accounts.is_empty() {
@@ -302,11 +289,14 @@ impl Accounts {
         })
     }
 
-    /// Insert an account under a fresh id and return it.
+    /// Insert an account under a fresh id and return it. `next_id` only ever climbs
+    /// (and is persisted in the snapshot), so an id is never reissued, even after a
+    /// future delete.
     fn insert(&mut self, account: Account) -> AccountId {
         let id = AccountId(self.next_id);
         self.next_id += 1;
         self.accounts.insert(id, account);
+        self.dirty = true;
         id
     }
 
@@ -339,6 +329,7 @@ impl Accounts {
         if !quellable {
             account.baseline.insert(cap);
         }
+        self.dirty = true;
         Ok(())
     }
 
@@ -356,6 +347,7 @@ impl Accounts {
         account.caps.remove(cap);
         account.baseline.remove(cap);
         account.grants.retain(|g| g != cap_name);
+        self.dirty = true;
         Ok(())
     }
 
@@ -387,18 +379,30 @@ impl Accounts {
         }
     }
 
-    /// The current authority as records, for a store save.
-    pub fn to_records(&self) -> Vec<AccountRecord> {
-        self.accounts
-            .iter()
-            .map(|(&id, a)| AccountRecord {
-                id,
-                handle: a.handle.clone(),
-                caps: a.grants.clone(),
-                is_su: a.is_su,
-                version: RECORD_VERSION,
-            })
-            .collect()
+    /// The authority's full persisted state, for a store save. Each snapshot is the
+    /// complete story (every record plus `next_id`), so a save is idempotent and
+    /// self-healing: whatever a prior write lost, the next one restores.
+    pub fn snapshot(&self) -> AccountsSnapshot {
+        AccountsSnapshot {
+            records: self
+                .accounts
+                .iter()
+                .map(|(&id, a)| AccountRecord {
+                    id,
+                    handle: a.handle.clone(),
+                    caps: a.grants.clone(),
+                    is_su: a.is_su,
+                })
+                .collect(),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Whether a mutation has landed since the last check, clearing the flag. The
+    /// host's persist beat: true means "take a [`snapshot`](Accounts::snapshot) and
+    /// save it."
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
     }
 }
 
@@ -412,7 +416,6 @@ mod tests {
             handle: format!("acct{id}"),
             caps: caps.iter().map(|s| s.to_string()).collect(),
             is_su,
-            version: RECORD_VERSION,
         }
     }
 
@@ -434,8 +437,7 @@ mod tests {
     #[test]
     fn empty_store_bootstraps_one_su_operator() {
         let reg = CapRegistry::new();
-        let store = MemoryAccountStore::new();
-        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
 
         assert_eq!(auth.su_count(), 1, "bootstrap lays down exactly one su");
         let op = auth.stub_operator().expect("a bootstrapped operator");
@@ -453,8 +455,7 @@ mod tests {
     #[test]
     fn quell_drops_su_from_the_operator_verdict() {
         let reg = CapRegistry::new();
-        let store = MemoryAccountStore::new();
-        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
         let op = auth.stub_operator().unwrap();
 
         assert!(auth.verdict_for(Some(op), false).is_su());
@@ -468,7 +469,7 @@ mod tests {
     fn guest_verdict_has_no_authority() {
         let mut reg = CapRegistry::new();
         let build = reg.register_cap("build");
-        let auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
         let v = auth.verdict_for(None, false);
         assert!(!v.is_su());
         assert!(!v.permits(build), "a guest holds no capability");
@@ -480,11 +481,11 @@ mod tests {
         let build = reg.register_cap("build");
         let ban = reg.register_cap("ban");
         // A populated store: one su operator plus a plain builder granted only "build".
-        let store = MemoryAccountStore::with_records(vec![
+        let store = AccountsSnapshot::from_records(vec![
             record(1, &[], true),
             record(2, &["build"], false),
         ]);
-        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(store, Arc::new(reg)).unwrap();
 
         let builder = auth.verdict_for(Some(AccountId(2)), false);
         assert!(builder.permits(build), "granted cap admitted");
@@ -496,9 +497,9 @@ mod tests {
     fn populated_store_with_zero_su_refuses_to_boot() {
         let mut reg = CapRegistry::new();
         reg.register_cap("build");
-        let store = MemoryAccountStore::with_records(vec![record(1, &["build"], false)]);
+        let store = AccountsSnapshot::from_records(vec![record(1, &["build"], false)]);
         assert_eq!(
-            Accounts::boot(&store, Arc::new(reg)).err(),
+            Accounts::boot(store, Arc::new(reg)).err(),
             Some(AuthError::NoSuperuser),
             "a populated store with no su refuses rather than minting one"
         );
@@ -507,9 +508,9 @@ mod tests {
     #[test]
     fn unknown_grant_refuses_to_boot() {
         let reg = CapRegistry::new(); // never registers "build"
-        let store = MemoryAccountStore::with_records(vec![record(1, &["build"], true)]);
+        let store = AccountsSnapshot::from_records(vec![record(1, &["build"], true)]);
         assert_eq!(
-            Accounts::boot(&store, Arc::new(reg)).err(),
+            Accounts::boot(store, Arc::new(reg)).err(),
             Some(AuthError::UnknownGrant {
                 account: AccountId(1),
                 name: "build".into(),
@@ -522,20 +523,21 @@ mod tests {
     fn records_round_trip_through_the_authority() {
         let mut reg = CapRegistry::new();
         reg.register_cap("build");
-        let store = MemoryAccountStore::with_records(vec![
+        let store = AccountsSnapshot::from_records(vec![
             record(1, &[], true),
             record(2, &["build"], false),
         ]);
-        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(store, Arc::new(reg)).unwrap();
 
-        let mut out = auth.to_records();
+        let snap = auth.snapshot();
+        let mut out = snap.records;
         out.sort_by_key(|r| r.id.0);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].id, AccountId(1));
         assert_eq!(out[0].handle, "acct1");
         assert!(out[0].is_su);
         assert_eq!(out[1].caps, vec!["build".to_string()]);
-        assert_eq!(out[1].version, RECORD_VERSION);
+        assert_eq!(snap.next_id, 3, "the high-water mark rides the snapshot");
     }
 
     #[test]
@@ -543,17 +545,16 @@ mod tests {
         let mut reg = CapRegistry::new();
         let build = reg.register_cap("build"); // quellable (the default)
         let member = reg.register_baseline_cap("member"); // survives quell
-        let store = MemoryAccountStore::with_records(vec![
+        let store = AccountsSnapshot::from_records(vec![
             record(1, &[], true),
             AccountRecord {
                 id: AccountId(2),
                 handle: "builder".into(),
                 caps: vec!["build".into(), "member".into()],
                 is_su: false,
-                version: RECORD_VERSION,
             },
         ]);
-        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
+        let auth = Accounts::boot(store, Arc::new(reg)).unwrap();
 
         let live = auth.verdict_for(Some(AccountId(2)), false);
         assert!(
@@ -571,7 +572,7 @@ mod tests {
     fn runtime_grant_then_revoke_tracks_the_verdict() {
         let mut reg = CapRegistry::new();
         let build = reg.register_cap("build");
-        let mut auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
+        let mut auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
 
         let builder = auth.create_account("builder");
         assert_eq!(auth.account_by_handle("builder"), Some(builder));
@@ -587,9 +588,39 @@ mod tests {
     }
 
     #[test]
+    fn mutations_mark_the_authority_dirty() {
+        let mut reg = CapRegistry::new();
+        reg.register_cap("build");
+
+        // The boot-time bootstrap is a mutation like any other: if it did not mark
+        // dirty, the operator would exist only in memory until the next grant.
+        let mut auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
+        assert!(auth.take_dirty(), "bootstrap must be persisted");
+        assert!(!auth.take_dirty(), "taking clears the flag");
+
+        let builder = auth.create_account("builder");
+        assert!(auth.take_dirty(), "create marks dirty");
+        auth.grant(builder, "build").unwrap();
+        assert!(auth.take_dirty(), "grant marks dirty");
+        auth.revoke(builder, "build").unwrap();
+        assert!(auth.take_dirty(), "revoke marks dirty");
+    }
+
+    #[test]
+    fn a_loaded_boot_starts_clean() {
+        let mut reg = CapRegistry::new();
+        reg.register_cap("build");
+        let store = AccountsSnapshot::from_records(vec![record(1, &[], true)]);
+        let mut auth = Accounts::boot(store, Arc::new(reg)).unwrap();
+        // Nothing mutated: booting from a populated store must not trigger a
+        // pointless save of what was just read.
+        assert!(!auth.take_dirty());
+    }
+
+    #[test]
     fn grant_of_an_unregistered_cap_errors() {
         let reg = CapRegistry::new(); // never registers "build"
-        let mut auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
+        let mut auth = Accounts::boot(AccountsSnapshot::empty(), Arc::new(reg)).unwrap();
         let acc = auth.create_account("someone");
         assert_eq!(
             auth.grant(acc, "build"),

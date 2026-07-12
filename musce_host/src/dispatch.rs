@@ -153,7 +153,7 @@ fn dispatch_through_actor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{CapRegistry, MemoryAccountStore};
+    use crate::auth::{AccountsSnapshot, CapRegistry};
     use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, EntityId, Id, Locus};
@@ -235,7 +235,7 @@ mod tests {
     /// Build a dispatcher for `game`, booting its account authority (an empty store,
     /// so one su operator is bootstrapped).
     fn dispatcher(game: Game) -> Dispatch {
-        let accounts = Accounts::boot(&MemoryAccountStore::new(), game.caps.clone()).unwrap();
+        let accounts = Accounts::boot(AccountsSnapshot::empty(), game.caps.clone()).unwrap();
         Dispatch::new(game, accounts)
     }
 
