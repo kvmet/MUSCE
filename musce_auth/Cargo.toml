@@ -1,0 +1,10 @@
+[package]
+name = "musce_auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = "0.5.3"
+musce_action = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true }

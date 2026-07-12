@@ -3,7 +3,10 @@
 //! until networking lands). The world is loaded before the first tick and saved
 //! synchronously on shutdown.
 
-pub mod auth;
+/// The account authority lives in its own leaf crate (`musce_auth`); re-exported
+/// under the path it grew up at so a game keeps addressing `musce_host::auth`.
+pub use musce_auth as auth;
+
 mod dispatch;
 mod session;
 

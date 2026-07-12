@@ -1,10 +1,9 @@
 //! The account authority: who exists, what each account may do, and how an account
-//! resolves to an authorization [`Verdict`]. A cohesive unit (the caps registry, the
-//! account records, the store, and the live authority) that lifts to a `musce_auth`
-//! crate as one piece when a second consumer lands. It depends on `musce_action`
-//! only for the check vocabulary it produces (`CapId`/`CapSet`/`Verdict`) and knows
-//! nothing of dispatch, `Sessions`, or the `World`. See
-//! `docs/architecture/accounts.md`.
+//! resolves to an authorization [`Verdict`]. A leaf crate so account identity can
+//! serve consumers beyond the sim host (a web or oauth frontend reads the same
+//! accounts). It depends on `musce_action` only for the check vocabulary it produces
+//! (`CapId`/`CapSet`/`Verdict`) and knows nothing of dispatch, sessions, or the
+//! `World`. See `docs/architecture/accounts.md`.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

@@ -6,8 +6,8 @@
 > grants reach the gate, and how the system boots. The permission *model* it serves
 > (capabilities, the superuser bit, quell) lives in
 > [authorization.md](authorization.md); read that first. The backend is still the
-> in-memory `MemoryAccountStore` (in `musce_host::auth`); the durable backend behind
-> the same `AccountStore` trait lands with authentication.
+> in-memory `MemoryAccountStore` (in the `musce_auth` crate); the durable backend
+> behind the same `AccountStore` trait lands with authentication.
 
 The model says the engine authorizes accounts on a flat set of capabilities plus a
 superuser bit. This covers the machinery that makes that real: resolving a
@@ -25,7 +25,7 @@ between them. **The check** (`musce_action`: `Gate`, `CapId`, `CapSet`, `Verdict
 the store, and the `Accounts` authority) produces a `Verdict` and knows nothing of
 dispatch or `Ctx`. **The wiring** here resolves one from the other, and is the only
 layer that knows all three exist. Keeping the caps registry and the account records
-out of the check layer is what lets the authority lift to `musce_auth` as one piece.
+out of the check layer is what lets the authority live in its own crate.
 
 `Gate` lives in `musce_action`, below the session and account authority in the host,
 so the check needs the actor's grants without `musce_action` depending on the host.
@@ -98,13 +98,15 @@ The store backend is the genuine decide-now artifact:
   a speculative parallel persistence layer); the reserved field is the addition-cheap
   hedge that makes the later seam possible.
 
-The **crate lift is a single unit**: the whole auth module (the caps registry, the
-account records, the `AccountStore` trait, and the `Accounts` authority) lifts into a
-leaf `musce_auth` crate when the second consumer lands. The check vocabulary it feeds
-(`CapId`, `CapSet`, `Verdict`) stays in `musce_action`, because `Gate::Cap` holds a
-`CapId` and `musce_action` sits below the host; `musce_auth` therefore depends on
-`musce_action`, not the reverse. The `conn -> account` resolution stays welded to the
-host's `Sessions`.
+The authority is its **own leaf crate**, `musce_auth`: the caps registry, the account
+records, the `AccountStore` trait, and the `Accounts` authority, as one cohesive unit.
+Account identity is the one piece of the system a consumer beyond the sim host (a web
+or oauth frontend, admin tooling) will read, so it does not live inside the host; the
+host re-exports it as `musce_host::auth` so a game keeps one import surface. The check
+vocabulary it feeds (`CapId`, `CapSet`, `Verdict`) stays in `musce_action`, because
+`Gate::Cap` holds a `CapId` and `musce_action` sits below the host; `musce_auth`
+therefore depends on `musce_action`, not the reverse. The `conn -> account` resolution
+stays welded to the host's `Sessions`.
 
 ## Account identity, and slice 1 without auth
 

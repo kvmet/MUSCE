@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 crossbeam-channel = { workspace = true }
 musce_action = { workspace = true }
+musce_auth = { workspace = true }
 musce_core = { workspace = true }
 musce_net = { workspace = true }
 musce_proto  = { workspace = true }
