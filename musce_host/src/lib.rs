@@ -96,10 +96,12 @@ pub struct Game {
     /// deserializes and persists. No-op for a game that adds no types.
     pub register: Register,
     /// The game's capability vocabulary, interned to `CapId`s while it wired its
-    /// gates. The runtime resolves account grant strings against this same registry,
-    /// so a gate's id and a grant's id denote the same capability. Empty for a game
-    /// with no capability-gated verbs. See `docs/architecture/authorization.md`.
-    pub caps: CapRegistry,
+    /// gates. Shared (`Arc`) so the account authority can hold the same registry it
+    /// resolves account grant strings against, so a gate's id and a grant's id denote
+    /// the same capability. Immutable once the game is built (all registration happens
+    /// during construction). Empty for a game with no capability-gated verbs. See
+    /// `docs/architecture/authorization.md`.
+    pub caps: Arc<CapRegistry>,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -228,7 +230,7 @@ fn sim_loop(
     // su, or an unknown grant, refuses to boot rather than run mis-authorized. Slice 1
     // stands up a trivial in-memory backend; a durable one lands with authentication.
     let account_store = MemoryAccountStore::new();
-    let accounts = match Accounts::boot(&account_store, &game.caps) {
+    let accounts = match Accounts::boot(&account_store, game.caps.clone()) {
         Ok(accounts) => accounts,
         Err(e) => {
             let msg = format!("account authority refused to boot: {e}");
@@ -363,7 +365,7 @@ mod tests {
             choose_actor: |_| None,
             systems: vec![],
             register: |_| {},
-            caps: CapRegistry::new(),
+            caps: Arc::new(CapRegistry::new()),
         }
     }
 

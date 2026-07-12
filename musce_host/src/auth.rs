@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use musce_action::{CapId, CapSet, Verdict};
 
@@ -205,22 +206,28 @@ struct Account {
 }
 
 /// The live account authority: sim-thread-owned, mirroring World-as-truth. Holds each
-/// account's resolved caps and su bit in memory and answers `verdict_for` at dispatch.
-/// The at-least-one-superuser invariant holds across boot (bootstrap or refuse); a
-/// runtime grant/su-write surface, and the per-mutation floor it needs, lands with
-/// slice 2 (slice 1 exposes no such surface, so there is nothing to guard yet).
+/// account's resolved caps and su bit in memory, owns (shares) the cap registry it is
+/// defined against so the runtime grant surface resolves without threading it, and
+/// answers `verdict_for` at dispatch. The at-least-one-superuser invariant holds across
+/// boot (bootstrap or refuse). The runtime surface here grants and revokes non-su caps
+/// only; su is out of band, so the per-mutation su-count floor lands with the
+/// delete/su-write surface in the authentication slice.
 pub struct Accounts {
     accounts: BTreeMap<AccountId, Account>,
     next_id: u64,
+    /// The cap vocabulary this authority resolves grants against, shared with the game
+    /// it was booted from. Immutable (registration finished at game construction).
+    registry: Arc<CapRegistry>,
 }
 
 impl Accounts {
     /// Build the authority from a store, resolving each record's grant strings to
-    /// `CapId`s against `registry`. Enforces the boot cases: an **empty** store
-    /// bootstraps one su operator; a **populated** store with **zero** su refuses; an
-    /// **unknown grant** refuses. (A store *load* error is the caller's refuse-to-boot,
-    /// never routed here as empty.)
-    pub fn boot(store: &impl AccountStore, registry: &CapRegistry) -> Result<Self, AuthError> {
+    /// `CapId`s against `registry` (which the authority then holds for its runtime
+    /// grant surface). Enforces the boot cases: an **empty** store bootstraps one su
+    /// operator; a **populated** store with **zero** su refuses; an **unknown grant**
+    /// refuses. (A store *load* error is the caller's refuse-to-boot, never routed here
+    /// as empty.)
+    pub fn boot(store: &impl AccountStore, registry: Arc<CapRegistry>) -> Result<Self, AuthError> {
         let mut accounts = BTreeMap::new();
         let mut max_id = 0;
         for rec in store.load() {
@@ -254,6 +261,7 @@ impl Accounts {
         let mut authority = Accounts {
             accounts,
             next_id: max_id + 1,
+            registry,
         };
 
         if authority.accounts.is_empty() {
@@ -316,15 +324,12 @@ impl Accounts {
     /// no-op. Updates the resolved set and, for a non-quellable cap, the baseline so
     /// `@quell` keeps it. Never touches su (su is out of band), so no su-floor
     /// concern arises here.
-    pub fn grant(
-        &mut self,
-        id: AccountId,
-        cap_name: &str,
-        registry: &CapRegistry,
-    ) -> Result<(), AccountError> {
-        let cap = registry
+    pub fn grant(&mut self, id: AccountId, cap_name: &str) -> Result<(), AccountError> {
+        let cap = self
+            .registry
             .resolve(cap_name)
             .ok_or_else(|| AccountError::UnknownCap(cap_name.to_string()))?;
+        let quellable = self.registry.is_quellable(cap);
         let account = self
             .accounts
             .get_mut(&id)
@@ -332,7 +337,7 @@ impl Accounts {
         if account.caps.insert(cap) {
             account.grants.push(cap_name.to_string());
         }
-        if !registry.is_quellable(cap) {
+        if !quellable {
             account.baseline.insert(cap);
         }
         Ok(())
@@ -340,13 +345,9 @@ impl Accounts {
 
     /// Revoke capability `cap_name` from an account. A no-op if it was not held.
     /// Never touches su, so the su-count floor is not engaged.
-    pub fn revoke(
-        &mut self,
-        id: AccountId,
-        cap_name: &str,
-        registry: &CapRegistry,
-    ) -> Result<(), AccountError> {
-        let cap = registry
+    pub fn revoke(&mut self, id: AccountId, cap_name: &str) -> Result<(), AccountError> {
+        let cap = self
+            .registry
             .resolve(cap_name)
             .ok_or_else(|| AccountError::UnknownCap(cap_name.to_string()))?;
         let account = self
@@ -435,7 +436,7 @@ mod tests {
     fn empty_store_bootstraps_one_su_operator() {
         let reg = CapRegistry::new();
         let store = MemoryAccountStore::new();
-        let auth = Accounts::boot(&store, &reg).unwrap();
+        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
 
         assert_eq!(auth.su_count(), 1, "bootstrap lays down exactly one su");
         let op = auth.stub_operator().expect("a bootstrapped operator");
@@ -454,7 +455,7 @@ mod tests {
     fn quell_drops_su_from_the_operator_verdict() {
         let reg = CapRegistry::new();
         let store = MemoryAccountStore::new();
-        let auth = Accounts::boot(&store, &reg).unwrap();
+        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
         let op = auth.stub_operator().unwrap();
 
         assert!(auth.verdict_for(Some(op), false).is_su());
@@ -468,7 +469,7 @@ mod tests {
     fn guest_verdict_has_no_authority() {
         let mut reg = CapRegistry::new();
         let build = reg.register_cap("build");
-        let auth = Accounts::boot(&MemoryAccountStore::new(), &reg).unwrap();
+        let auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
         let v = auth.verdict_for(None, false);
         assert!(!v.is_su());
         assert!(!v.permits(build), "a guest holds no capability");
@@ -484,7 +485,7 @@ mod tests {
             record(1, &[], true),
             record(2, &["build"], false),
         ]);
-        let auth = Accounts::boot(&store, &reg).unwrap();
+        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
 
         let builder = auth.verdict_for(Some(AccountId(2)), false);
         assert!(builder.permits(build), "granted cap admitted");
@@ -498,7 +499,7 @@ mod tests {
         reg.register_cap("build");
         let store = MemoryAccountStore::with_records(vec![record(1, &["build"], false)]);
         assert_eq!(
-            Accounts::boot(&store, &reg).err(),
+            Accounts::boot(&store, Arc::new(reg)).err(),
             Some(AuthError::NoSuperuser),
             "a populated store with no su refuses rather than minting one"
         );
@@ -509,7 +510,7 @@ mod tests {
         let reg = CapRegistry::new(); // never registers "build"
         let store = MemoryAccountStore::with_records(vec![record(1, &["build"], true)]);
         assert_eq!(
-            Accounts::boot(&store, &reg).err(),
+            Accounts::boot(&store, Arc::new(reg)).err(),
             Some(AuthError::UnknownGrant {
                 account: AccountId(1),
                 name: "build".into(),
@@ -526,7 +527,7 @@ mod tests {
             record(1, &[], true),
             record(2, &["build"], false),
         ]);
-        let auth = Accounts::boot(&store, &reg).unwrap();
+        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
 
         let mut out = auth.to_records();
         out.sort_by_key(|r| r.id.0);
@@ -553,7 +554,7 @@ mod tests {
                 version: RECORD_VERSION,
             },
         ]);
-        let auth = Accounts::boot(&store, &reg).unwrap();
+        let auth = Accounts::boot(&store, Arc::new(reg)).unwrap();
 
         let live = auth.verdict_for(Some(AccountId(2)), false);
         assert!(
@@ -571,28 +572,28 @@ mod tests {
     fn runtime_grant_then_revoke_tracks_the_verdict() {
         let mut reg = CapRegistry::new();
         let build = reg.register_cap("build");
-        let mut auth = Accounts::boot(&MemoryAccountStore::new(), &reg).unwrap();
+        let mut auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
 
         let builder = auth.create_account("builder");
         assert_eq!(auth.account_by_handle("builder"), Some(builder));
         assert!(!auth.verdict_for(Some(builder), false).permits(build));
 
-        auth.grant(builder, "build", &reg).unwrap();
+        auth.grant(builder, "build").unwrap();
         assert!(auth.verdict_for(Some(builder), false).permits(build));
         // Quellable by default, so a quelled builder sets it aside.
         assert!(!auth.verdict_for(Some(builder), true).permits(build));
 
-        auth.revoke(builder, "build", &reg).unwrap();
+        auth.revoke(builder, "build").unwrap();
         assert!(!auth.verdict_for(Some(builder), false).permits(build));
     }
 
     #[test]
     fn grant_of_an_unregistered_cap_errors() {
         let reg = CapRegistry::new(); // never registers "build"
-        let mut auth = Accounts::boot(&MemoryAccountStore::new(), &reg).unwrap();
+        let mut auth = Accounts::boot(&MemoryAccountStore::new(), Arc::new(reg)).unwrap();
         let acc = auth.create_account("someone");
         assert_eq!(
-            auth.grant(acc, "build", &reg),
+            auth.grant(acc, "build"),
             Err(AccountError::UnknownCap("build".into())),
             "granting an unknown cap is a typed error, not a silent no-op"
         );

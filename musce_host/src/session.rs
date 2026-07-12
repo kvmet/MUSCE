@@ -21,7 +21,7 @@ use musce_core::{EntityId, World};
 use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
 
 use crate::ChooseActor;
-use crate::auth::{AccountId, Accounts, CapRegistry};
+use crate::auth::{AccountId, Accounts};
 
 /// One live session: the per-connection state the floor owns. The character it
 /// drives (set by `@play`; the driven actor is resolved live from its `Focus`, see
@@ -158,17 +158,12 @@ impl Sessions {
     /// on top of the input stack. Returns whether the floor recognized the verb;
     /// the floor is the single authority on its own verbs, so an unrecognized one
     /// returns `false` and the caller routes it onward (to the admin table).
-    // The floor's single entry point coordinates several host-owned pieces (the
-    // world, the account authority and its cap registry, the game's actor policy);
-    // like `dispatch_command`, it carries them as parameters rather than bundling.
-    #[allow(clippy::too_many_arguments)]
     pub fn account_command(
         &mut self,
         id: ConnectionId,
         rest: &str,
         world: &World,
         accounts: &mut Accounts,
-        registry: &CapRegistry,
         choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) -> bool {
@@ -207,12 +202,12 @@ impl Sessions {
             "grant" => {
                 let handle = parts.next().unwrap_or("");
                 let cap = parts.next().unwrap_or("");
-                self.grant_cap(id, handle, cap, accounts, registry, emit);
+                self.grant_cap(id, handle, cap, accounts, emit);
             }
             "revoke" => {
                 let handle = parts.next().unwrap_or("");
                 let cap = parts.next().unwrap_or("");
-                self.revoke_cap(id, handle, cap, accounts, registry, emit);
+                self.revoke_cap(id, handle, cap, accounts, emit);
             }
             "quell" => self.quell(id, emit),
             _ => return false,
@@ -314,7 +309,6 @@ impl Sessions {
         handle: &str,
         cap: &str,
         accounts: &mut Accounts,
-        registry: &CapRegistry,
         emit: &mut impl FnMut(Outgoing),
     ) {
         if !self.is_operator(id, accounts) {
@@ -329,7 +323,7 @@ impl Sessions {
             feedback(id, &format!("No account named \"{handle}\"."), emit);
             return;
         };
-        match accounts.grant(acc, cap, registry) {
+        match accounts.grant(acc, cap) {
             Ok(()) => feedback(id, &format!("Granted \"{cap}\" to {handle}."), emit),
             Err(e) => feedback(id, &format!("Can't grant that: {e}."), emit),
         }
@@ -343,7 +337,6 @@ impl Sessions {
         handle: &str,
         cap: &str,
         accounts: &mut Accounts,
-        registry: &CapRegistry,
         emit: &mut impl FnMut(Outgoing),
     ) {
         if !self.is_operator(id, accounts) {
@@ -358,7 +351,7 @@ impl Sessions {
             feedback(id, &format!("No account named \"{handle}\"."), emit);
             return;
         };
-        match accounts.revoke(acc, cap, registry) {
+        match accounts.revoke(acc, cap) {
             Ok(()) => feedback(id, &format!("Revoked \"{cap}\" from {handle}."), emit),
             Err(e) => feedback(id, &format!("Can't revoke that: {e}."), emit),
         }
@@ -428,6 +421,7 @@ mod tests {
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Controls, Description, EntityId, Id};
     use musce_proto::Audience;
+    use std::sync::Arc;
 
     /// A local stand-in for a game's player kind: the engine has no `Player`
     /// concept, so these tests define their own marker to pick an actor by.
@@ -436,7 +430,7 @@ mod tests {
     /// An account authority with one bootstrapped su operator, for the `@operator`
     /// and `@quell` floor commands.
     fn accounts() -> Accounts {
-        Accounts::boot(&MemoryAccountStore::new(), &CapRegistry::new()).unwrap()
+        Accounts::boot(&MemoryAccountStore::new(), Arc::new(CapRegistry::new())).unwrap()
     }
 
     /// A loopback peer, so `@operator` elevation is available.
@@ -481,7 +475,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let id = ConnectionId(7);
         s.connect(id, None, &mut |_| {});
 
@@ -491,7 +484,6 @@ mod tests {
             "quit",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -510,7 +502,6 @@ mod tests {
         let mut s = Sessions::default();
         let mut world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let avatar = spawn_avatar(&mut world);
         let id = ConnectionId(3);
         s.connect(id, None, &mut |_| {});
@@ -521,7 +512,6 @@ mod tests {
             "play",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -544,7 +534,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let id = ConnectionId(2);
         s.connect(id, None, &mut |_| {});
 
@@ -556,7 +545,6 @@ mod tests {
             "bogus",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |o| out.push(o),
         );
@@ -569,7 +557,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let id = ConnectionId(2);
         s.connect(id, None, &mut |_| {});
         let handled = s.account_command(
@@ -577,7 +564,6 @@ mod tests {
             "who",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -589,7 +575,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let op = accounts.stub_operator().expect("a bootstrapped operator");
 
         // A loopback peer may elevate to the operator account.
@@ -600,7 +585,6 @@ mod tests {
             "operator",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -614,7 +598,6 @@ mod tests {
             "operator",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -626,7 +609,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let id = ConnectionId(1);
         s.connect(id, loopback(), &mut |_| {});
 
@@ -636,7 +618,6 @@ mod tests {
             "quell",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -646,7 +627,6 @@ mod tests {
             "quell",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -658,7 +638,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let builder = accounts.create_account("builder");
         let id = ConnectionId(1);
         s.connect(id, loopback(), &mut |_| {});
@@ -668,7 +647,6 @@ mod tests {
             "login builder",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -680,7 +658,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         accounts.create_account("builder");
         let id = ConnectionId(1);
         s.connect(id, None, &mut |_| {});
@@ -690,7 +667,6 @@ mod tests {
             "login builder",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );
@@ -706,7 +682,6 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let mut accounts = accounts();
-        let reg = CapRegistry::new();
         let id = ConnectionId(1);
         // Connected but never elevated: a guest cannot create accounts.
         s.connect(id, loopback(), &mut |_| {});
@@ -716,7 +691,6 @@ mod tests {
             "account new builder",
             &world,
             &mut accounts,
-            &reg,
             first_player_choose,
             &mut |_| {},
         );

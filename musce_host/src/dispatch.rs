@@ -93,7 +93,6 @@ impl Dispatch {
                 rest,
                 world,
                 &mut self.accounts,
-                &self.game.caps,
                 self.game.choose_actor,
                 emit,
             ) {
@@ -160,6 +159,7 @@ mod tests {
     use musce_core::{Description, EntityId, Id, Room};
     use musce_proto::{Audience, Capabilities};
     use std::net::SocketAddr;
+    use std::sync::Arc;
 
     /// A local stand-in for a game's player kind: the engine has no `Player`
     /// concept, so the router test defines its own marker to pick an actor by.
@@ -228,14 +228,14 @@ mod tests {
             choose_actor,
             systems: vec![],
             register: |_| {},
-            caps,
+            caps: Arc::new(caps),
         }
     }
 
     /// Build a dispatcher for `game`, booting its account authority (an empty store,
     /// so one su operator is bootstrapped).
     fn dispatcher(game: Game) -> Dispatch {
-        let accounts = Accounts::boot(&MemoryAccountStore::new(), &game.caps).unwrap();
+        let accounts = Accounts::boot(&MemoryAccountStore::new(), game.caps.clone()).unwrap();
         Dispatch::new(game, accounts)
     }
 
@@ -411,7 +411,7 @@ mod tests {
             choose_actor: |_| None,
             systems: vec![add_a, add_b],
             register: |_| {},
-            caps: CapRegistry::new(),
+            caps: Arc::new(CapRegistry::new()),
         };
         let dispatch = dispatcher(game);
         let mut world = World::new();

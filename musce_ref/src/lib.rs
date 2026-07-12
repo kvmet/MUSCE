@@ -13,6 +13,8 @@ mod sequences;
 mod systems;
 mod verbs;
 
+use std::sync::Arc;
+
 use musce_action::{Action, execute};
 use musce_core::World;
 use musce_host::Game;
@@ -38,7 +40,7 @@ pub fn game() -> Game {
             systems::death_cry,
         ],
         register: systems::register,
-        caps,
+        caps: Arc::new(caps),
     }
 }
 
