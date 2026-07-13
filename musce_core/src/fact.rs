@@ -4,6 +4,16 @@
 //! just happened so game logic can react (e.g. a death cry on destruction). The
 //! buffer hangs off `World` and is drained once per tick; see
 //! `docs/architecture/actions.md`.
+//!
+//! The set is deliberately small. A mutation earns a fact only where a reaction
+//! needs something it cannot reconstruct by querying the post-mutation world:
+//! either the mutation destroyed that state (destruction annihilates the dying
+//! entity's locus and name, hence the pre-removal snapshot in `Destroyed`) or the
+//! change is otherwise unobservable (a cascade removal happens below `execute`). A
+//! mutation whose result is fully queryable afterward gets no fact. Facts recover
+//! the unrecoverable; they do not narrate. `Moved` and `LocusChanged` are the
+//! proposed near-term additions (movement's vanished prior container and prior
+//! locus); see the doc for the full reasoning.
 
 use crate::id::EntityId;
 

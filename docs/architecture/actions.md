@@ -45,6 +45,15 @@ Structural mutations emit typed **facts** for game logic to react to. A fact is 
 thing that mutates still holds: a reaction reads facts and may produce its own
 actions, but the fact stream changes nothing on its own.
 
+**Which mutations get a fact, and why most do not.** The set is deliberately small
+and is *not* one-fact-per-mutator. A mutation earns a fact only where a reaction
+needs something it **cannot reconstruct by querying the post-mutation world**:
+either the mutation *destroyed* the state the reaction needs, or the change happened
+somewhere a system cannot otherwise observe. A mutation whose result is fully
+queryable afterward earns none, and a game that wants to fire on such an event uses
+a marker or a system, not this channel. Facts recover the *unrecoverable*; they do
+not narrate. This is the test every candidate fact below is measured against.
+
 Facts are emitted at the **`World` mutator layer (`despawn`), not `execute`**, and
 that placement is load-bearing. A single `@destroy` cascades through the relation
 layer *below* `execute` (a destroyed room takes its exits with it via
@@ -63,6 +72,39 @@ lets one reaction catch every removal in a recursive `@purge` (all `Direct`) yet
 skip the collateral of a single `@destroy <room>` (room `Direct`, exits
 `Cascade`). A `Cascade { root }` enrichment is deferred until a reaction needs to
 group a cascade by origin.
+
+`Destroyed` is the exemplar of the test: destruction annihilates the dying entity's
+locus and name (unrecoverable after the fact, hence the pre-removal snapshot) *and*
+its cascade removals happen below `execute` (otherwise unobservable). Both halves of
+the test at once, which is why it was the first fact.
+
+> Status: proposed, deferred until a reaction needs them; only `Destroyed` is built.
+
+Two more mutations meet the test, both about movement, and are the near-term
+additions:
+
+- **`Moved { entity, from, to }`** on every containment change. `from`/`to` are
+  containers; querying after a move yields only `to`, so the prior container `from`
+  is the vanished state this recovers. It serves containment-scoped reactions
+  (encumbrance, "the idol left the pedestal fires the trap").
+- **`LocusChanged { entity, from, to }`**, emitted *additionally* and *only* when
+  the move crosses the enclosing `Locus`. `from`/`to` are loci; `from` is the
+  vanished prior locus. It serves perception-scoped reactions (presence, "X left" /
+  "X arrived", region triggers, and the future shard handoff, which happens at the
+  locus boundary).
+
+They are two facts, not one `Moved` carrying four fields, because their audiences
+differ: a containment reaction never wants to think about loci, and a perception
+reaction never wants to recompute `from_locus != to_locus`. The engine computes the
+distinction once, at the mutator, where the vanishing `from_locus` is still
+resolvable. A same-locus reparent emits only `Moved`; a room-to-room walk emits
+both.
+
+By the same test, `Created`, `Related`, and `Unrelated` earn **no** fact: their
+result is fully queryable afterward (a spawned entity is right there; a new link is
+readable), so a game hooks them with a marker or a system. They become facts only if
+a concrete reaction ever needs pre-mutation state they destroy (e.g. the old target
+a re-`relate` overwrote), and then carrying exactly that and no more.
 
 Facts buffer on a transient `World` field, drained **once per tick** by
 `Dispatch::run_systems` at the top of the system loop into the read-only
