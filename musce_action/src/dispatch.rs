@@ -12,7 +12,7 @@ use musce_proto::{ConnectionId, Outgoing};
 use crate::audience::{self, Outbound};
 use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
-use crate::ctx::Ctx;
+use crate::ctx::{ColdOp, Ctx};
 
 /// A verb's parse-and-act function. Receives the command context and the
 /// argument tail (everything after the verb word). A game writes these and
@@ -110,7 +110,7 @@ pub fn dispatch_command(
     caller: Caller,
     line: &str,
     emit: &mut impl FnMut(Outgoing),
-) {
+) -> Vec<ColdOp> {
     let line = line.trim();
     let (word, rest) = match line.split_once(char::is_whitespace) {
         Some((w, r)) => (w, r.trim_start()),
@@ -122,22 +122,28 @@ pub fn dispatch_command(
     // reaches here with an empty tail (a lone `@`), which the host's empty-line guard
     // does not catch. Silent, matching how an empty bare line is dropped upstream.
     if word.is_empty() {
-        return;
+        return Vec::new();
     }
 
     let mut out: Vec<Outbound> = Vec::new();
-    {
+    // The block scopes `ctx` so its `&mut out` borrow ends before `out` is resolved;
+    // its tail hands back the cold-store requests the handler queued (a plain move,
+    // since a cold op needs no world/actor resolution).
+    let cold = {
         let mut ctx = Ctx::new(world, caller.actor, caller.conn, caller.verdict, &mut out);
         match table.lookup(&word.to_lowercase()) {
             Some(verb) if verb.gate.permits(caller.verdict) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
             None => ctx.feedback(format!("I don't understand \"{word}\".")),
         }
-    }
+        ctx.take_cold()
+    };
 
     for ob in out {
         audience::resolve(world, actors, ob, emit);
     }
+
+    cold
 }
 
 #[cfg(test)]

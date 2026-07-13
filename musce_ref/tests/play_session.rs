@@ -153,6 +153,67 @@ async fn connect_play_look_go_take() {
     let _ = handle.await.unwrap();
 }
 
+/// The cold content store, end to end: a seeded journal ships unwritten, so a first
+/// `read` reads blank; `inscribe` writes its text cold (`kv_put`), and a second
+/// `read` fetches it back (`kv_get`) and the game decodes it for delivery. Exercises
+/// the whole async cold path (verb -> cold channel -> cold task -> store -> event
+/// outbox) over the wire.
+#[tokio::test]
+async fn inscribe_then_read_a_book_round_trips_cold_storage() {
+    let addr = free_port().await;
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        accounts_db().await,
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // The seeded journal has no text yet: a read finds the key absent.
+    send(&mut writer, "read journal").await;
+    let blank = read_burst(&mut reader).await;
+    assert!(
+        blank.contains("nothing written"),
+        "an unwritten book reads blank, got: {blank:?}"
+    );
+
+    // Write the text cold, then read it back through the store.
+    send(
+        &mut writer,
+        "inscribe journal The moon was full that night.",
+    )
+    .await;
+    let wrote = read_burst(&mut reader).await;
+    assert!(
+        wrote.contains("You finish writing"),
+        "inscribe acks the write, got: {wrote:?}"
+    );
+
+    send(&mut writer, "read journal").await;
+    let text = read_burst(&mut reader).await;
+    assert!(
+        text.contains("The moon was full that night."),
+        "read returns the inscribed text, got: {text:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
 /// `pilot` redirects bare commands to the controlled puppet, and `release` brings
 /// them back to the character. Observed over the wire: after piloting the seeded
 /// drone, `go north` moves the *drone* (the arrival look shows the garden), while

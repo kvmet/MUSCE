@@ -32,6 +32,7 @@ pub fn register(world: &mut World) {
     world.register_component::<Locked>();
     world.register_component::<Special>();
     world.register_component::<Health>();
+    world.register_component::<crate::verbs::Readable>();
     crate::kinds::register(world);
     crate::exits::register(world);
     crate::names::register(world);

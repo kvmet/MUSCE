@@ -17,6 +17,29 @@ use crate::audience::Outbound;
 use crate::caps::{CapId, Verdict};
 use crate::event::Event;
 
+/// A handler's request to the cold content store ([`musce_persistence::KvStore`]),
+/// recorded during a command and carried out afterward, off the sim thread. A verb
+/// cannot touch the store directly (the sim holds none, and the store is async), so
+/// it records the intent here exactly as it records perception output in `out`; the
+/// runtime drains these and hands them to the cold task. A `Read` result is decoded
+/// by the game and delivered straight to `conn`; a `Write` overwrites the key's
+/// bytes and acks `conn`. See `docs/architecture/persistence.md`.
+pub enum ColdOp {
+    /// Fetch `key`; deliver its decoded value to `conn` rendered as `kind` (or a
+    /// "nothing there" line if the key is absent).
+    Read {
+        key: String,
+        conn: ConnectionId,
+        kind: EventKind,
+    },
+    /// Store `bytes` under `key`, overwriting; ack `conn` on completion.
+    Write {
+        key: String,
+        bytes: Vec<u8>,
+        conn: ConnectionId,
+    },
+}
+
 /// The per-command context handed to a handler: the world it mutates, the actor
 /// it acts through, the connection that issued it, and the output buffer it emits
 /// into. The actor is explicit so handlers are callable directly in tests and,
@@ -33,6 +56,12 @@ pub struct Ctx<'a> {
     pub conn: ConnectionId,
     verdict: &'a Verdict,
     out: &'a mut Vec<Outbound>,
+    /// Cold-store requests the handler recorded. Owned (not a borrowed sink like
+    /// `out`) because a cold op is self-contained and needs no world/actor
+    /// resolution: the dispatcher moves this vec out after the handler and routes it
+    /// to the cold task. Keeping it internal is what leaves `Ctx::new`'s signature
+    /// unchanged for the many handlers and tests that build a `Ctx` directly.
+    cold: Vec<ColdOp>,
 }
 
 impl<'a> Ctx<'a> {
@@ -49,6 +78,7 @@ impl<'a> Ctx<'a> {
             conn,
             verdict,
             out,
+            cold: Vec::new(),
         }
     }
 
@@ -74,6 +104,41 @@ impl<'a> Ctx<'a> {
     /// parse-level replies (unknown verb, gated) before any handler runs.
     pub fn feedback(&mut self, text: impl Into<String>) {
         self.emit_self(EventKind::Feedback, text);
+    }
+
+    /// Record a cold read: fetch `key` and deliver its decoded value to this
+    /// command's connection, rendered as `kind`. The fetch runs off the sim thread
+    /// after the handler returns; the result arrives asynchronously, so the handler
+    /// emits nothing itself for the read.
+    pub fn cold_read(&mut self, key: impl Into<String>, kind: EventKind) {
+        self.cold.push(ColdOp::Read {
+            key: key.into(),
+            conn: self.conn,
+            kind,
+        });
+    }
+
+    /// Record a cold write: store `bytes` under `key`, overwriting. Acked to this
+    /// command's connection once durable. The game encodes `bytes`; the store keeps
+    /// them opaque.
+    pub fn cold_write(&mut self, key: impl Into<String>, bytes: Vec<u8>) {
+        self.cold.push(ColdOp::Write {
+            key: key.into(),
+            bytes,
+            conn: self.conn,
+        });
+    }
+
+    /// The cold-store requests recorded so far. For tests that drive a handler
+    /// through a `Ctx` directly and assert what it queued.
+    pub fn cold_ops(&self) -> &[ColdOp] {
+        &self.cold
+    }
+
+    /// Move the recorded cold requests out, leaving the buffer empty. The dispatcher
+    /// calls this once, after the handler, to route them to the cold task.
+    pub(crate) fn take_cold(self) -> Vec<ColdOp> {
+        self.cold
     }
 
     /// Directed output to a specific entity, resolved to the connection(s) driving

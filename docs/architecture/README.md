@@ -89,7 +89,9 @@ Built:
   (`Fact::Destroyed`/`Moved`/`LocusChanged`, emitted at the mutator layer; see
   facts.md), JSON snapshot. (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
-- `musce_persistence`: World-as-truth save/load with a SQLite backend.
+- `musce_persistence`: World-as-truth save/load with a SQLite backend, plus the
+  cold content store (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB` table) for
+  large, rarely-read payloads kept off-heap.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
@@ -102,7 +104,10 @@ Built:
   account to an authorization verdict at the dispatch seam (the authority itself
   lives in `musce_auth`, re-exported as `musce_host::auth`), and persists account
   mutations through an async writer task fed by the sim loop's dirty-flag beat,
-  the account analogue of the snapshot path. After draining commands it runs the game's
+  the account analogue of the snapshot path. It also runs a cold-content task that
+  owns the `KvStore` and serves the game's cold reads/writes (`ColdOp`) off the sim
+  thread, delivering results back through the event outbox, with a game-injected
+  `decode_cold` turning opaque cold bytes into deliverable text. After draining commands it runs the game's
   injected systems (`Game.systems`) on the phase pipeline, resolving their output
   through the same audience resolver, and runs `Game.register` against a fresh
   world before load so a game's own component types deserialize and persist. Holds
@@ -135,9 +140,9 @@ Built:
   (`Actors`, derived from the floor's session attachments resolved through
   `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
-  the engine. Owns the bare verbs (`look`, `examine`/`x`, `inventory`/`i`,
-  `go`/bare direction, `take`, `drop`, `put`, `give`, `pilot`, `release`, `say`,
-  `tell`, `wave`, `attack`/`kill`, `help`) and the
+  the engine. Owns the bare verbs (`look`, `examine`/`x`, `read`, `inscribe`,
+  `inventory`/`i`, `go`/bare direction, `take`, `drop`, `put`, `give`, `pilot`,
+  `release`, `say`, `tell`, `wave`, `attack`/`kill`, `help`) and the
   admin/builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   and their parsing (gated on the game's own `build`/`possess` capabilities), the
@@ -151,6 +156,9 @@ Built:
   contents), the combat stat components (`Special`, the seven-stat
   block, and `Health`) landed with their first consumer `attack` (Strength drains a
   foe's `Health`; a lethal blow destroys it, converging on the `death_cry` reaction),
+  the `Readable` book (the first cold-content consumer: a resident entity holds only
+  the cold key, `read` fetches its text and `inscribe` overwrites it through the
+  engine's async cold-op path, decoded by a UTF-8 `decode_cold`),
   the takeable rule and
   the control rule, the shared `do_move` traversal helper (the one rule-checked
   move path, with a `Locked`-exit veto, run by `go`, `wander`, and sequences

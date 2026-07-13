@@ -13,7 +13,7 @@ use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
-use crate::verbs::{Health, Special};
+use crate::verbs::{Health, Readable, Special, book_key};
 
 /// Ticks between the patrolling sentry's steps, and the torch's burn-out lifetime.
 /// Sized against the e2e harness rather than arbitrarily small: at its 10ms tick
@@ -67,6 +67,29 @@ pub fn seed(world: &mut World) {
         "A dull copper coin, edges worn round.",
     );
     world.move_entity(coin, hall).expect("seed: place coin");
+
+    // A readable book to exercise the cold content store: the entity stays resident
+    // carrying only its key; its text lives cold in `kv` and is fetched by `read`.
+    // The key is entity-scoped, so it is set once here and never changes. It ships
+    // unwritten (the seed has no store), so the first `read` reads blank until an
+    // `inscribe`, which demonstrates the write->read round-trip.
+    let journal = spawn(world, |b| {
+        b.add(Item);
+        b.add(Name("a leather journal".into()));
+        b.add(Description(
+            "A slim leather journal, its pages soft with handling.".into(),
+        ));
+        b.add(Aliases(vec!["journal".into(), "book".into()]));
+    });
+    world.insert(
+        journal,
+        Readable {
+            key: book_key(journal),
+        },
+    );
+    world
+        .move_entity(journal, hall)
+        .expect("seed: place journal");
 
     let avatar = avatar(
         world,

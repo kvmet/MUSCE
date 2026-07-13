@@ -16,10 +16,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
-use musce_action::{CommandTable, System};
+use musce_action::{ColdOp, CommandTable, System};
 use musce_core::{EntityBlob, EntityId, Snapshot, World};
-use musce_persistence::{Loaded, Persistence, SCHEMA_VERSION, SqliteStore};
-use musce_proto::{Command, Outgoing};
+use musce_persistence::{KvStore, Loaded, Persistence, SCHEMA_VERSION, SqliteStore};
+use musce_proto::{Command, Delivery, EventKind, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -105,6 +105,13 @@ pub struct Game {
     /// during construction). Empty for a game with no capability-gated verbs. See
     /// `docs/architecture/authorization.md`.
     pub caps: Arc<CapRegistry>,
+    /// Turns a cold-store value's opaque bytes into the text delivered to a reader.
+    /// Injected because decoding is game knowledge (the game encoded the bytes on
+    /// write), so the engine's cold task never interprets a cold value: it calls
+    /// this. `Ok` is the body to deliver, `Err` a line shown when the bytes will not
+    /// decode. The reference game reads UTF-8; a game with a different cold encoding
+    /// supplies its own. See `docs/architecture/persistence.md`.
+    pub decode_cold: fn(&[u8]) -> Result<String, String>,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -134,6 +141,7 @@ pub async fn run(
     game: Game,
 ) -> Result<RunReport, Box<dyn std::error::Error + Send + Sync>> {
     store.init().await?;
+    store.kv_init().await?; // the cold content table shares the world's store
     let loaded = store.load().await?; // boot load, before any tick
 
     // A store that fails to read refuses to boot, never treated as empty: the
@@ -152,6 +160,14 @@ pub async fn run(
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<Command>();
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
 
+    // The cold-store boundary: cold requests out (tokio mpsc, drained by the cold
+    // task, which holds the store the sim never does). Its results ride the same
+    // event outbox straight to the reader, so the sim never sees the completion.
+    let (cold_tx, cold_rx) = tokio::sync::mpsc::unbounded_channel::<ColdOp>();
+    let cold_event_tx = event_tx.clone();
+    // A fn pointer, copied out before `game` moves into the sim thread.
+    let decode_cold = game.decode_cold;
+
     if let Some(addr) = config.listen_addr {
         match musce_net::start(addr, cmd_tx, event_rx).await {
             Ok(bound) => tracing::info!(%bound, "listening"),
@@ -161,6 +177,12 @@ pub async fn run(
 
     let persist = tokio::spawn(persistence_task(store.clone(), snap_rx, ack_tx));
     let account_persist = tokio::spawn(account_persistence_task(account_store.clone(), acct_rx));
+    let cold = tokio::spawn(cold_task(
+        store.clone(),
+        cold_rx,
+        cold_event_tx,
+        decode_cold,
+    ));
 
     let sim = std::thread::Builder::new()
         .name("musce-sim".into())
@@ -173,6 +195,7 @@ pub async fn run(
                 ack_rx,
                 cmd_rx,
                 event_tx,
+                cold_tx,
                 shutdown,
                 config,
                 game,
@@ -190,6 +213,10 @@ pub async fn run(
     // Awaited explicitly: the channel buffers unwritten snapshots after the sim
     // drops its sender, and returning before the drain would cancel them mid-write.
     let _ = account_persist.await;
+    // The cold task ends when the sim drops `cold_tx`; awaiting it drains any
+    // buffered cold writes to durability (a final `inscribe`'s bytes), the same
+    // reason the snapshot writer is awaited. The reader-facing ack is best-effort.
+    let _ = cold.await;
     let _ = sim.join();
     Ok(report)
 }
@@ -228,6 +255,57 @@ async fn persistence_task(
     }
 }
 
+/// Serves cold-store requests off the sim thread: this task is the only holder of
+/// the store on the async side. A `Read` fetches the key, hands the bytes to the
+/// game's `decode` (the engine interprets nothing), and delivers the result to the
+/// reader's connection through the shared event outbox; a `Write` overwrites the
+/// key and acks. Both send is best-effort: a closed connection just drops the line.
+/// The task ends when the sim drops the request sender.
+async fn cold_task(
+    store: SqliteStore,
+    mut cold_rx: UnboundedReceiver<ColdOp>,
+    event_tx: UnboundedSender<Outgoing>,
+    decode: fn(&[u8]) -> Result<String, String>,
+) {
+    while let Some(op) = cold_rx.recv().await {
+        let delivery = match op {
+            ColdOp::Read { key, conn, kind } => {
+                let (kind, body) = match store.kv_get(&key).await {
+                    // The value is opaque bytes; only the game knows how to read
+                    // them, so decoding is the injected game fn, never done here.
+                    Ok(Some(bytes)) => match decode(&bytes) {
+                        Ok(text) => (kind, text),
+                        Err(line) => (EventKind::Feedback, line),
+                    },
+                    Ok(None) => (
+                        EventKind::Feedback,
+                        "There is nothing written here.".to_string(),
+                    ),
+                    Err(e) => {
+                        tracing::error!(%key, error = %e, "cold read failed");
+                        (
+                            EventKind::Feedback,
+                            "The words swim and refuse to resolve.".to_string(),
+                        )
+                    }
+                };
+                Delivery::new(conn, kind, body)
+            }
+            ColdOp::Write { key, bytes, conn } => {
+                let line = match store.kv_put(&key, &bytes).await {
+                    Ok(()) => "You finish writing.",
+                    Err(e) => {
+                        tracing::error!(%key, error = %e, "cold write failed");
+                        "The ink will not take."
+                    }
+                };
+                Delivery::new(conn, EventKind::Feedback, line)
+            }
+        };
+        let _ = event_tx.send(Outgoing::Event(delivery));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sim_loop(
     loaded: Loaded,
@@ -237,6 +315,7 @@ fn sim_loop(
     ack_rx: Receiver<Ack>,
     cmd_rx: Receiver<Command>,
     event_tx: UnboundedSender<Outgoing>,
+    cold_tx: UnboundedSender<ColdOp>,
     shutdown: Arc<AtomicBool>,
     config: Config,
     game: Game,
@@ -327,9 +406,15 @@ fn sim_loop(
         // Drain the command inbox: the only entry point for external mutation.
         // The loop holds no command knowledge; it hands each command to the
         // dispatcher, which routes it to the right input-stack frame and emits
-        // events (and, for in-game frames, runs `execute` against the world).
+        // events (and, for in-game frames, runs `execute` against the world). A
+        // handler may also queue cold-store requests; those flow out here to the
+        // cold task exactly as snapshots flow to the persistence task.
         while let Ok(cmd) = cmd_rx.try_recv() {
-            dispatch.handle(cmd, &mut world, &mut emit);
+            for op in dispatch.handle(cmd, &mut world, &mut emit) {
+                if cold_tx.send(op).is_err() {
+                    tracing::error!("cold request channel closed; dropping request");
+                }
+            }
         }
 
         // The account persist beat: commands are the only account mutators, so
@@ -430,6 +515,7 @@ mod tests {
             systems: vec![],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),
+            decode_cold: |_| Ok(String::new()),
         }
     }
 

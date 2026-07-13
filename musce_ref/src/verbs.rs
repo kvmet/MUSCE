@@ -14,6 +14,7 @@
 use musce_action::{CommandTable, Ctx, Gate};
 use musce_proto::EventKind;
 
+mod books;
 mod combat;
 mod containers;
 mod control;
@@ -24,6 +25,7 @@ mod social;
 #[cfg(test)]
 mod tests;
 
+pub use books::{inscribe, read};
 pub use combat::attack;
 pub use containers::{give, put};
 pub use control::{pilot, release};
@@ -38,6 +40,9 @@ pub(crate) use movement::{Locked, MoveOutcome, do_move};
 // The combat stat components: read by `attack`, seeded on the avatar and its foes,
 // and registered for persistence in `systems::register`.
 pub(crate) use combat::{Health, Special};
+// The book marker and its key helper: seeded on readable entities and registered
+// for persistence in `systems::register`.
+pub(crate) use books::{Readable, book_key};
 
 /// Build the reference game's command table. Movement is registered first so
 /// single-letter direction abbreviations win their prefix ties (`s` is south, so
@@ -53,6 +58,8 @@ pub fn commands() -> CommandTable {
     t.register("look", Gate::Open, look);
     t.register("examine", Gate::Open, examine);
     t.register("x", Gate::Open, examine);
+    t.register("read", Gate::Open, read);
+    t.register("inscribe", Gate::Open, inscribe);
     t.register("inventory", Gate::Open, inventory);
     t.register("go", Gate::Open, go);
     t.register("take", Gate::Open, take);
@@ -75,7 +82,8 @@ pub fn commands() -> CommandTable {
 pub fn help(ctx: &mut Ctx, _args: &str) {
     ctx.emit_self(
         EventKind::Feedback,
-        "You can: look, examine <thing> (or x), inventory (or i), \
+        "You can: look, examine <thing> (or x), read <thing>, \
+         inscribe <thing> <words>, inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
          put <item> in <container>, give <item> to <someone>, \
          pilot <thing>, release, say <message>, tell <someone> <message>, \

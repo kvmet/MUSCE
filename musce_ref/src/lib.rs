@@ -42,6 +42,13 @@ pub fn game() -> Game {
         ],
         register: systems::register,
         caps: Arc::new(caps),
+        // This game's cold content is a book's text, stored as UTF-8. Decoding is
+        // the game's job (it owns the encoding); the engine's cold task calls this
+        // and never interprets the bytes. Non-UTF-8 is corruption on this path, so
+        // it surfaces a line rather than showing replacement glyphs.
+        decode_cold: |bytes| {
+            String::from_utf8(bytes.to_vec()).map_err(|_| "The text is unreadable.".to_string())
+        },
     }
 }
 

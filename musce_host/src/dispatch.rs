@@ -6,7 +6,7 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Caller, CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
+use musce_action::{Caller, ColdOp, CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
 
@@ -38,14 +38,27 @@ impl Dispatch {
         }
     }
 
-    /// Route one inbound command, pushing output through `emit`. Lifecycle and
-    /// the `@`-namespace land on the floor; a bare command acts through the
-    /// connection's attached actor, or reports having none.
-    pub fn handle(&mut self, cmd: Command, world: &mut World, emit: &mut impl FnMut(Outgoing)) {
+    /// Route one inbound command, pushing output through `emit` and returning any
+    /// cold-store requests the handler queued (empty for everything but an in-game
+    /// verb that read or wrote cold content). Lifecycle and the `@`-namespace land
+    /// on the floor; a bare command acts through the connection's attached actor, or
+    /// reports having none.
+    pub fn handle(
+        &mut self,
+        cmd: Command,
+        world: &mut World,
+        emit: &mut impl FnMut(Outgoing),
+    ) -> Vec<ColdOp> {
         let id = cmd.connection;
         match cmd.input {
-            Input::Connected { peer, .. } => self.floor.connect(id, peer, emit),
-            Input::Disconnected => self.floor.disconnect(id),
+            Input::Connected { peer, .. } => {
+                self.floor.connect(id, peer, emit);
+                Vec::new()
+            }
+            Input::Disconnected => {
+                self.floor.disconnect(id);
+                Vec::new()
+            }
             Input::Line(line) => self.handle_line(id, line.trim(), world, emit),
         }
     }
@@ -80,9 +93,9 @@ impl Dispatch {
         line: &str,
         world: &mut World,
         emit: &mut impl FnMut(Outgoing),
-    ) {
+    ) -> Vec<ColdOp> {
         if !self.floor.is_live(id) || line.is_empty() {
-            return;
+            return Vec::new();
         }
 
         if let Some(rest) = line.strip_prefix('@') {
@@ -90,7 +103,7 @@ impl Dispatch {
             // @operator/@quell); any other @-verb is an admin/builder command,
             // dispatched against the game's admin table with the same actor resolution
             // the bare frame uses. The floor reports whether it recognized the verb.
-            if !self.floor.account_command(
+            if self.floor.account_command(
                 id,
                 rest,
                 world,
@@ -98,6 +111,8 @@ impl Dispatch {
                 self.game.choose_actor,
                 emit,
             ) {
+                Vec::new()
+            } else {
                 dispatch_through_actor(
                     &self.floor,
                     &self.accounts,
@@ -106,7 +121,7 @@ impl Dispatch {
                     rest,
                     world,
                     emit,
-                );
+                )
             }
         } else {
             dispatch_through_actor(
@@ -117,7 +132,7 @@ impl Dispatch {
                 line,
                 world,
                 emit,
-            );
+            )
         }
     }
 }
@@ -134,14 +149,14 @@ fn dispatch_through_actor(
     line: &str,
     world: &mut World,
     emit: &mut impl FnMut(Outgoing),
-) {
+) -> Vec<ColdOp> {
     let Some(character) = floor.character_of(id) else {
         emit(Outgoing::Event(Delivery::new(
             id,
             EventKind::Feedback,
             "You have no character. Use @play to enter the world.",
         )));
-        return;
+        return Vec::new();
     };
     let actor = resolve_actor(world, character);
     // The verdict keys off the connection's account and quell state, never the
@@ -160,7 +175,7 @@ fn dispatch_through_actor(
         },
         line,
         emit,
-    );
+    )
 }
 
 #[cfg(test)]
@@ -242,6 +257,7 @@ mod tests {
             systems: vec![],
             register: |_| {},
             caps: Arc::new(caps),
+            decode_cold: |_| Ok(String::new()),
         }
     }
 
@@ -417,6 +433,7 @@ mod tests {
             systems: vec![add_a, add_b],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),
+            decode_cold: |_| Ok(String::new()),
         };
         let dispatch = dispatcher(game);
         let mut world = World::new();
