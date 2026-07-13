@@ -3,14 +3,16 @@
 //! into one row per component, so the same save/load-only data is also amenable to
 //! out-of-band analytics (a component census, cross-entity aggregation) run off the
 //! runtime tick path, which itself never queries the DB. Cold payloads that should
-//! not stay resident live in a separate content store ([`KvStore`]). SQLite now,
-//! Postgres to follow with the same shape. See `docs/architecture/persistence.md`.
+//! not stay resident live in a separate content store ([`KvStore`]). SQLite and
+//! Postgres both back these, one schema behind the traits, picked by the
+//! connection URL's scheme. See `docs/architecture/persistence.md`.
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
 use musce_core::{EntityBlob, EntityId, Id, Map, NamedComponent, Snapshot, Value};
 use sqlx::Row;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +45,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// What `load` returns: the persisted entities, the id high-water mark, and the
 /// schema version the entities were written at (for the migration seam).
+#[derive(Debug)]
 pub struct Loaded {
     pub entities: Vec<EntityBlob>,
     pub next_id: u64,
@@ -89,6 +92,121 @@ pub trait KvStore {
 const NEXT_ID_KEY: &str = "next_id";
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
+/// The world's table definitions, written once so the two backends cannot drift
+/// apart structurally. Only the dialect's type words vary: `int_ty` spells the
+/// 64-bit id columns (`INTEGER` on SQLite, `BIGINT` on Postgres). The `data`
+/// column is JSON text on both. Returns the entities/components/meta trio the
+/// `Persistence::init` contract creates; the cold `kv` table is [`kv_table_ddl`].
+fn world_tables_ddl(int_ty: &str) -> [String; 3] {
+    [
+        format!(
+            "CREATE TABLE IF NOT EXISTS entities (
+                entity_id {int_ty} PRIMARY KEY,
+                zone      {int_ty}
+            )"
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS components (
+                entity_id {int_ty} NOT NULL REFERENCES entities(entity_id),
+                tag       TEXT NOT NULL,
+                data      TEXT NOT NULL,
+                PRIMARY KEY (entity_id, tag)
+            )"
+        ),
+        "CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )"
+        .to_string(),
+    ]
+}
+
+/// The cold content table, kept parallel to [`world_tables_ddl`]. Only the byte
+/// column's type word varies: `BLOB` on SQLite, `BYTEA` on Postgres.
+fn kv_table_ddl(bytes_ty: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS kv (
+            key   TEXT PRIMARY KEY,
+            value {bytes_ty} NOT NULL
+        )"
+    )
+}
+
+/// Reassemble the rows a backend read into the world's `Loaded` form, enforcing
+/// the load invariants. Pure and backend-free: each store extracts primitives
+/// from its own driver, then hands them here, so both inherit exactly the same
+/// checks (every entity carries an `Id`, no orphan component rows, `next_id`
+/// clears the live max). Unit-tested without a database.
+///
+/// `marker`/`schema_version` are the parsed `meta` values, `None` when the row is
+/// missing or unparseable; `max_id` is the live id high-water from the roster.
+fn assemble(
+    roster: Vec<(i64, Option<i64>)>,
+    comp_rows: Vec<(i64, String, String)>,
+    max_id: Option<i64>,
+    marker: Option<u64>,
+    schema_version: Option<u32>,
+) -> Result<Loaded> {
+    // Group every component row by entity, rebuilding each `{tag: value}` object.
+    let mut groups: HashMap<i64, Map<String, Value>> = HashMap::new();
+    for (id, tag, data) in comp_rows {
+        groups
+            .entry(id)
+            .or_default()
+            .insert(tag, serde_json::from_str(&data)?);
+    }
+
+    let mut entities = Vec::with_capacity(roster.len());
+    for (id, zone) in &roster {
+        let map = groups.remove(id).unwrap_or_default();
+        // Every entity carries an Id; an Id-less reassembly means its component
+        // rows are missing (corrupt or partial write). Surface it rather than
+        // load an Id-less entity that only detonates at the next snapshot.
+        if !map.contains_key(Id::TAG) {
+            return Err(Error::IdlessEntity(EntityId(*id as u64)));
+        }
+        entities.push(EntityBlob {
+            id: EntityId(*id as u64),
+            zone: zone.map(|z| EntityId(z as u64)),
+            data: Value::Object(map),
+        });
+    }
+
+    // Component rows left ungrouped reference entities with no roster row:
+    // orphans the roster-driven assembly would otherwise drop silently.
+    if !groups.is_empty() {
+        let mut orphans: Vec<EntityId> = groups.keys().map(|&i| EntityId(i as u64)).collect();
+        orphans.sort();
+        return Err(Error::OrphanComponents(orphans));
+    }
+
+    // next_id can never fall to or below a live id, or the next save would
+    // reissue it over a stored entity. Enforce max(marker, live_max + 1); a
+    // missing or stale-low marker (a restored dump without meta) is corrected
+    // and warned, not silently trusted.
+    let floor = max_id.map(|m| m as u64 + 1).unwrap_or(1);
+    let marker = marker.unwrap_or(1);
+    if marker < floor {
+        tracing::warn!(
+            marker,
+            floor,
+            "next_id marker below the live max; using the floor to avoid reissuing a live id"
+        );
+    }
+    let next_id = marker.max(floor);
+
+    // A world written before versioning existed has no marker; treat it as the
+    // current version, since those are dev-only worlds carrying today's schema.
+    // A real older version triggers the migration seam at load.
+    let schema_version = schema_version.unwrap_or(SCHEMA_VERSION);
+
+    Ok(Loaded {
+        entities,
+        next_id,
+        schema_version,
+    })
+}
+
 #[derive(Clone)]
 pub struct SqliteStore {
     pool: SqlitePool,
@@ -114,32 +232,11 @@ impl SqliteStore {
 
 impl Persistence for SqliteStore {
     async fn init(&self) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS entities (
-                entity_id INTEGER PRIMARY KEY,
-                zone      INTEGER
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS components (
-                entity_id INTEGER NOT NULL REFERENCES entities(entity_id),
-                tag       TEXT    NOT NULL,
-                data      TEXT    NOT NULL,
-                PRIMARY KEY (entity_id, tag)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS meta (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
+        for ddl in world_tables_ddl("INTEGER") {
+            sqlx::query(sqlx::AssertSqlSafe(ddl))
+                .execute(&self.pool)
+                .await?;
+        }
         Ok(())
     }
 
@@ -219,107 +316,59 @@ impl Persistence for SqliteStore {
     }
 
     async fn load(&self) -> Result<Loaded> {
+        // Extract primitives from the driver, then hand the backend-free
+        // `assemble` the grouping, invariant checks, and next_id floor.
         let roster = sqlx::query("SELECT entity_id, zone FROM entities")
             .fetch_all(&self.pool)
-            .await?;
-
-        // Gather every component row once and group by entity, rebuilding each
-        // entity's `{tag: value}` object. Two queries, O(n), order-independent.
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<i64, _>("entity_id"),
+                    r.get::<Option<i64>, _>("zone"),
+                )
+            })
+            .collect();
         let comp_rows = sqlx::query("SELECT entity_id, tag, data FROM components")
             .fetch_all(&self.pool)
-            .await?;
-        let mut groups: HashMap<i64, Map<String, Value>> = HashMap::new();
-        for row in &comp_rows {
-            let id: i64 = row.get("entity_id");
-            let tag: String = row.get("tag");
-            let data: String = row.get("data");
-            groups
-                .entry(id)
-                .or_default()
-                .insert(tag, serde_json::from_str(&data)?);
-        }
-
-        let mut entities = Vec::with_capacity(roster.len());
-        for row in &roster {
-            let id: i64 = row.get("entity_id");
-            let zone: Option<i64> = row.get("zone");
-            let map = groups.remove(&id).unwrap_or_default();
-            // Every entity carries an Id; an empty or Id-less reassembly means the
-            // component rows are missing (corrupt or partial write). Surface it
-            // rather than load an Id-less entity that only detonates later at the
-            // next snapshot. The downstream check is a release-disabled debug_assert.
-            if !map.contains_key(Id::TAG) {
-                return Err(Error::IdlessEntity(EntityId(id as u64)));
-            }
-            entities.push(EntityBlob {
-                id: EntityId(id as u64),
-                zone: zone.map(|z| EntityId(z as u64)),
-                data: Value::Object(map),
-            });
-        }
-
-        // Component rows left ungrouped reference entities with no roster row:
-        // orphans the roster-driven assembly would otherwise drop silently.
-        if !groups.is_empty() {
-            let mut orphans: Vec<EntityId> = groups.keys().map(|&i| EntityId(i as u64)).collect();
-            orphans.sort();
-            return Err(Error::OrphanComponents(orphans));
-        }
-
-        // next_id can never fall to or below a live id, or the next save would
-        // reissue it over a stored entity. Enforce max(marker, live_max + 1); a
-        // missing or stale-low marker (a restored dump without meta) is corrected
-        // and warned, not silently trusted.
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<i64, _>("entity_id"),
+                    r.get::<String, _>("tag"),
+                    r.get::<String, _>("data"),
+                )
+            })
+            .collect();
         let max_id: Option<i64> = sqlx::query("SELECT MAX(entity_id) AS m FROM entities")
             .fetch_one(&self.pool)
             .await?
             .get("m");
-        let floor = max_id.map(|m| m as u64 + 1).unwrap_or(1);
-        let marker: u64 = sqlx::query("SELECT value FROM meta WHERE key = ?")
-            .bind(NEXT_ID_KEY)
-            .fetch_optional(&self.pool)
-            .await?
-            .map(|r| r.get::<String, _>("value"))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        if marker < floor {
-            tracing::warn!(
-                marker,
-                floor,
-                "next_id marker below the live max; using the floor to avoid reissuing a live id"
-            );
-        }
-        let next_id = marker.max(floor);
+        let marker = read_meta(&self.pool, NEXT_ID_KEY).await?;
+        let schema_version = read_meta(&self.pool, SCHEMA_VERSION_KEY).await?;
 
-        // A world written before versioning existed has no marker; treat it as the
-        // current version, since those are dev-only worlds carrying today's schema.
-        // A real older version triggers the migration seam at load.
-        let schema_version: u32 = sqlx::query("SELECT value FROM meta WHERE key = ?")
-            .bind(SCHEMA_VERSION_KEY)
-            .fetch_optional(&self.pool)
-            .await?
-            .map(|r| r.get::<String, _>("value"))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(SCHEMA_VERSION);
-
-        Ok(Loaded {
-            entities,
-            next_id,
-            schema_version,
-        })
+        assemble(roster, comp_rows, max_id, marker, schema_version)
     }
+}
+
+/// Read a `meta` value and parse it, `None` when the row is missing or does not
+/// parse (a restored dump without meta, a hand-edited store). SQLite-side; the
+/// Postgres store has its own `$1`-placeholder twin.
+async fn read_meta<T: FromStr>(pool: &SqlitePool, key: &str) -> Result<Option<T>> {
+    Ok(sqlx::query("SELECT value FROM meta WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?
+        .map(|r| r.get::<String, _>("value"))
+        .and_then(|s| s.parse().ok()))
 }
 
 impl KvStore for SqliteStore {
     async fn kv_init(&self) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS kv (
-                key   TEXT PRIMARY KEY,
-                value BLOB NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(kv_table_ddl("BLOB")))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -344,11 +393,340 @@ impl KvStore for SqliteStore {
     }
 }
 
+#[derive(Clone)]
+pub struct PostgresStore {
+    pool: PgPool,
+}
+
+impl PostgresStore {
+    /// Connect to an existing Postgres database. Unlike SQLite there is no
+    /// create-if-missing: the database must already exist (the deployment or CI
+    /// provisions it); `init` only creates tables within it. A single connection
+    /// keeps the writer serialized, mirroring the SQLite store.
+    pub async fn connect(url: &str) -> Result<Self> {
+        let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+        Ok(Self { pool })
+    }
+}
+
+impl Persistence for PostgresStore {
+    async fn init(&self) -> Result<()> {
+        for ddl in world_tables_ddl("BIGINT") {
+            sqlx::query(sqlx::AssertSqlSafe(ddl))
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn save(&self, snapshot: &Snapshot) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        for blob in &snapshot.entities {
+            let obj = blob.data.as_object().ok_or(Error::NotAnObject(blob.id))?;
+
+            sqlx::query(
+                "INSERT INTO entities (entity_id, zone) VALUES ($1, $2)
+                 ON CONFLICT(entity_id) DO UPDATE SET zone = excluded.zone",
+            )
+            .bind(blob.id.0 as i64)
+            .bind(blob.zone.map(|z| z.0 as i64))
+            .execute(&mut *tx)
+            .await?;
+
+            // Replace the whole component set: delete then insert, so a tag
+            // dropped since the last save does not resurrect on reload.
+            sqlx::query("DELETE FROM components WHERE entity_id = $1")
+                .bind(blob.id.0 as i64)
+                .execute(&mut *tx)
+                .await?;
+
+            for (tag, value) in obj {
+                sqlx::query("INSERT INTO components (entity_id, tag, data) VALUES ($1, $2, $3)")
+                    .bind(blob.id.0 as i64)
+                    .bind(tag.as_str())
+                    .bind(serde_json::to_string(value)?)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
+        for id in &snapshot.deletes {
+            sqlx::query("DELETE FROM components WHERE entity_id = $1")
+                .bind(id.0 as i64)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM entities WHERE entity_id = $1")
+                .bind(id.0 as i64)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query(
+            "INSERT INTO meta (key, value) VALUES ($1, $2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(NEXT_ID_KEY)
+        .bind(snapshot.next_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO meta (key, value) VALUES ($1, $2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(SCHEMA_VERSION_KEY)
+        .bind(SCHEMA_VERSION.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn load(&self) -> Result<Loaded> {
+        let roster = sqlx::query("SELECT entity_id, zone FROM entities")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<i64, _>("entity_id"),
+                    r.get::<Option<i64>, _>("zone"),
+                )
+            })
+            .collect();
+        let comp_rows = sqlx::query("SELECT entity_id, tag, data FROM components")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<i64, _>("entity_id"),
+                    r.get::<String, _>("tag"),
+                    r.get::<String, _>("data"),
+                )
+            })
+            .collect();
+        let max_id: Option<i64> = sqlx::query("SELECT MAX(entity_id) AS m FROM entities")
+            .fetch_one(&self.pool)
+            .await?
+            .get("m");
+        let marker = read_meta_pg(&self.pool, NEXT_ID_KEY).await?;
+        let schema_version = read_meta_pg(&self.pool, SCHEMA_VERSION_KEY).await?;
+
+        assemble(roster, comp_rows, max_id, marker, schema_version)
+    }
+}
+
+/// The Postgres twin of [`read_meta`]: a `$1`-placeholder read of a `meta` value.
+async fn read_meta_pg<T: FromStr>(pool: &PgPool, key: &str) -> Result<Option<T>> {
+    Ok(sqlx::query("SELECT value FROM meta WHERE key = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?
+        .map(|r| r.get::<String, _>("value"))
+        .and_then(|s| s.parse().ok()))
+}
+
+impl KvStore for PostgresStore {
+    async fn kv_init(&self) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(kv_table_ddl("BYTEA")))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn kv_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let row = sqlx::query("SELECT value FROM kv WHERE key = $1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.get::<Vec<u8>, _>("value")))
+    }
+
+    async fn kv_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO kv (key, value) VALUES ($1, $2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
+
+/// The world store as the runtime holds it: one of the concrete backends, chosen
+/// at connect time by the URL scheme. Forwards the `Persistence`/`KvStore`
+/// contract to the variant, so the runtime and a game program against the store
+/// without naming a backend. Adding a backend is a variant here plus its impl;
+/// no call site changes.
+#[derive(Clone)]
+pub enum WorldStore {
+    Sqlite(SqliteStore),
+    Postgres(PostgresStore),
+}
+
+impl WorldStore {
+    /// Connect to whichever backend the URL scheme names: `postgres://` or
+    /// `postgresql://` to Postgres, anything else (`sqlite://…`, `sqlite::memory:`)
+    /// to SQLite.
+    pub async fn connect(url: &str) -> Result<Self> {
+        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+            Ok(WorldStore::Postgres(PostgresStore::connect(url).await?))
+        } else {
+            Ok(WorldStore::Sqlite(SqliteStore::connect(url).await?))
+        }
+    }
+}
+
+impl Persistence for WorldStore {
+    async fn init(&self) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.init().await,
+            WorldStore::Postgres(p) => p.init().await,
+        }
+    }
+
+    async fn save(&self, snapshot: &Snapshot) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.save(snapshot).await,
+            WorldStore::Postgres(p) => p.save(snapshot).await,
+        }
+    }
+
+    async fn load(&self) -> Result<Loaded> {
+        match self {
+            WorldStore::Sqlite(s) => s.load().await,
+            WorldStore::Postgres(p) => p.load().await,
+        }
+    }
+}
+
+impl KvStore for WorldStore {
+    async fn kv_init(&self) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.kv_init().await,
+            WorldStore::Postgres(p) => p.kv_init().await,
+        }
+    }
+
+    async fn kv_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        match self {
+            WorldStore::Sqlite(s) => s.kv_get(key).await,
+            WorldStore::Postgres(p) => p.kv_get(key).await,
+        }
+    }
+
+    async fn kv_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.kv_put(key, value).await,
+            WorldStore::Postgres(p) => p.kv_put(key, value).await,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, Name, World};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// The store under test. `MUSCE_TEST_DB` unset → a private in-memory SQLite
+    /// (the local default); set → that URL's backend, so CI reruns the same
+    /// black-box assertions against Postgres. On Postgres each test gets its own
+    /// schema for parallel isolation, the equivalent of SQLite's per-connection
+    /// `:memory:` database.
+    async fn test_world_store() -> WorldStore {
+        match std::env::var("MUSCE_TEST_DB") {
+            Ok(base) => {
+                static NEXT: AtomicU64 = AtomicU64::new(0);
+                let schema = format!("musce_test_{}", NEXT.fetch_add(1, Ordering::Relaxed));
+                // Create the schema on a plain connection, then pin the store's
+                // search_path to it via the connection `options`, so every query
+                // this test runs lands in its own schema.
+                let admin = PostgresStore::connect(&base).await.unwrap();
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "CREATE SCHEMA IF NOT EXISTS {schema}"
+                )))
+                .execute(&admin.pool)
+                .await
+                .unwrap();
+                let sep = if base.contains('?') { '&' } else { '?' };
+                let url = format!("{base}{sep}options=-c%20search_path%3D{schema}");
+                WorldStore::Postgres(PostgresStore::connect(&url).await.unwrap())
+            }
+            Err(_) => WorldStore::connect("sqlite::memory:").await.unwrap(),
+        }
+    }
+
+    /// A component row carrying the mandatory `Id` tag, the minimum that lets a
+    /// roster entity pass `assemble`'s Id-less check.
+    fn id_row(id: i64) -> (i64, String, String) {
+        (id, Id::TAG.to_string(), id.to_string())
+    }
+
+    // `assemble` is the backend-free heart of every `load`: both stores hand it
+    // the same primitives, so testing it here covers the risky invariants (Id-less
+    // rejection, orphan detection, the next_id floor) for SQLite and Postgres at
+    // once, with no database.
+
+    #[test]
+    fn assemble_reassembles_entities_with_zone() {
+        let loaded = assemble(
+            vec![(1, Some(2))],
+            vec![id_row(1)],
+            Some(1),
+            Some(2),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(loaded.entities.len(), 1);
+        assert_eq!(loaded.entities[0].id, EntityId(1));
+        assert_eq!(loaded.entities[0].zone, Some(EntityId(2)));
+    }
+
+    #[test]
+    fn assemble_rejects_an_idless_entity() {
+        // A roster row whose component rows are missing reassembles Id-less.
+        let err = assemble(vec![(1, None)], vec![], None, Some(1), Some(1)).unwrap_err();
+        assert!(matches!(err, Error::IdlessEntity(EntityId(1))));
+    }
+
+    #[test]
+    fn assemble_rejects_orphan_components() {
+        // A component row whose entity has no roster row is an orphan.
+        let err = assemble(vec![], vec![id_row(99)], None, Some(1), Some(1)).unwrap_err();
+        assert!(matches!(err, Error::OrphanComponents(ids) if ids == vec![EntityId(99)]));
+    }
+
+    #[test]
+    fn assemble_next_id_clears_the_live_max() {
+        // A marker at or below the live max would reissue a stored id; the floor
+        // (live_max + 1) wins.
+        let loaded = assemble(vec![(5, None)], vec![id_row(5)], Some(5), Some(3), Some(1)).unwrap();
+        assert_eq!(loaded.next_id, 6);
+    }
+
+    #[test]
+    fn assemble_next_id_honors_a_marker_above_the_floor() {
+        // A marker past the live max is authoritative: ids were minted for
+        // entities since removed, and must not be reissued.
+        let loaded =
+            assemble(vec![(5, None)], vec![id_row(5)], Some(5), Some(10), Some(1)).unwrap();
+        assert_eq!(loaded.next_id, 10);
+    }
+
+    #[test]
+    fn assemble_missing_marker_and_version_default() {
+        // A restored dump without meta: next_id falls back to the floor, and the
+        // absent schema version reads as current (not a spurious migration).
+        let loaded = assemble(vec![(2, None)], vec![id_row(2)], Some(2), None, None).unwrap();
+        assert_eq!(loaded.next_id, 3);
+        assert_eq!(loaded.schema_version, SCHEMA_VERSION);
+    }
 
     #[tokio::test]
     async fn save_load_roundtrip() {
@@ -374,7 +752,7 @@ mod tests {
 
         let snap = w.snapshot();
 
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.init().await.unwrap();
         store.save(&snap).await.unwrap();
 
@@ -410,7 +788,7 @@ mod tests {
         b.add(Name("north".into()));
         let sign = w.spawn(b);
 
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.init().await.unwrap();
         store.save(&w.snapshot()).await.unwrap();
 
@@ -439,7 +817,7 @@ mod tests {
         b.add(Description("a thing".into()));
         w.spawn(b);
 
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.init().await.unwrap();
         store.save(&w.snapshot()).await.unwrap();
 
@@ -542,7 +920,7 @@ mod tests {
         b.add(Description("a thing".into()));
         let thing = w.spawn(b);
 
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.init().await.unwrap();
         store.save(&w.snapshot()).await.unwrap();
         assert_eq!(store.load().await.unwrap().entities.len(), 1);
@@ -554,7 +932,7 @@ mod tests {
 
     #[tokio::test]
     async fn kv_put_get_roundtrip() {
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.kv_init().await.unwrap();
 
         assert_eq!(store.kv_get("book:abc").await.unwrap(), None);
@@ -573,7 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn kv_shared_key_and_prefix_namespacing() {
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = test_world_store().await;
         store.kv_init().await.unwrap();
 
         // Many referents, one row: the shared-key (book-copy) case.

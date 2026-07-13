@@ -18,12 +18,12 @@ use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::{Receiver, Sender};
 use musce_action::{ColdOp, CommandTable, System};
 use musce_core::{EntityBlob, EntityId, Snapshot, World};
-use musce_persistence::{KvStore, Loaded, Persistence, SCHEMA_VERSION, SqliteStore};
+use musce_persistence::{KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
 use musce_proto::{Command, Delivery, EventKind, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::auth::{AccountStore, Accounts, AccountsSnapshot, CapRegistry};
+use crate::auth::{AccountBackend, Accounts, AccountsSnapshot, CapRegistry};
 use crate::dispatch::Dispatch;
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
@@ -134,8 +134,8 @@ enum Ack {
 /// in the async context, before the sim thread exists; the sim receives plain
 /// data and never holds a store.
 pub async fn run(
-    store: SqliteStore,
-    account_store: AccountStore,
+    store: WorldStore,
+    account_store: AccountBackend,
     config: Config,
     shutdown: Arc<AtomicBool>,
     game: Game,
@@ -225,7 +225,7 @@ pub async fn run(
 /// message is the complete set, so a failed write is repaired by the next one
 /// (and the shutdown drain runs this task to empty before `run` returns).
 async fn account_persistence_task(
-    store: AccountStore,
+    store: AccountBackend,
     mut acct_rx: UnboundedReceiver<AccountsSnapshot>,
 ) {
     while let Some(snap) = acct_rx.recv().await {
@@ -238,7 +238,7 @@ async fn account_persistence_task(
 /// Receives snapshots, writes them, and acks. A failed save sends `Failed` (not
 /// nothing) so the sim thread never blocks forever waiting on the final save.
 async fn persistence_task(
-    store: SqliteStore,
+    store: WorldStore,
     mut snap_rx: UnboundedReceiver<Snapshot>,
     ack_tx: Sender<Ack>,
 ) {
@@ -262,7 +262,7 @@ async fn persistence_task(
 /// key and acks. Both send is best-effort: a closed connection just drops the line.
 /// The task ends when the sim drops the request sender.
 async fn cold_task(
-    store: SqliteStore,
+    store: WorldStore,
     mut cold_rx: UnboundedReceiver<ColdOp>,
     event_tx: UnboundedSender<Outgoing>,
     decode: fn(&[u8]) -> Result<String, String>,
@@ -498,8 +498,8 @@ mod tests {
     use musce_core::{Description, Locus, World};
 
     /// A fresh in-memory account store; `run` initializes its schema.
-    async fn mem_accounts() -> AccountStore {
-        AccountStore::connect("sqlite::memory:").await.unwrap()
+    async fn mem_accounts() -> AccountBackend {
+        AccountBackend::connect("sqlite::memory:").await.unwrap()
     }
 
     /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
@@ -521,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn boot_tick_save_shutdown_lifecycle() {
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = WorldStore::connect("sqlite::memory:").await.unwrap();
         store.init().await.unwrap();
 
         // Seed a world (hall containing a thing) into the store.
@@ -577,7 +577,7 @@ mod tests {
     async fn refuses_to_boot_on_an_unreadable_world() {
         use musce_core::{EntityBlob, EntityId, Map, Value};
 
-        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let store = WorldStore::connect("sqlite::memory:").await.unwrap();
         store.init().await.unwrap();
 
         // Persist an otherwise-valid entity carrying a component tag no game

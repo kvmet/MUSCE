@@ -45,14 +45,15 @@ entities (
 components (
   entity_id INTEGER NOT NULL REFERENCES entities(entity_id),
   tag       TEXT    NOT NULL,      -- the component's stable string tag
-  data      TEXT    NOT NULL,      -- that one component's value as JSON (Postgres: JSONB)
+  data      TEXT    NOT NULL,      -- that one component's value as JSON text (both backends)
   PRIMARY KEY (entity_id, tag)
 )
 meta (key TEXT PRIMARY KEY, value TEXT)  -- next_id high-water mark, schema version
 ```
 
-`data` is **JSON text**: human-readable while the schema churns, JSONB on Postgres
-later. A component's value is stored as its JSON string, so a marker (which
+`data` is **JSON text** on both backends: human-readable while the schema churns
+(JSONB on Postgres is a deferred optimization, see Backends). A component's value is
+stored as its JSON string, so a marker (which
 serializes to `null`) is the text `"null"`, never a SQL `NULL`. The `entities` roster
 carries entity-level columns (only `zone` today) and anchors existence for load; the
 component rows hang off it.
@@ -227,7 +228,37 @@ and warned, not silently trusted.
 
 ## Backends
 
-`SqliteStore` exists now (dev and embedded). Postgres will follow with the same
-schema and JSONB, selected by configuration, behind the `Persistence` trait. A
-remote Postgres only adds latency to the async save path, never to the tick,
-which is the intended growth lever: move the DB off-box before sharding the sim.
+Two backends exist behind the `Persistence` + `KvStore` traits: `SqliteStore`
+(dev and embedded) and `PostgresStore` (production). The runtime holds a
+`WorldStore` enum that forwards to whichever the connection URL's scheme names
+(`sqlite://…` / `sqlite::memory:` vs `postgres://…`), so game code, `run`, and the
+persistence task never name a backend. The account store has the same shape
+(`AccountBackend` over `AccountStore`/`PostgresAccountStore`); world and accounts
+select independently by their own URLs.
+
+The schema is **logically identical** across backends and stays that way by
+construction: each table is written once as a template whose only variable is the
+dialect's type word, so structural drift is impossible. The forced differences are
+exactly three, dictated by Postgres's type system and how sqlx maps Rust types:
+
+| Column kind | SQLite | Postgres |
+|-------------|--------|----------|
+| 64-bit ids  | `INTEGER` | `BIGINT` (SQLite `INTEGER` is already 64-bit; PG's is 32) |
+| cold bytes (`kv.value`) | `BLOB` | `BYTEA` (PG has no `BLOB`) |
+| `is_su` flag | `INTEGER` | `BOOLEAN` (sqlx binds a Rust `bool` per dialect) |
+
+Everything else, including `data` as **JSON text** on both, is identical. JSONB is a
+Postgres-specific optimization left deferred behind the trait, not used yet; the two
+backends stay parallel until a concrete need earns it.
+
+The risky load logic (the id-less and orphan checks, the `next_id` floor, the
+account schema-version refusal) is a single backend-free function each store hands
+its extracted rows, so both inherit the same invariants and it is unit-tested
+without a database. Cross-backend parity is verified in CI, which reruns the
+black-box store tests against a real Postgres.
+
+**Deployment note:** unlike SQLite (`create_if_missing`), Postgres has no
+create-on-connect. The database must already exist; `init` only creates tables
+within it. A remote Postgres only adds latency to the async save path, never to the
+tick, which is the intended growth lever: move the DB off-box before sharding the
+sim.

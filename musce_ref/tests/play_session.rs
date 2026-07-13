@@ -8,15 +8,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use musce_host::{Config, run};
-use musce_persistence::SqliteStore;
+use musce_persistence::WorldStore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 /// A fresh in-memory account store, one per test sim. `run` initializes its
 /// schema; an empty store boots into the operator bootstrap.
-async fn accounts_db() -> musce_host::auth::AccountStore {
-    musce_host::auth::AccountStore::connect("sqlite::memory:")
+async fn accounts_db() -> musce_host::auth::AccountBackend {
+    musce_host::auth::AccountBackend::connect("sqlite::memory:")
         .await
         .unwrap()
 }
@@ -92,7 +92,7 @@ async fn connect_play_look_go_take() {
 
     // Empty in-memory DB: the sim seeds the starter world on first boot. `run`
     // initializes the schema itself.
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -161,7 +161,7 @@ async fn connect_play_look_go_take() {
 #[tokio::test]
 async fn inscribe_then_read_a_book_round_trips_cold_storage() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -222,7 +222,7 @@ async fn inscribe_then_read_a_book_round_trips_cold_storage() {
 #[tokio::test]
 async fn pilot_redirects_bare_commands_then_release_returns() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -293,7 +293,7 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
 #[tokio::test]
 async fn possess_then_pilot_drives_a_created_thing() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -357,7 +357,7 @@ async fn possess_then_pilot_drives_a_created_thing() {
 #[tokio::test]
 async fn a_wandering_creature_moves_with_no_input() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -409,7 +409,7 @@ async fn a_wandering_creature_moves_with_no_input() {
 #[tokio::test]
 async fn destroying_a_thing_cries_out_in_the_room() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -460,7 +460,7 @@ async fn destroying_a_thing_cries_out_in_the_room() {
 #[tokio::test]
 async fn admin_verbs_build_the_world() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -535,7 +535,7 @@ async fn admin_verbs_build_the_world() {
 #[tokio::test]
 async fn a_patrolling_sentry_moves_with_no_input() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -583,7 +583,7 @@ async fn a_patrolling_sentry_moves_with_no_input() {
 #[tokio::test]
 async fn a_torch_burns_out_and_cries_in_the_room() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
@@ -628,7 +628,7 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
 #[tokio::test]
 async fn attack_wears_a_foe_down_then_kills_it() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         tick_interval: Duration::from_millis(10),
@@ -689,7 +689,7 @@ async fn attack_wears_a_foe_down_then_kills_it() {
 #[tokio::test]
 async fn put_a_coin_in_the_chest_then_see_it_inside() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         tick_interval: Duration::from_millis(10),
@@ -749,7 +749,7 @@ async fn put_a_coin_in_the_chest_then_see_it_inside() {
 #[tokio::test]
 async fn give_a_coin_to_the_drone() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         tick_interval: Duration::from_millis(10),
@@ -803,7 +803,7 @@ async fn give_a_coin_to_the_drone() {
 #[tokio::test]
 async fn a_granted_builder_creates_until_quelled() {
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         tick_interval: Duration::from_millis(10),
@@ -902,7 +902,7 @@ async fn accounts_survive_a_restart() {
 
     // Sim 1: mint the builder and grant it build.
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let handle = tokio::spawn(run(
         store,
@@ -931,7 +931,7 @@ async fn accounts_survive_a_restart() {
     // Sim 2: same account store, fresh world. The builder and its grant must
     // already be there.
     let addr = free_port().await;
-    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let handle = tokio::spawn(run(
         store,

@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 use musce_action::{CapId, CapSet, Verdict};
 
-pub use store::{ACCOUNTS_SCHEMA_VERSION, AccountStore, StoreError};
+pub use store::{
+    ACCOUNTS_SCHEMA_VERSION, AccountBackend, AccountStore, PostgresAccountStore, StoreError,
+};
 
 /// Stable account identity: persisted, the store's primary key. Distinct from the
 /// ephemeral `ConnectionId` and from any `EntityId` (accounts are not world

@@ -14,6 +14,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # One job, fail-fast, compile-once. Steps run in order and a failure stops the
+  # rest, so a formatting/logic slip never reaches the (slower) Postgres pass.
+  # MUSCE_TEST_DB is read at test runtime, so the Postgres pass reuses the build
+  # from the SQLite pass and recompiles nothing.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -22,10 +26,40 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # Ordered cheapest-first so a formatting slip fails before the heavier steps.
+      - name: Install babashka
+        run: |
+          curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
+          chmod +x install
+          sudo ./install
+      # Ordered cheapest-first so a formatting or hygiene slip fails before the
+      # heavier steps.
       - name: Format
         run: cargo fmt --all --check
+      - name: Hygiene
+        run: bb bb/hygiene.clj ./
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Test
+      - name: Test (SQLite)
         run: cargo test --workspace
+
+      # Reached only if the SQLite pass succeeded. Started here, not as a job-level
+      # `services:` block, so it never spins up when an earlier step already failed.
+      - name: Start Postgres
+        run: |
+          docker run -d --name musce-pg \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=musce_test \
+            -p 5432:5432 postgres:16
+          for _ in $(seq 1 30); do
+            docker exec musce-pg pg_isready -U postgres && exit 0
+            sleep 1
+          done
+          echo "Postgres did not become ready" >&2
+          exit 1
+      # Only the store-touching crates: core/action logic is backend-agnostic and
+      # was already covered by the SQLite pass. Each test isolates itself in its own
+      # Postgres schema, so the default parallel runner is fine.
+      - name: Test (Postgres)
+        env:
+          MUSCE_TEST_DB: postgres://postgres:postgres@localhost:5432/musce_test
+        run: cargo test -p musce_persistence -p musce_auth
