@@ -5,9 +5,9 @@
 //! rule is game policy, kept in the handler, not in `execute`. See
 //! `docs/architecture/actions.md`.
 
-use musce_action::{Action, Ctx, execute};
-use musce_core::{EntityId, World};
-use musce_proto::EventKind;
+use musce::action::{Action, Ctx, execute};
+use musce::wire::EventKind;
+use musce::world::{EntityId, World};
 
 use crate::commit_or_log;
 use crate::kinds::{Container, Creature, Player};
@@ -175,10 +175,10 @@ fn is_being(world: &World, entity: EntityId) -> bool {
 mod tests {
     use super::*;
     use crate::kinds::{Container, Creature, Item, Player};
-    use musce_action::{Audience, Ctx, Outbound, Verdict};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Locus, Name, World};
-    use musce_proto::ConnectionId;
+    use musce::action::{Audience, Ctx, Outbound, Verdict};
+    use musce::wire::ConnectionId;
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Description, EntityId, Locus, Name, World};
 
     struct Fixture {
         world: World,

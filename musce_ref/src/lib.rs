@@ -16,17 +16,17 @@ mod verbs;
 
 use std::sync::Arc;
 
-use musce_action::{Action, execute};
-use musce_core::World;
-use musce_host::Game;
-use musce_host::auth::CapRegistry;
+use musce::Game;
+use musce::action::{Action, execute};
+use musce::auth::CapRegistry;
+use musce::world::World;
 
 /// Build the reference game: its bare and admin command tables, its world seed,
 /// its `@play` actor policy, the tick-loop systems it runs, the world-type
 /// registration the runtime applies before load, and its capability vocabulary. The
 /// admin table interns its caps into the registry as it wires its gates, so the
 /// registry is built first and handed over alongside the tables. `main` (and the
-/// end-to-end test) pass this to `musce_host::run`.
+/// end-to-end test) pass this to `musce::run`.
 pub fn game() -> Game {
     let mut caps = CapRegistry::new();
     let admin = admin::commands(&mut caps);

@@ -11,12 +11,12 @@
 //! back and a future `@find` will resolve names to). The creation verbs report the
 //! new id so a builder can chain commands.
 
-use musce_action::{Action, CommandTable, Ctx, Gate, execute};
-use musce_core::{ComponentBlob, Controls, Description, EntityId, Locus, Name, Value, World};
+use musce::action::{Action, CommandTable, Ctx, Gate, execute};
+use musce::world::{ComponentBlob, Controls, Description, EntityId, Locus, Name, Value, World};
 
 use crate::exits::ExitQueries;
-use musce_host::auth::CapRegistry;
-use musce_proto::EventKind;
+use musce::auth::CapRegistry;
+use musce::wire::EventKind;
 
 use crate::commit_or_log;
 use crate::kinds::{Container, Creature, Exit, Item};

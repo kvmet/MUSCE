@@ -7,7 +7,7 @@
 //! kinds the same way, without modifying the engine. See
 //! `docs/architecture/engine-and-game.md`.
 
-use musce_core::{NamedComponent, World};
+use musce::world::{NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 macro_rules! kind {

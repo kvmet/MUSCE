@@ -5,13 +5,13 @@
 //! resolves to connections the same way it does a verb's output. See
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::SystemCtx;
-use musce_core::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
+use musce::action::SystemCtx;
+use musce::world::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
 use crate::exits::ExitQueries;
 use crate::names::display_name;
 use crate::verbs::{Health, Locked, MoveOutcome, Special, do_move};
-use musce_proto::EventKind;
+use musce::wire::EventKind;
 use serde::{Deserialize, Serialize};
 
 /// Marks a creature that drifts between rooms on its own. A game-defined component
@@ -144,9 +144,9 @@ mod tests {
     use super::*;
     use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Player};
-    use musce_action::{Audience, Outbound};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, DestroyCause, Fact, Locus, Name};
+    use musce::action::{Audience, Outbound};
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Description, DestroyCause, Fact, Locus, Name};
     use std::time::SystemTime;
 
     struct Fixture {
@@ -299,7 +299,7 @@ mod tests {
         let mut f = fixture();
         let north = f.world.exits_of(f.a)[0]; // the single A->B exit
         f.world
-            .set_component(north, "locked", musce_core::Value::Null)
+            .set_component(north, "locked", musce::world::Value::Null)
             .unwrap();
 
         let out = tick(&mut f.world, WANDER_EVERY);

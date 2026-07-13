@@ -2,8 +2,8 @@
 //! controls, and releasing it back to itself. The rule (you may only pilot what
 //! you control) is game policy, enforced structurally by `set_focus`.
 
-use musce_action::Ctx;
-use musce_proto::EventKind;
+use musce::action::Ctx;
+use musce::wire::EventKind;
 
 use crate::names::{self, Scope, display_name};
 

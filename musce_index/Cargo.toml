@@ -1,0 +1,9 @@
+[package]
+name = "musce_index"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+musce_action = { workspace = true }
+musce_core = { workspace = true }
+serde = { workspace = true }

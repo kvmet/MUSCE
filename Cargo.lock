@@ -728,6 +728,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "musce"
+version = "0.1.0"
+dependencies = [
+ "musce_action",
+ "musce_core",
+ "musce_host",
+ "musce_index",
+ "musce_persistence",
+ "musce_proto",
+]
+
+[[package]]
 name = "musce_action"
 version = "0.1.0"
 dependencies = [
@@ -773,6 +785,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "musce_index"
+version = "0.1.0"
+dependencies = [
+ "musce_action",
+ "musce_core",
+ "serde",
+]
+
+[[package]]
 name = "musce_net"
 version = "0.1.0"
 dependencies = [
@@ -803,11 +824,7 @@ version = "0.1.0"
 name = "musce_ref"
 version = "0.1.0"
 dependencies = [
- "musce_action",
- "musce_core",
- "musce_host",
- "musce_persistence",
- "musce_proto",
+ "musce",
  "serde",
  "tokio",
  "tracing",

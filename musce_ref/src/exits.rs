@@ -16,7 +16,7 @@
 //! exits from saves and leave dangling exits on room despawn. Keeping both in this
 //! one module makes that impossible to get wrong.
 
-use musce_core::{Cascade, EntityId, Relation, World};
+use musce::world::{Cascade, EntityId, Relation, World};
 
 /// An exit's origin: source = the exit, target = the locus it leads out of. A
 /// locus's exit list is this relation's reverse index.
@@ -67,8 +67,8 @@ impl ExitQueries for World {
 mod tests {
     use super::*;
     use crate::kinds::Exit;
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{DestroyCause, Fact, Locus, Name};
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{DestroyCause, Fact, Locus, Name};
 
     fn room(w: &mut World) -> EntityId {
         let mut b = EntityBuilder::new();

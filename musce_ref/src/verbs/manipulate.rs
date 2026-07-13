@@ -2,9 +2,9 @@
 //! back down. The takeable rule is game policy, kept in the handler, not in
 //! `execute`.
 
-use musce_action::{Action, Ctx, execute};
-use musce_core::{EntityId, World};
-use musce_proto::EventKind;
+use musce::action::{Action, Ctx, execute};
+use musce::wire::EventKind;
+use musce::world::{EntityId, World};
 
 use crate::commit_or_log;
 use crate::names::{self, Scope, display_name};
@@ -91,7 +91,7 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
 /// not in `execute`.
 fn is_takeable(world: &World, entity: EntityId) -> bool {
     use crate::kinds::{Creature, Player};
-    use musce_core::Locus;
+    use musce::world::Locus;
     // A locus (in this game, a room) is a fixture, not takeable.
     !(world.has::<Locus>(entity) || world.has::<Player>(entity) || world.has::<Creature>(entity))
 }

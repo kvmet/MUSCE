@@ -8,14 +8,14 @@
 //! only the generic persisted-component plumbing. See
 //! `docs/architecture/sequences.md`.
 
-use musce_action::{Action, SystemCtx};
-use musce_core::{EntityId, Id, NamedComponent, World};
+use musce::action::{Action, SystemCtx};
+use musce::world::{EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
 use crate::names::{self, Scope, display_name};
 use crate::verbs::{MoveOutcome, do_move};
-use musce_proto::EventKind;
+use musce::wire::EventKind;
 
 /// What a step does when it fires. A rule-checked intent (resolved and vetoed the
 /// same way a player command is), not a raw structural `Action`. The MVP set is
@@ -296,9 +296,9 @@ mod tests {
     use super::*;
     use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Item};
-    use musce_action::{Audience, Outbound};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Locus, Name};
+    use musce::action::{Audience, Outbound};
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Description, Locus, Name};
     use std::time::SystemTime;
 
     /// Ticks per patrol step in the tests. The first beat fires at `next_at == STEP`

@@ -8,7 +8,7 @@
 //! in their room, or the exits leading out of it. A compass direction is just a
 //! common name. First match wins, higher tiers before lower.
 
-use musce_core::{Description, EntityId, NamedComponent, World};
+use musce::world::{Description, EntityId, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 use crate::exits::ExitQueries;
@@ -184,8 +184,8 @@ mod tests {
     use super::*;
     use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Exit, Item, Player};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Locus, Name};
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Locus, Name};
 
     fn spawn(w: &mut World, builder: EntityBuilder) -> EntityId {
         w.spawn(builder)

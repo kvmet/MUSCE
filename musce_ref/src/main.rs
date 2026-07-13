@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use musce_host::{Config, run};
-use musce_persistence::WorldStore;
+use musce::store::WorldStore;
+use musce::{Config, run};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // world DB) does not wipe logins.
     let accounts_url =
         std::env::var("MUSCE_ACCOUNTS_DB").unwrap_or_else(|_| "sqlite://accounts.sqlite".into());
-    let account_store = musce_host::auth::AccountBackend::connect(&accounts_url).await?;
+    let account_store = musce::auth::AccountBackend::connect(&accounts_url).await?;
     tracing::info!(%accounts_url, "accounts connected");
 
     let shutdown = Arc::new(AtomicBool::new(false));

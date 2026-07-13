@@ -4,11 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-musce_action = { workspace = true }
-musce_core = { workspace = true }
-musce_host = { workspace = true }
-musce_persistence = { workspace = true }
-musce_proto = { workspace = true }
+musce = { workspace = true, features = ["musce_index"] }
 serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

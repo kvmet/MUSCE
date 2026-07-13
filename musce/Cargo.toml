@@ -1,0 +1,15 @@
+[package]
+name = "musce"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+musce_index = ["dep:musce_index"]
+
+[dependencies]
+musce_action = { workspace = true }
+musce_core = { workspace = true }
+musce_host = { workspace = true }
+musce_index = { workspace = true, optional = true }
+musce_persistence = { workspace = true }
+musce_proto = { workspace = true }

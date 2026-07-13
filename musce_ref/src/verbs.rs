@@ -11,8 +11,8 @@
 //! `manipulate`, `control`, `social`); this root owns the command table that
 //! registers them and the `help` verb that lists them.
 
-use musce_action::{CommandTable, Ctx, Gate};
-use musce_proto::EventKind;
+use musce::action::{CommandTable, Ctx, Gate};
+use musce::wire::EventKind;
 
 mod books;
 mod combat;

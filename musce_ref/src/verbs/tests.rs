@@ -3,10 +3,10 @@ use super::{drop, examine, go, help, inventory, look, pilot, release, say, take,
 use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::{self, Scope};
-use musce_action::{Audience, Ctx, Outbound, Verdict};
-use musce_core::hecs::EntityBuilder;
-use musce_core::{Controls, Description, EntityId, Locus, Name, World};
-use musce_proto::ConnectionId;
+use musce::action::{Audience, Ctx, Outbound, Verdict};
+use musce::wire::ConnectionId;
+use musce::world::hecs::EntityBuilder;
+use musce::world::{Controls, Description, EntityId, Locus, Name, World};
 
 struct Fixture {
     world: World,

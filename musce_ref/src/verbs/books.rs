@@ -5,9 +5,9 @@
 //! `inscribe` overwrites it, both through the engine's cold-op channel (the sim
 //! never touches the store). See `docs/architecture/persistence.md`.
 
-use musce_action::Ctx;
-use musce_core::{EntityId, NamedComponent};
-use musce_proto::EventKind;
+use musce::action::Ctx;
+use musce::wire::EventKind;
+use musce::world::{EntityId, NamedComponent};
 use serde::{Deserialize, Serialize};
 
 use crate::names;
@@ -86,10 +86,10 @@ fn key_of(ctx: &Ctx, entity: EntityId) -> Option<String> {
 mod tests {
     use super::*;
     use crate::kinds::Item;
-    use musce_action::{ColdOp, Outbound, Verdict};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Locus, Name, World};
-    use musce_proto::ConnectionId;
+    use musce::action::{ColdOp, Outbound, Verdict};
+    use musce::wire::ConnectionId;
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Description, Locus, Name, World};
 
     fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
         let mut b = EntityBuilder::new();

@@ -49,16 +49,18 @@ musce_host::run(store, config, shutdown, game) -> RunReport
 ```
 
 `musce_ref` is the binary. Its `main` builds the reference `Game` and calls `run`.
-An external game does the same from its own repo: depend on the engine libraries,
+An external game does the same from its own repo: depend on the `musce` facade,
 build its own `Game`, call `run`. The runtime is reused; only the content differs.
 The single in-repo consequence is that `main` moves from `musce_host` into
 `musce_ref`.
 
-The dependency arrows stay acyclic and the runtime never depends on the game:
+The dependency arrows stay acyclic and the runtime never depends on the game. A
+game binds only to the facade, which re-exports the engine layers below it (see
+[The `musce` facade](#the-musce-facade)):
 
 ```
-musce_ref -> musce_host -> musce_action -> musce_core
-                                        -> musce_proto   (a dependency-free leaf)
+musce_ref -> musce -> musce_host -> musce_action -> musce_core
+                                                 -> musce_proto   (a dependency-free leaf)
 ```
 
 `musce_proto` is the wire vocabulary and references no world identity, so it sits
@@ -169,6 +171,30 @@ Name resolution leaves the engine entirely. Matching a typed noun against
 descriptions is opinionated, English-leaning policy, so it lives in `musce_ref`
 over the world queries the engine already exposes (`contents`, `container_of`,
 `enclosing_locus`, component access). The engine owns no naming.
+
+## The `musce` facade
+
+A game depends on one crate: `musce`. It re-exports the engine's game-facing
+surface, grouped by concept rather than by originating crate: `musce::world`
+(identity, components, relations, queries), `musce::action` (verbs, dispatch, the
+mutation path, the emit channel), `musce::store`, `musce::wire`, `musce::auth`,
+the composition root (`Game`, `run`, `Config`) at the crate root, and a curated
+`musce::prelude`. A game never names `musce_core`, `musce_host`, or the rest
+directly.
+
+Grouping by concept decouples a public path from the crate that currently holds
+the type: moving `Ctx` between crates, or merging two, does not move
+`musce::action::Ctx`. The facade is the only stability contract a game binds to;
+the internal split churns freely behind it.
+
+`musce_ref` depends on `musce` alone, so the surface is self-testing: a gap is a
+compile error in this repo, not a downstream game's discovery.
+
+Optional subsystems attach as cargo features on the facade, not as dependencies a
+game wires itself. The first is `musce_index` (a generic component index), taken
+with `features = ["musce_index"]` and a scaffold today; a plugin thus costs one
+feature flag on the crate a game already depends on, and stays invisible to games
+that do not enable it.
 
 ## What moves where
 

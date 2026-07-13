@@ -7,16 +7,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use musce_host::{Config, run};
-use musce_persistence::WorldStore;
+use musce::store::WorldStore;
+use musce::{Config, run};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 /// A fresh in-memory account store, one per test sim. `run` initializes its
 /// schema; an empty store boots into the operator bootstrap.
-async fn accounts_db() -> musce_host::auth::AccountBackend {
-    musce_host::auth::AccountBackend::connect("sqlite::memory:")
+async fn accounts_db() -> musce::auth::AccountBackend {
+    musce::auth::AccountBackend::connect("sqlite::memory:")
         .await
         .unwrap()
 }

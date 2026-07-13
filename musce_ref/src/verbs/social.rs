@@ -3,8 +3,8 @@
 //! room, `tell` directs a private line to one entity, and `wave at` is three-party
 //! (actor, target, and the rest of the room each read their own line).
 
-use musce_action::Ctx;
-use musce_proto::EventKind;
+use musce::action::Ctx;
+use musce::wire::EventKind;
 
 use crate::names::{self, Scope, display_name};
 

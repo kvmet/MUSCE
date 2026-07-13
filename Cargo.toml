@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["musce_action", "musce_auth","musce_core", "musce_host", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
+members = ["musce","musce_action", "musce_auth","musce_core", "musce_host", "musce_index", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.15"
@@ -14,10 +14,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # internal
+musce = { path = "musce" }
 musce_action = { path = "musce_action" }
 musce_auth = { path = "musce_auth" }
 musce_core = { path = "musce_core" }
 musce_host = { path = "musce_host" }
+musce_index = { path = "musce_index" }
 musce_net = { path = "musce_net" }
 musce_persistence = { path = "musce_persistence" }
 musce_proto = { path = "musce_proto" }

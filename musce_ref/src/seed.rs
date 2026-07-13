@@ -5,8 +5,8 @@
 //! drive. Both are game content over the world API the engine exposes. See
 //! `docs/architecture/engine-and-game.md`.
 
-use musce_core::hecs::EntityBuilder;
-use musce_core::{Controls, Description, EntityId, Locus, Name, World};
+use musce::world::hecs::EntityBuilder;
+use musce::world::{Controls, Description, EntityId, Locus, Name, World};
 
 use crate::exits::{LeadsFrom, LeadsTo};
 
@@ -193,7 +193,7 @@ pub fn choose_actor(world: &World) -> Option<EntityId> {
 fn find_player(world: &World) -> Option<EntityId> {
     world
         .ecs()
-        .query::<(&musce_core::Id, &Player)>()
+        .query::<(&musce::world::Id, &Player)>()
         .iter()
         .next()
         .map(|(id, _)| id.0)
@@ -334,7 +334,7 @@ mod tests {
     /// its handle in tests.
     fn find_described(w: &World, needle: &str) -> Option<EntityId> {
         w.ecs()
-            .query::<(&musce_core::Id, &Name)>()
+            .query::<(&musce::world::Id, &Name)>()
             .iter()
             .find(|(_, n)| n.0.contains(needle))
             .map(|(id, _)| id.0)

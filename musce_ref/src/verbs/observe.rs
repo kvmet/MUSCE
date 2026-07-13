@@ -2,9 +2,9 @@
 //! it. Pure output, mutating nothing. The prose helpers (`describe_room`,
 //! `description`) live here, the layer that renders the world to a player.
 
-use musce_action::Ctx;
-use musce_core::{Description, EntityId, World};
-use musce_proto::EventKind;
+use musce::action::Ctx;
+use musce::wire::EventKind;
+use musce::world::{Description, EntityId, World};
 
 use crate::exits::ExitQueries;
 use crate::kinds::Container;

@@ -2,10 +2,10 @@
 
 use super::*;
 use crate::kinds::{Container, Creature, Item, Player};
-use musce_action::{Audience, Outbound, Verdict};
-use musce_core::hecs::EntityBuilder;
-use musce_core::{Description, Locus};
-use musce_proto::ConnectionId;
+use musce::action::{Audience, Outbound, Verdict};
+use musce::wire::ConnectionId;
+use musce::world::hecs::EntityBuilder;
+use musce::world::{Description, Locus};
 
 fn spawn(w: &mut World, f: impl FnOnce(&mut EntityBuilder)) -> EntityId {
     let mut b = EntityBuilder::new();

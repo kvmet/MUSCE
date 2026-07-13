@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use musce_action::{Action, Ctx};
-use musce_core::{EntityId, NamedComponent, World};
-use musce_proto::EventKind;
+use musce::action::{Action, Ctx};
+use musce::wire::EventKind;
+use musce::world::{EntityId, NamedComponent, World};
 
 use crate::commit_or_log;
 use crate::exits::ExitQueries;

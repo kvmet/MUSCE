@@ -10,9 +10,9 @@
 //! `docs/architecture/actions.md` (`execute`), and `docs/architecture/facts.md`
 //! (the `Fact::Destroyed` reaction channel).
 
-use musce_action::{Action, Ctx};
-use musce_core::{NamedComponent, World};
-use musce_proto::EventKind;
+use musce::action::{Action, Ctx};
+use musce::wire::EventKind;
+use musce::world::{NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
@@ -143,7 +143,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
 
 /// The attacker's Strength, or 0 for a thing with no stat block (the caller floors
 /// damage at 1, so a statless attacker still lands a blow).
-fn attacker_strength(world: &World, actor: musce_core::EntityId) -> u8 {
+fn attacker_strength(world: &World, actor: musce::world::EntityId) -> u8 {
     world
         .entity(actor)
         .and_then(|er| er.get::<&Special>().map(|s| s.strength))
@@ -154,10 +154,10 @@ fn attacker_strength(world: &World, actor: musce_core::EntityId) -> u8 {
 mod tests {
     use super::*;
     use crate::kinds::{Creature, Item, Player};
-    use musce_action::{Audience, Ctx, Outbound, Verdict};
-    use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, EntityId, Fact, Locus, Name, World};
-    use musce_proto::ConnectionId;
+    use musce::action::{Audience, Ctx, Outbound, Verdict};
+    use musce::wire::ConnectionId;
+    use musce::world::hecs::EntityBuilder;
+    use musce::world::{Description, EntityId, Fact, Locus, Name, World};
 
     struct Fixture {
         world: World,
