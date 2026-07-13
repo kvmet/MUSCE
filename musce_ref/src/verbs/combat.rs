@@ -278,6 +278,7 @@ mod tests {
             b.add(Name("a brass key".into()));
         });
         f.world.move_entity(key, f.room).unwrap();
+        let _ = f.world.take_facts(); // discard the setup move; the attack's facts are what matter
 
         let out = run(&mut f.world, f.actor, |c| attack(c, "key"));
         assert!(

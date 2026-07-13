@@ -11,6 +11,9 @@ impl Relation for Containment {
     const ACYCLIC: bool = true;
     const ON_TARGET_DESPAWN: Cascade = Cascade::Reparent;
     const TARGET_TAG: &'static str = "contained_by";
+    // The one spatial relation: a containment change is a move, and crossing a
+    // `Locus` is a perception-scope change. See the movement facts in `fact.rs`.
+    const EMITS_MOVEMENT: bool = true;
 }
 
 impl World {

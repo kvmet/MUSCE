@@ -11,7 +11,8 @@
 > `musce_ref`,
 > which builds the `Game` the runtime is parameterized over (see
 > [engine-and-game.md](engine-and-game.md)). This document covers the core
-> executor, the action vocabulary, the structural-fact channel, and atomicity; the
+> executor, the action vocabulary, and atomicity; the structural-fact/reaction
+> channel is in [facts.md](facts.md); the
 > command/action boundary, the dispatch registry, and the `Event` output channel
 > are in [command-dispatch.md](command-dispatch.md), and the type-erased reflection
 > primitives and the admin/builder `@`-verbs that ride them
@@ -40,80 +41,14 @@ the action set is just the typed reflection of the `World` mutators.
 
 ### The structural-fact channel
 
-Structural mutations emit typed **facts** for game logic to react to. A fact is an
+Structural mutations emit typed **facts** (`Destroyed`, `Moved`, `LocusChanged`) for
+game logic to react to, drained once per tick into `SystemCtx::facts`. A fact is an
 *observation* of a mutation, not a mutation, so the rule that an action is the only
 thing that mutates still holds: a reaction reads facts and may produce its own
-actions, but the fact stream changes nothing on its own.
-
-**Which mutations get a fact, and why most do not.** The set is deliberately small
-and is *not* one-fact-per-mutator. A mutation earns a fact only where a reaction
-needs something it **cannot reconstruct by querying the post-mutation world**:
-either the mutation *destroyed* the state the reaction needs, or the change happened
-somewhere a system cannot otherwise observe. A mutation whose result is fully
-queryable afterward earns none, and a game that wants to fire on such an event uses
-a marker or a system, not this channel. Facts recover the *unrecoverable*; they do
-not narrate. This is the test every candidate fact below is measured against.
-
-Facts are emitted at the **`World` mutator layer (`despawn`), not `execute`**, and
-that placement is load-bearing. A single `@destroy` cascades through the relation
-layer *below* `execute` (a destroyed room takes its exits with it via
-`DespawnSources`); only the mutator recursion observes those cascade removals, so
-emitting from `execute` would catch the targeted entity and miss its collateral.
-`execute` and every verb call site therefore stay untouched.
-
-The one fact today is `Fact::Destroyed { entity, last_locus, name, cause }`.
-`last_locus` and `name` are a **pre-removal snapshot** (captured while the entity is
-still live, between the cascade-handler loop and the index removal, because a
-reaction reads them after it is gone): `name` is the entity's `Name` handle,
-falling back to its `Description` (`None` if it carries neither), and `last_locus`
-the `enclosing_locus` (`None` for a top-level locus or a location-less entity). `cause` is `Direct` for the
-targeted entity and `Cascade` for one swept up by a cascade; this discriminator
-lets one reaction catch every removal in a recursive `@purge` (all `Direct`) yet
-skip the collateral of a single `@destroy <room>` (room `Direct`, exits
-`Cascade`). A `Cascade { root }` enrichment is deferred until a reaction needs to
-group a cascade by origin.
-
-`Destroyed` is the exemplar of the test: destruction annihilates the dying entity's
-locus and name (unrecoverable after the fact, hence the pre-removal snapshot) *and*
-its cascade removals happen below `execute` (otherwise unobservable). Both halves of
-the test at once, which is why it was the first fact.
-
-> Status: proposed, deferred until a reaction needs them; only `Destroyed` is built.
-
-Two more mutations meet the test, both about movement, and are the near-term
-additions:
-
-- **`Moved { entity, from, to }`** on every containment change. `from`/`to` are
-  containers; querying after a move yields only `to`, so the prior container `from`
-  is the vanished state this recovers. It serves containment-scoped reactions
-  (encumbrance, "the idol left the pedestal fires the trap").
-- **`LocusChanged { entity, from, to }`**, emitted *additionally* and *only* when
-  the move crosses the enclosing `Locus`. `from`/`to` are loci; `from` is the
-  vanished prior locus. It serves perception-scoped reactions (presence, "X left" /
-  "X arrived", region triggers, and the future shard handoff, which happens at the
-  locus boundary).
-
-They are two facts, not one `Moved` carrying four fields, because their audiences
-differ: a containment reaction never wants to think about loci, and a perception
-reaction never wants to recompute `from_locus != to_locus`. The engine computes the
-distinction once, at the mutator, where the vanishing `from_locus` is still
-resolvable. A same-locus reparent emits only `Moved`; a room-to-room walk emits
-both.
-
-By the same test, `Created`, `Related`, and `Unrelated` earn **no** fact: their
-result is fully queryable afterward (a spawned entity is right there; a new link is
-readable), so a game hooks them with a marker or a system. They become facts only if
-a concrete reaction ever needs pre-mutation state they destroy (e.g. the old target
-a re-`relate` overwrote), and then carrying exactly that and no more.
-
-Facts buffer on a transient `World` field, drained **once per tick** by
-`Dispatch::run_systems` at the top of the system loop into the read-only
-`SystemCtx::facts` slice every system sees. That timing sets the latency: a
-command-driven mutation (`@destroy`/`@purge`, drained before `run_systems`) is
-reacted to the **same tick**, while a fact a system emits is seen the **next tick**
-(buffered after the drain), so no system sees another's fact within a pass and
-system order is cosmetic. A reaction is just a `System` iterating `ctx.facts`; the
-reference game's `death_cry` narrates a destroyed thing's demise to its room.
+actions, but the fact stream changes nothing on its own. The channel, its selection
+principle (a fact recovers only what a reaction cannot reconstruct by querying the
+post-mutation world), each fact's shape, and why most mutations emit none are in
+[facts.md](facts.md).
 
 Gameplay rules and perception prose live one layer up, in the verb handlers. "The
 move logic exists once" is achieved by a shared rule helper: `do_move` runs the

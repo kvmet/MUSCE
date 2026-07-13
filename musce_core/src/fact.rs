@@ -45,4 +45,34 @@ pub enum Fact {
         name: Option<String>,
         cause: DestroyCause,
     },
+    /// An entity's containment link changed: it was reparented from `from` to `to`.
+    /// `from` is the vanished prior container (`None` if it was a root), `to` the
+    /// new one (`None` if it became a root, e.g. reparented out of a destroyed
+    /// top-level container).
+    ///
+    /// Fires for the entity whose **own** containment link changed, and never for
+    /// the subtree it carries. A character walking rooms reparents only itself; the
+    /// sword in its hand keeps its link (`contained_by` the character), so the
+    /// engine emits nothing for the sword. That is deliberate: the sword's locus
+    /// change is *derivable* from this fact plus the containment tree (the sword is
+    /// under the character, so it went where the character went), and a fact exists
+    /// only for what a reaction cannot reconstruct. A consumer that needs the moved
+    /// subtree walks `descendants(entity)` from this fact, once, only when it cares.
+    /// See `docs/architecture/actions.md`.
+    Moved {
+        entity: EntityId,
+        from: Option<EntityId>,
+        to: Option<EntityId>,
+    },
+    /// A move carried an entity across a perception boundary: its `enclosing_locus`
+    /// changed from `from` to `to` (`None` for a location-less entity or a top-level
+    /// locus). Emitted **in addition to** `Moved`, and only when the locus actually
+    /// differs, so a perception reaction subscribes to this alone and never
+    /// recomputes the boundary. Like `Moved`, it fires for the entity whose own link
+    /// changed, not its carried subtree (same derivability argument).
+    LocusChanged {
+        entity: EntityId,
+        from: Option<EntityId>,
+        to: Option<EntityId>,
+    },
 }

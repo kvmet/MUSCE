@@ -41,9 +41,12 @@ These hold across every subsystem:
   why there is no auto-scheduler. *(Built: the sim thread, the tick loop, and the
   system pipeline carrying `Game.systems`.)*
 - [actions.md](actions.md): the `Action` vocabulary as the single mutation path,
-  the structural-only executor, the structural-fact channel reactions read,
-  atomicity, and where rules and perception live. *(Built: the executor, the
-  `Fact` channel; the core verbs and seed live in `musce_ref`.)*
+  the structural-only executor, atomicity, and where rules and perception live.
+  *(Built: the executor; the core verbs and seed live in `musce_ref`.)*
+- [facts.md](facts.md): the structural-fact/reaction channel: the selection
+  principle (a fact recovers only what a reaction cannot reconstruct), the
+  `Destroyed`/`Moved`/`LocusChanged` facts, and the carried-subtree boundary.
+  *(Built.)*
 - [command-dispatch.md](command-dispatch.md): the command/action boundary, the
   `CommandTable` dispatch registry with prefix lookup, and the `Event` output
   channel with sim-side audience resolution. *(Built.)*
@@ -82,8 +85,9 @@ Built:
   `Controls` and `Focus` relations behind durable embodiment), relation-backed exit
   connectivity (the `LeadsFrom`/`LeadsTo` relations plus the general `Name`
   component, wired with the `DespawnSources` cascade; the `Exit` kind marker itself
-  is game vocabulary), the structural-fact buffer
-  (`Fact`, emitted at the `despawn` mutator layer), JSON snapshot. (Permissions are
+  is game vocabulary), the structural-fact channel
+  (`Fact::Destroyed`/`Moved`/`LocusChanged`, emitted at the mutator layer; see
+  facts.md), JSON snapshot. (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
 - `musce_persistence`: World-as-truth save/load with a SQLite backend.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`

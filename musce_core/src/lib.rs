@@ -126,6 +126,7 @@ mod tests {
         let hall = locus(&mut w, "hall");
         let coin = item(&mut w, "a gold coin");
         w.move_entity(coin, hall).unwrap();
+        let _ = w.take_facts(); // discard the setup move's facts
 
         w.despawn(coin);
         let facts = w.take_facts();
@@ -136,7 +137,10 @@ mod tests {
             last_locus,
             name,
             cause,
-        } = &facts[0];
+        } = &facts[0]
+        else {
+            panic!("expected Destroyed, got {:?}", facts[0]);
+        };
         assert_eq!(*entity, coin);
         assert_eq!(*last_locus, Some(hall));
         assert_eq!(name.as_deref(), Some("a gold coin"));
@@ -155,9 +159,120 @@ mod tests {
         let facts = w.take_facts();
 
         assert_eq!(facts.len(), 1);
-        let Fact::Destroyed { name, cause, .. } = &facts[0];
+        let Fact::Destroyed { name, cause, .. } = &facts[0] else {
+            panic!("expected Destroyed, got {:?}", facts[0]);
+        };
         assert!(name.is_none(), "no Name or Description means no name");
         assert_eq!(*cause, DestroyCause::Direct);
+    }
+
+    #[test]
+    fn move_within_a_locus_emits_moved_but_not_locus_changed() {
+        let mut w = World::new();
+        let hall = locus(&mut w, "hall");
+        let bag = container(&mut w, "bag");
+        let coin = item(&mut w, "coin");
+        w.move_entity(bag, hall).unwrap();
+        w.move_entity(coin, hall).unwrap(); // the coin starts in the hall
+        let _ = w.take_facts(); // discard setup moves
+
+        // Reparent into the bag: still enclosed by the hall, so Moved only, no
+        // LocusChanged.
+        w.move_entity(coin, bag).unwrap();
+        let facts = w.take_facts();
+        assert_eq!(
+            facts.len(),
+            1,
+            "same-locus reparent is Moved only: {facts:?}"
+        );
+        assert!(matches!(
+            facts[0],
+            Fact::Moved { entity, from: Some(f), to: Some(t) }
+                if entity == coin && f == hall && t == bag
+        ));
+    }
+
+    #[test]
+    fn move_across_loci_emits_moved_and_locus_changed() {
+        let mut w = World::new();
+        let hall = locus(&mut w, "hall");
+        let garden = locus(&mut w, "garden");
+        let mover = item(&mut w, "a wanderer");
+        w.move_entity(mover, hall).unwrap();
+        let _ = w.take_facts();
+
+        w.move_entity(mover, garden).unwrap();
+        let facts = w.take_facts();
+        assert_eq!(facts.len(), 2, "Moved + LocusChanged: {facts:?}");
+        assert!(matches!(
+            facts[0],
+            Fact::Moved { entity, from: Some(f), to: Some(t) }
+                if entity == mover && f == hall && t == garden
+        ));
+        assert!(matches!(
+            facts[1],
+            Fact::LocusChanged { entity, from: Some(f), to: Some(t) }
+                if entity == mover && f == hall && t == garden
+        ));
+    }
+
+    #[test]
+    fn a_carried_subtree_emits_no_movement_facts_of_its_own() {
+        let mut w = World::new();
+        let hall = locus(&mut w, "hall");
+        let garden = locus(&mut w, "garden");
+        let character = container(&mut w, "a character");
+        let coin = item(&mut w, "a coin");
+        w.move_entity(character, hall).unwrap();
+        w.move_entity(coin, character).unwrap(); // the coin is carried
+        let _ = w.take_facts();
+
+        // The character walks to the garden. Only its own containment link changed.
+        w.move_entity(character, garden).unwrap();
+        let facts = w.take_facts();
+
+        // Exactly the character's two facts; nothing for the coin, whose link never
+        // changed even though its enclosing locus did.
+        assert_eq!(facts.len(), 2, "only the character's facts: {facts:?}");
+        assert!(facts.iter().all(|f| match f {
+            Fact::Moved { entity, .. } | Fact::LocusChanged { entity, .. } => *entity == character,
+            _ => false,
+        }));
+
+        // The coin's locus really did change, and is *derivable*: it encloses to the
+        // garden now, exactly where the character went. That derivability is why the
+        // engine does not emit a fact for it.
+        assert_eq!(w.enclosing_locus(coin), Some(garden));
+    }
+
+    #[test]
+    fn reparent_cascade_emits_movement_for_surviving_children() {
+        let mut w = World::new();
+        let hall = locus(&mut w, "hall");
+        let bag = container(&mut w, "bag");
+        let coin = item(&mut w, "coin");
+        w.move_entity(bag, hall).unwrap();
+        w.move_entity(coin, bag).unwrap();
+        let _ = w.take_facts();
+
+        w.despawn(bag); // the coin reparents up to the hall: its own link changes
+        let facts = w.take_facts();
+
+        assert!(
+            facts.iter().any(|f| matches!(
+                f,
+                Fact::Moved { entity, from: Some(f), to: Some(t) }
+                    if *entity == coin && *f == bag && *t == hall
+            )),
+            "coin moved bag->hall: {facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|f| matches!(f, Fact::Destroyed { entity, .. } if *entity == bag))
+        );
+        // The coin stayed enclosed by the hall throughout, so no LocusChanged.
+        assert!(!facts.iter().any(|f| matches!(f, Fact::LocusChanged { .. })));
     }
 
     #[test]

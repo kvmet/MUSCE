@@ -27,6 +27,13 @@ pub trait Relation: 'static + Send + Sync {
     const ON_TARGET_DESPAWN: Cascade;
     /// Serialization tag for the forward link of this relation.
     const TARGET_TAG: &'static str;
+    /// Whether a change to this relation is a spatial *move* that emits `Moved`
+    /// (and `LocusChanged` when the enclosing `Locus` differs). True only for
+    /// `Containment`, the engine's one spatial relation: `enclosing_locus` is
+    /// defined over it, so it is the only relation whose reparenting changes an
+    /// entity's perception scope. Default `false`; the emit code is compiled out
+    /// for every other relation.
+    const EMITS_MOVEMENT: bool = false;
 }
 
 /// Forward link, stored on the source side: which target this source points to.

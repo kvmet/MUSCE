@@ -10,7 +10,7 @@
 > (see "Promoting the sweep skeleton" below). It sits on two
 > pieces of substrate: the tick-loop **system pipeline** (see
 > [concurrency.md](concurrency.md)) and the **structural-fact channel** the torch
-> converges with (`Fact::Destroyed`; see [actions.md](actions.md)).
+> converges with (`Fact::Destroyed`; see [facts.md](facts.md)).
 
 ## Timed behavior is a component, not a scheduler
 

@@ -311,15 +311,27 @@ impl World {
         if R::ACYCLIC && self.would_cycle::<R>(source, target) {
             return Err(RelationError::Cycle);
         }
-        if let Some(old) = self.target_of::<R>(source) {
-            if old == target {
-                return Ok(());
-            }
+        let from = self.target_of::<R>(source);
+        if from == Some(target) {
+            return Ok(());
+        }
+        // Capture the pre-move locus while the old link still stands; it is gone
+        // once the link is rewritten (see `emit_movement`). Only the containment
+        // relation reaches this branch.
+        let from_locus = if R::EMITS_MOVEMENT {
+            self.enclosing_locus(source)
+        } else {
+            None
+        };
+        if let Some(old) = from {
             self.remove_source::<R>(old, source);
         }
         let se = self.index.get(source).unwrap();
         let _ = self.ecs.insert_one(se, RelTarget::<R>::new(target));
         self.add_source::<R>(target, source);
+        if R::EMITS_MOVEMENT {
+            self.emit_movement(source, from, Some(target), from_locus);
+        }
         Ok(())
     }
 
@@ -408,11 +420,48 @@ impl World {
     }
 
     pub fn clear_target<R: Relation>(&mut self, source: EntityId) {
-        if let Some(old) = self.target_of::<R>(source) {
+        let from = self.target_of::<R>(source);
+        let from_locus = if R::EMITS_MOVEMENT {
+            self.enclosing_locus(source)
+        } else {
+            None
+        };
+        if let Some(old) = from {
             self.remove_source::<R>(old, source);
         }
         if let Some(se) = self.index.get(source) {
             let _ = self.ecs.remove_one::<RelTarget<R>>(se);
+        }
+        // A cleared containment link is a move to root (no container); nothing
+        // moved if there was no link to begin with.
+        if R::EMITS_MOVEMENT && from.is_some() {
+            self.emit_movement(source, from, None, from_locus);
+        }
+    }
+
+    /// Emit the movement facts for a containment change of `entity`: always
+    /// `Moved`, plus `LocusChanged` when the enclosing locus actually differs.
+    /// `from_locus` is captured by the caller *before* the change (it is
+    /// unrecoverable afterward); `to_locus` is read here, after. Called only for the
+    /// containment relation (`R::EMITS_MOVEMENT`), and only for the entity whose own
+    /// link changed: a carried subtree keeps its links, so its locus change is
+    /// derivable from this fact and is the consumer's to compute, not ours to emit
+    /// (see `fact.rs` / actions.md).
+    fn emit_movement(
+        &mut self,
+        entity: EntityId,
+        from: Option<EntityId>,
+        to: Option<EntityId>,
+        from_locus: Option<EntityId>,
+    ) {
+        self.emit_fact(Fact::Moved { entity, from, to });
+        let to_locus = self.enclosing_locus(entity);
+        if from_locus != to_locus {
+            self.emit_fact(Fact::LocusChanged {
+                entity,
+                from: from_locus,
+                to: to_locus,
+            });
         }
     }
 
