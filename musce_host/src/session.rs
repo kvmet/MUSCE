@@ -442,7 +442,7 @@ mod tests {
     /// world. Stands in for a game's injected `choose_actor`.
     fn first_player_choose(world: &World) -> Option<EntityId> {
         world
-            .ecs
+            .ecs()
             .query::<(&Id, &Avatar)>()
             .iter()
             .next()

@@ -61,6 +61,16 @@ different primitive, not yet needed.)
 - `RelSources<R>` on the target is the **reverse list, a derived index**. It is
   rebuilt from the forward links on load and never persisted.
 
+The reverse list is **unordered**: because it is rebuilt from the forward links on
+load rather than preserving live insertion order, the order of `sources_of` (and
+its wrappers `contents`, exit lists) is unspecified and not stable across a
+save/load. The engine promises membership, not order. A caller that wants a stable
+display order sorts at the display site by something meaningful to it (a name, a
+recency), which is presentation and so game-side anyway. Preserving true insertion
+order would mean persisting a per-source sequence and giving up the "reverse lists
+are derived" property; that is a deliberate future feature to build only if a
+concrete need for it appears, not a default we pay for.
+
 Each relation kind is a marker type implementing the `Relation` trait, which
 carries two `const` policies: `ACYCLIC` (whether `relate` rejects cycles) and
 `ON_TARGET_DESPAWN` (the cascade: `DespawnSources`, `Reparent`, or `Detach`).

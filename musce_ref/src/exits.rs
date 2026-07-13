@@ -71,7 +71,6 @@ mod tests {
     use musce_core::{DestroyCause, Fact, Locus, Name};
 
     fn room(w: &mut World) -> EntityId {
-        register(w);
         let mut b = EntityBuilder::new();
         b.add(Locus);
         w.spawn(b)
@@ -139,6 +138,7 @@ mod tests {
     #[test]
     fn despawn_room_with_exits_emits_direct_and_cascade_facts() {
         let mut w = World::new();
+        register(&mut w);
         let hall = room(&mut w);
         let garden = room(&mut w);
         let north = exit(&mut w, hall, garden, "north");

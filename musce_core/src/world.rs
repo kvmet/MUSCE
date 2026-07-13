@@ -28,7 +28,7 @@ struct RelationRegistry {
 /// The authoritative in-memory game state: a hecs World plus the identity index
 /// and the registries that drive persistence and relation bookkeeping.
 pub struct World {
-    pub ecs: hecs::World,
+    pub(crate) ecs: hecs::World,
     index: EntityIndex,
     next_id: u64,
     relations: RelationRegistry,
@@ -193,6 +193,19 @@ impl World {
         self.ecs.entity(self.index.get(id)?).ok()
     }
 
+    /// Read-only access to the underlying hecs world, for archetypal queries and
+    /// component reads (`query`, `get`, including `get::<&mut C>` via hecs's
+    /// interior borrow tracking). Structural mutation (spawn/despawn, relation
+    /// links, component set membership) goes through `World` so the identity index,
+    /// the cascade, and the reverse lists stay consistent, which is why this hands
+    /// out `&self` and the field itself is not public: a raw `ecs.despawn` would
+    /// bypass the cascade and resurrect the entity on the next load, and a raw
+    /// `ecs.spawn` would create an entity with no `Id`, invisible to every lookup
+    /// and a panic at the next snapshot.
+    pub fn ecs(&self) -> &hecs::World {
+        &self.ecs
+    }
+
     // --- type-erased component mutation (the reflection layer) -----------
     //
     // These mirror how `move_entity` wraps `relate`: the work needs the private
@@ -238,6 +251,29 @@ impl World {
         self.guard_tag(tag)?;
         self.components.remove_component(&mut self.ecs, e, tag)?;
         Ok(())
+    }
+
+    /// Insert or overwrite a typed component on a live entity; no-op if the id is
+    /// absent. The typed counterpart to `set_component` (which takes a runtime tag
+    /// and JSON), for game systems that mutate concrete component types on the hot
+    /// path without a JSON round-trip. Not for relation forward links (use
+    /// `Move`/`relate`, which keep the reverse index and cycle check correct) or
+    /// `Id` (identity must track the index); unlike the tag-driven path there is no
+    /// runtime guard, because naming one of those types here is a mistake visible at
+    /// the call site, not a runtime-string misroute.
+    pub fn insert<C: hecs::Component>(&mut self, id: EntityId, component: C) {
+        if let Some(e) = self.index.get(id) {
+            let _ = self.ecs.insert_one(e, component);
+        }
+    }
+
+    /// Remove a typed component from a live entity; no-op if the id or the component
+    /// is absent. The typed counterpart to `remove_component`; same caveats as
+    /// `insert`.
+    pub fn remove<C: hecs::Component>(&mut self, id: EntityId) {
+        if let Some(e) = self.index.get(id) {
+            let _ = self.ecs.remove_one::<C>(e);
+        }
     }
 
     /// Serialize just one named component back to JSON; `None` if absent. The read
@@ -329,6 +365,12 @@ impl World {
         self.ecs.entity(e).ok()?.get::<&RelTarget<R>>().map(|t| t.0)
     }
 
+    /// A target's sources (its reverse list). **Unordered:** the order is
+    /// unspecified and not stable across a save/load, because the reverse list is
+    /// a derived index rebuilt from the forward links on load, not preserved live
+    /// order. A caller that wants a stable display order (contents, exits,
+    /// inventory) sorts at the display site by something meaningful to it; the
+    /// engine promises membership, not order.
     pub fn sources_of<R: Relation>(&self, target: EntityId) -> Vec<EntityId> {
         self.index
             .get(target)
@@ -424,6 +466,17 @@ impl World {
     /// `confirm_saved`.
     pub(crate) fn pending_deletes(&self) -> Vec<EntityId> {
         self.despawned.clone()
+    }
+
+    /// The zone an entity belongs to, extracted into the snapshot row for future
+    /// shard-scoped loading. Unassigned until sharding exists, so every entity is
+    /// `None` today. This is the **one place** a zone is derived, so when zones
+    /// become real the choice is forced here: derive it (e.g. walk containment to a
+    /// zone-root) or read it from a zone relation. It must **never** become a raw
+    /// `EntityId` kept as authoritative component data in the blob, which would be a
+    /// cross-reference the despawn cascade cannot see (see sharding.md).
+    pub(crate) fn zone_of(&self, _entity: EntityId) -> Option<EntityId> {
+        None
     }
 
     /// Drop the given deletes from the pending set once they're durably saved.

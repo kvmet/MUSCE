@@ -17,7 +17,13 @@ time, but a few cheap conventions kept now make it reachable without a rewrite.
   synchronous reach-in, so an interaction can become a cross-process message
   later without changing call sites.
 - **Zone as a first-class concept.** A shard is "a set of zones." The
-  persistence schema already extracts a `zone` column for shard-scoped loads.
+  persistence schema already extracts a `zone` column for shard-scoped loads,
+  and `World::zone_of` is the single seam that derives it (a `None` stub today).
+  Two constraints for when zones become real: it stays **one zone per entity**
+  (an entity is owned by one shard at a time), and it is either **derived** at
+  snapshot time or modeled as a **relation**, never a raw `EntityId` stored as
+  authoritative component data (that would be a cross-reference the despawn
+  cascade cannot see; the same rule that keeps exits relation-backed).
 - **A locator indirection** (`EntityId -> shard`) that today always answers
   "local." All addressing routes through it, so there is one place to make it
   real.

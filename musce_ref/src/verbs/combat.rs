@@ -88,7 +88,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
             .expect("resolved target is live");
         let mut hp = ctx
             .world
-            .ecs
+            .ecs()
             .get::<&mut Health>(e)
             .expect("a fightable target has Health");
         hp.current = hp.current.saturating_sub(dmg);

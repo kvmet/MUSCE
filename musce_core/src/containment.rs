@@ -20,7 +20,9 @@ impl World {
         self.relate::<Containment>(entity, into)
     }
 
-    /// Immediate contents of a container (one level).
+    /// Immediate contents of a container (one level). **Unordered** (see
+    /// [`World::sources_of`]): order is not stable across a save/load, so a caller
+    /// wanting a stable display order sorts at the display site.
     pub fn contents(&self, container: EntityId) -> Vec<EntityId> {
         self.sources_of::<Containment>(container)
     }

@@ -169,7 +169,7 @@ pub fn choose_actor(world: &World) -> Option<EntityId> {
 /// account's chosen character.
 fn find_player(world: &World) -> Option<EntityId> {
     world
-        .ecs
+        .ecs()
         .query::<(&musce_core::Id, &Player)>()
         .iter()
         .next()
@@ -310,7 +310,7 @@ mod tests {
     /// First entity whose `Name` contains `needle`, for finding seeded content by
     /// its handle in tests.
     fn find_described(w: &World, needle: &str) -> Option<EntityId> {
-        w.ecs
+        w.ecs()
             .query::<(&musce_core::Id, &Name)>()
             .iter()
             .find(|(_, n)| n.0.contains(needle))

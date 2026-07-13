@@ -159,6 +159,15 @@ pub struct ComponentRegistry {
 
 impl ComponentRegistry {
     pub fn register<C: NamedComponent>(&mut self) {
+        // Registration is all-at-startup wiring (`World::new` then `Game.register`),
+        // so a duplicate tag is a programming error, never a runtime condition. Fail
+        // loudly before mutating anything, so a collision can't silently shadow the
+        // tag-keyed maps (last write wins) or double-push `sers` (double-serialize).
+        assert!(
+            !self.desers.contains_key(C::TAG),
+            "component tag {:?} is already registered; tags must be unique",
+            C::TAG
+        );
         self.sers.push(ser_one::<C>);
         self.desers.insert(C::TAG, deser_one::<C>);
         self.inserts.insert(C::TAG, insert_one::<C>);
@@ -259,6 +268,14 @@ pub enum RegistryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "already registered")]
+    fn register_rejects_duplicate_tag() {
+        let mut reg = ComponentRegistry::default();
+        reg.register::<Description>();
+        reg.register::<Description>();
+    }
 
     #[test]
     fn component_blob_keys_by_tag_with_marker_null_and_newtype_inner() {

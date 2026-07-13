@@ -190,7 +190,7 @@ mod tests {
 
         fn choose_actor(world: &World) -> Option<EntityId> {
             world
-                .ecs
+                .ecs()
                 .query::<(&Id, &Avatar)>()
                 .iter()
                 .next()
@@ -424,8 +424,8 @@ mod tests {
 
         dispatch.run_systems(&mut world, &ctx, &mut |_| {});
 
-        assert_eq!(world.ecs.query::<&MarkA>().iter().count(), 1);
-        assert_eq!(world.ecs.query::<&MarkB>().iter().count(), 1);
+        assert_eq!(world.ecs().query::<&MarkA>().iter().count(), 1);
+        assert_eq!(world.ecs().query::<&MarkB>().iter().count(), 1);
     }
 
     /// The connection-addressed feedback texts in an output batch.

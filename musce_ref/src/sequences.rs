@@ -127,11 +127,11 @@ fn push_instance(world: &mut World, carrier: EntityId, inst: Instance) {
         return;
     };
     if world.has::<Sequences>(carrier) {
-        if let Ok(mut seqs) = world.ecs.get::<&mut Sequences>(e) {
+        if let Ok(mut seqs) = world.ecs().get::<&mut Sequences>(e) {
             seqs.0.push(inst);
         }
     } else {
-        let _ = world.ecs.insert_one(e, Sequences(vec![inst]));
+        world.insert(carrier, Sequences(vec![inst]));
     }
 }
 
@@ -142,7 +142,7 @@ fn push_instance(world: &mut World, carrier: EntityId, inst: Instance) {
 pub fn sequence_sweep(ctx: &mut SystemCtx) {
     let carriers: Vec<(EntityId, Sequences)> = ctx
         .world
-        .ecs
+        .ecs()
         .query::<(&Id, &Sequences)>()
         .iter()
         .map(|(id, seqs)| (id.0, seqs.clone()))
@@ -276,13 +276,10 @@ fn fire(ctx: &mut SystemCtx, carrier: EntityId, intent: &Intent) {
 /// Overwrite the carrier's `Sequences` with the instances still running, or remove
 /// the component when none remain. Skipped entirely if the carrier was despawned.
 fn write_back(world: &mut World, carrier: EntityId, retained: Vec<Instance>) {
-    let Some(e) = world.index().get(carrier) else {
-        return;
-    };
     if retained.is_empty() {
-        let _ = world.ecs.remove_one::<Sequences>(e);
+        world.remove::<Sequences>(carrier);
     } else {
-        let _ = world.ecs.insert_one(e, Sequences(retained));
+        world.insert(carrier, Sequences(retained));
     }
 }
 

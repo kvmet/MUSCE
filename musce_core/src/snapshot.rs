@@ -41,7 +41,7 @@ impl World {
             let data = self.components().serialize_entity(er);
             entities.push(EntityBlob {
                 id,
-                zone: None,
+                zone: self.zone_of(id),
                 data,
             });
         }
