@@ -85,21 +85,29 @@ impl Default for CommandTable {
     }
 }
 
-/// Dispatch one command line against a command table for `actor`: look the verb
-/// up, gate-check it on the actor, run its handler to gather semantic output, then
-/// resolve those events' audiences to connections through `emit`. `actor` is the
-/// entity the connection drives. Frame selection (`@`-floor vs embodiment vs
-/// admin) is the host's job; this runs whichever table the host hands it, so it
-/// serves both the bare embodiment frame (the game table) and the admin frame
-/// (the `@`-verb table), the gate carrying the difference.
-#[allow(clippy::too_many_arguments)]
+/// The acting principal a dispatch runs under: the actor entity the connection
+/// drives, the connection that issued the command, and the resolved authorization
+/// [`Verdict`]. Bundled because they always travel together as "who is acting under
+/// what authority"; the world and the [`Actors`] index are ambient inputs, not part
+/// of the principal, so they stay separate arguments.
+pub struct Caller<'a> {
+    pub actor: EntityId,
+    pub conn: ConnectionId,
+    pub verdict: &'a Verdict,
+}
+
+/// Dispatch one command line against a command table for a [`Caller`]: look the verb
+/// up, gate-check it on the caller's verdict, run its handler to gather semantic
+/// output, then resolve those events' audiences to connections through `emit`. Frame
+/// selection (`@`-floor vs embodiment vs admin) is the host's job; this runs
+/// whichever table the host hands it, so it serves both the bare embodiment frame
+/// (the game table) and the admin frame (the `@`-verb table), the gate carrying the
+/// difference.
 pub fn dispatch_command(
     table: &CommandTable,
     world: &mut World,
     actors: &Actors,
-    actor: EntityId,
-    conn: ConnectionId,
-    verdict: &Verdict,
+    caller: Caller,
     line: &str,
     emit: &mut impl FnMut(Outgoing),
 ) {
@@ -109,11 +117,19 @@ pub fn dispatch_command(
         None => (line, ""),
     };
 
+    // A wordless line is a no-op, not a match. The empty string is a prefix of every
+    // verb, so lookup would otherwise fire the first-registered one; the `@`-namespace
+    // reaches here with an empty tail (a lone `@`), which the host's empty-line guard
+    // does not catch. Silent, matching how an empty bare line is dropped upstream.
+    if word.is_empty() {
+        return;
+    }
+
     let mut out: Vec<Outbound> = Vec::new();
     {
-        let mut ctx = Ctx::new(world, actor, conn, verdict, &mut out);
+        let mut ctx = Ctx::new(world, caller.actor, caller.conn, caller.verdict, &mut out);
         match table.lookup(&word.to_lowercase()) {
-            Some(verb) if verb.gate.permits(verdict) => (verb.handler)(&mut ctx, rest),
+            Some(verb) if verb.gate.permits(caller.verdict) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
             None => ctx.feedback(format!("I don't understand \"{word}\".")),
         }
@@ -175,9 +191,11 @@ mod tests {
             &table,
             world,
             actors,
-            actor,
-            conn,
-            &Verdict::guest(),
+            Caller {
+                actor,
+                conn,
+                verdict: &Verdict::guest(),
+            },
             line,
             &mut |o| out.push(o),
         );
@@ -214,6 +232,17 @@ mod tests {
     }
 
     #[test]
+    fn empty_line_is_a_noop() {
+        // A wordless line must not match a verb: the empty string is a prefix of
+        // every registered verb, so without the guard this fires the first one. The
+        // `@`-namespace reaches dispatch with an empty tail (a lone `@`), so this is
+        // the engine's guard against a bare `@` running the first admin verb.
+        let (mut world, actors, actor, conn) = world_with_player();
+        assert!(texts(&mut world, &actors, actor, conn, "").is_empty());
+        assert!(texts(&mut world, &actors, actor, conn, "   ").is_empty());
+    }
+
+    #[test]
     fn emit_kind_carries_through() {
         let (mut world, actors, actor, conn) = world_with_player();
         let mut t = CommandTable::new();
@@ -225,9 +254,11 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            actor,
-            conn,
-            &Verdict::guest(),
+            Caller {
+                actor,
+                conn,
+                verdict: &Verdict::guest(),
+            },
             "yell",
             &mut |o| out.push(o),
         );
@@ -258,9 +289,11 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            actor,
-            conn,
-            &guest,
+            Caller {
+                actor,
+                conn,
+                verdict: &guest,
+            },
             "smite",
             &mut |o| out.push(o),
         );
@@ -277,9 +310,11 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            actor,
-            conn,
-            &granted,
+            Caller {
+                actor,
+                conn,
+                verdict: &granted,
+            },
             "smite",
             &mut |o| out.push(o),
         );
@@ -295,9 +330,11 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            actor,
-            conn,
-            &su,
+            Caller {
+                actor,
+                conn,
+                verdict: &su,
+            },
             "smite",
             &mut |o| out.push(o),
         );

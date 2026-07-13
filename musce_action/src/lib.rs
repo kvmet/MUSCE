@@ -29,7 +29,7 @@ pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};
 pub use ctx::{Ctx, System, SystemCtx};
-pub use dispatch::{CommandTable, Gate, Handler, dispatch_command};
+pub use dispatch::{Caller, CommandTable, Gate, Handler, dispatch_command};
 pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};
 

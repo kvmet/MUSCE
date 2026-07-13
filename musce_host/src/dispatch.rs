@@ -6,7 +6,7 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
+use musce_action::{Caller, CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
 
@@ -149,7 +149,18 @@ fn dispatch_through_actor(
     // authority. Resolved once here, gating the game table and the admin table alike.
     let verdict = accounts.verdict_for(floor.account_of(id), floor.is_quelled(id));
     let actors = floor.audience_index(world);
-    dispatch_command(table, world, &actors, actor, id, &verdict, line, emit);
+    dispatch_command(
+        table,
+        world,
+        &actors,
+        Caller {
+            actor,
+            conn: id,
+            verdict: &verdict,
+        },
+        line,
+        emit,
+    );
 }
 
 #[cfg(test)]

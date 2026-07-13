@@ -157,12 +157,28 @@ machinery those engines need does not arise here.
 
 ## Journal
 
-The deferred crash-recovery journal is an *action journal*: because every mutation
-is an action through one executor, the deterministic replay log is the action
-stream into `execute`. This is an intent log, not a component diff, so it survives
-rule changes and stays auditable. Speech changes no world state, so it is not in
-this journal; an optional chat/experience log would be a separate log over the
-Event stream.
+The deferred crash-recovery journal is an *action journal*: a deterministic replay
+log of structural mutation, kept as an intent log rather than a component diff so it
+survives rule changes and stays auditable. The durable observation seam is the
+`World` mutator layer, not `execute`. The structural-fact channel already records
+from there (`despawn` emits `Fact::Destroyed` from *below* `execute`, where cascade
+removals are visible), so the mutators, not `execute`, are where the world's changes
+become observable. A journal hooking that seam captures a mutation wherever it enters
+the world, including a handler that pokes `&mut World` directly rather than routing
+through `execute`. So `Ctx` exposing the world raw is not a journal bypass; the seam
+does the enforcing. The subtle part when this lands is not the log's shape but
+`EntityId` stability across replay: a replayed `Create` allocates a fresh id, so
+determinism rides on restoring the id counter's high-water from the snapshot and
+replaying single-threaded and ordered. That is a journal-writer concern, not a shape
+the `Action` enum must carry now.
+
+Speech changes no world state, so it is not in this journal; an optional
+chat/experience log would be a separate log over the Event stream. That log is the
+one place `Event`'s `text: String` acquires a persisted edge: structuring the live
+`Event` stays a cheap funneled change (every construction runs through the `Event`
+constructors and `Ctx`'s emit API), but once the log persists plain-string text,
+restructuring *that log's* format is a migration. Version the log, or land structured
+text before persisting it; not a concern until that log is designed.
 
 ## Where it lives
 
