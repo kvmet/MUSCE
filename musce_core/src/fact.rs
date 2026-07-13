@@ -3,7 +3,7 @@
 //! never itself a mutation and is never persisted; it is the engine reporting what
 //! just happened so game logic can react (e.g. a death cry on destruction). The
 //! buffer hangs off `World` and is drained once per tick; see
-//! `docs/architecture/actions.md`.
+//! `docs/architecture/facts.md`.
 //!
 //! The set is deliberately small. A mutation earns a fact only where a reaction
 //! needs something it cannot reconstruct by querying the post-mutation world:
@@ -58,7 +58,7 @@ pub enum Fact {
     /// under the character, so it went where the character went), and a fact exists
     /// only for what a reaction cannot reconstruct. A consumer that needs the moved
     /// subtree walks `descendants(entity)` from this fact, once, only when it cares.
-    /// See `docs/architecture/actions.md`.
+    /// See `docs/architecture/facts.md`.
     Moved {
         entity: EntityId,
         from: Option<EntityId>,

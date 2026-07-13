@@ -71,13 +71,17 @@ order would mean persisting a per-source sequence and giving up the "reverse lis
 are derived" property; that is a deliberate future feature to build only if a
 concrete need for it appears, not a default we pay for.
 
-Each relation kind is a marker type implementing the `Relation` trait, which
-carries two `const` policies: `ACYCLIC` (whether `relate` rejects cycles) and
-`ON_TARGET_DESPAWN` (the cascade: `DespawnSources`, `Reparent`, or `Detach`).
+Each relation kind is a marker type implementing the `Relation` trait, whose
+`const` policies are `ACYCLIC` (whether `relate` rejects cycles),
+`ON_TARGET_DESPAWN` (the cascade: `DespawnSources`, `Reparent`, or `Detach`), and
+`EMITS_MOVEMENT` (whether a change to this relation emits the `Moved`/`LocusChanged`
+facts; default `false`, true only for `Containment`, the one spatial relation, see
+[facts.md](facts.md)).
 
 Two small registries are populated at world construction: a component registry
-(drives JSON serialization) and a relation registry (type-erased despawn and
-rebuild hooks per relation).
+(drives JSON serialization) and a relation registry (type-erased despawn, rebuild,
+and tag-driven relate/unrelate hooks per relation, the last backing the `Relate`
+action).
 
 ### Important: relations are ergonomics, not speed
 
@@ -100,6 +104,9 @@ Rooms, containers, and inventories are all containers. See
 - `move_entity` is the **single mutator** for containment. It enforces
   acyclicity and keeps both sides consistent. Because that invariant is enforced
   at the one mutation point, every recursive reader is a simple, cycle-free walk.
+- As the one spatial relation (`EMITS_MOVEMENT`), a containment change emits the
+  `Moved`/`LocusChanged` facts, for the moved entity alone, not its carried
+  subtree (see [facts.md](facts.md)).
 - Helpers: `contents` (one level), `container_of` (immediate parent),
   `enclosing_locus` (walk up to the nearest `Locus`, the perception boundary).
 
@@ -236,6 +243,16 @@ Two kinds, and the split drives what machinery exists:
   natively and fast. Needs only marker components to filter by kind.
 - **Relational** ("which entity is related to this one?") hecs does not do. We
   answer it with the relation components as indexes plus the `EntityId` index.
+
+Queries reach the hecs world through the **read-only `World::ecs()`** accessor
+(archetypal `query` and component `get`, including `get::<&mut C>` via hecs's
+interior borrow). Structural mutation, in contrast, never touches the raw handle:
+spawn/despawn, relation links, and component set-membership go through `World`
+(`spawn`/`despawn`, `move_entity`/`relate`, the typed `insert`/`remove`) so the
+`EntityId` index, the despawn cascade, and the reverse lists cannot be bypassed. A
+raw `ecs.despawn` would skip the cascade and resurrect the entity on the next load;
+a raw `ecs.spawn` would make an `Id`-less entity invisible to every lookup. The
+field is not public precisely to make that boundary structural, not conventional.
 
 The recursive contents walk (`descendants`) is a predicate-driven, visitor-based
 tree walk: the engine is the mechanism, the caller supplies the descent policy

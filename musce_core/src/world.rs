@@ -446,7 +446,7 @@ impl World {
     /// containment relation (`R::EMITS_MOVEMENT`), and only for the entity whose own
     /// link changed: a carried subtree keeps its links, so its locus change is
     /// derivable from this fact and is the consumer's to compute, not ours to emit
-    /// (see `fact.rs` / actions.md).
+    /// (see `fact.rs` / facts.md).
     fn emit_movement(
         &mut self,
         entity: EntityId,

@@ -6,7 +6,9 @@
 //! attacker's Strength and drains the target's Health, and a killing blow routes
 //! through `execute(Destroy)` so the same `Fact::Destroyed` reaction that narrates
 //! any demise (`death_cry`) narrates a kill. See
-//! `docs/architecture/engine-and-game.md` and `docs/architecture/actions.md`.
+//! `docs/architecture/engine-and-game.md` (the component boundary),
+//! `docs/architecture/actions.md` (`execute`), and `docs/architecture/facts.md`
+//! (the `Fact::Destroyed` reaction channel).
 
 use musce_action::{Action, Ctx};
 use musce_core::{NamedComponent, World};
