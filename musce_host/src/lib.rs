@@ -261,6 +261,16 @@ async fn persistence_task(
 /// reader's connection through the shared event outbox; a `Write` overwrites the
 /// key and acks. Both send is best-effort: a closed connection just drops the line.
 /// The task ends when the sim drops the request sender.
+///
+/// Ordering invariant: cold ops for the same key are applied in issue order, so a
+/// read observes a preceding write (read-your-writes) and two writes cannot reorder
+/// into a lost update. Today this is free: one task draining one channel is a total
+/// order. If the cold path is ever parallelized for throughput (several workers, or a
+/// store read-pool once `SqliteStore` leaves `max_connections(1)`), it must preserve
+/// *per-key* order, e.g. route by `hash(key)` so one key stays on one worker while
+/// distinct keys run concurrently. This is independent of world sharding: a parallel
+/// cold path needs it even unsharded, and a zone-sharded world without a parallel
+/// cold path does not.
 async fn cold_task(
     store: WorldStore,
     mut cold_rx: UnboundedReceiver<ColdOp>,

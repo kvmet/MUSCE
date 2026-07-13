@@ -103,7 +103,11 @@ a migration.
   through the sim, since a read mutates nothing). Decoding a fetched value into
   deliverable text is **game knowledge** (the game encoded it), so it is an injected
   `Game.decode_cold` the task calls; the engine still interprets nothing. A read of an
-  absent key delivers a blank-page line, not an error.
+  absent key delivers a blank-page line, not an error. The task applies same-key ops in
+  issue order (read-your-writes, no lost writes), free today from the single consumer;
+  a future parallel cold path must preserve that *per-key* order (route by `hash(key)`).
+  This is the task's processing order, distinct from the cold-data-first write
+  sequencing below (which concerns only content-derived keys).
 - **No cascade, no cross-store transaction.** A deleted entity does **not** delete
   `kv` rows: a row may be shared, so its lifetime is not entity-scoped. Orphans (a `kv`
   row no entity references) are an accepted storage cost; a GC pass (mark-sweep over
