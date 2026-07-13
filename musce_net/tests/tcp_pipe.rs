@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use musce_net::start;
-use musce_proto::{Command, Event, EventKind, Input, Outgoing};
+use musce_proto::{Command, Delivery, EventKind, Input, Outgoing};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -39,7 +39,7 @@ async fn line_in_event_out() {
 
     // Event out -> rendered line at the client.
     outbox_tx
-        .send(Outgoing::Event(Event::to_connection(
+        .send(Outgoing::Event(Delivery::new(
             id,
             EventKind::Feedback,
             "hi there",

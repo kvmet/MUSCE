@@ -11,10 +11,11 @@
 use std::time::SystemTime;
 
 use musce_core::{EntityId, Fact, World};
-use musce_proto::{ConnectionId, Event, EventKind};
+use musce_proto::{ConnectionId, EventKind};
 
 use crate::audience::Outbound;
 use crate::caps::{CapId, Verdict};
+use crate::event::Event;
 
 /// The per-command context handed to a handler: the world it mutates, the actor
 /// it acts through, the connection that issued it, and the output buffer it emits

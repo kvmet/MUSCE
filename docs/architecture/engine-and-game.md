@@ -57,8 +57,12 @@ The single in-repo consequence is that `main` moves from `musce_host` into
 The dependency arrows stay acyclic and the runtime never depends on the game:
 
 ```
-musce_ref -> musce_host -> musce_action -> musce_proto -> musce_core
+musce_ref -> musce_host -> musce_action -> musce_core
+                                        -> musce_proto   (a dependency-free leaf)
 ```
+
+`musce_proto` is the wire vocabulary and references no world identity, so it sits
+below the action layer as a leaf rather than in a line above `musce_core`.
 
 ## The Game injection
 

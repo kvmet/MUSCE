@@ -143,10 +143,9 @@ mod tests {
     use super::*;
     use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Player};
-    use musce_action::Outbound;
+    use musce_action::{Audience, Outbound};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, DestroyCause, Fact, Locus, Name};
-    use musce_proto::Audience;
     use std::time::SystemTime;
 
     struct Fixture {

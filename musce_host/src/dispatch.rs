@@ -8,7 +8,7 @@
 
 use musce_action::{CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
 use musce_core::World;
-use musce_proto::{Command, ConnectionId, Event, EventKind, Input, Outgoing};
+use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
 
 use crate::auth::Accounts;
 use crate::session::{Sessions, resolve_actor};
@@ -136,7 +136,7 @@ fn dispatch_through_actor(
     emit: &mut impl FnMut(Outgoing),
 ) {
     let Some(character) = floor.character_of(id) else {
-        emit(Outgoing::Event(Event::to_connection(
+        emit(Outgoing::Event(Delivery::new(
             id,
             EventKind::Feedback,
             "You have no character. Use @play to enter the world.",
@@ -159,7 +159,7 @@ mod tests {
     use musce_action::{Ctx, Gate};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, EntityId, Id, Locus};
-    use musce_proto::{Audience, Capabilities};
+    use musce_proto::Capabilities;
     use std::net::SocketAddr;
     use std::sync::Arc;
 
@@ -324,11 +324,7 @@ mod tests {
         let texts: Vec<String> = out
             .iter()
             .filter_map(|o| match o {
-                Outgoing::Event(Event {
-                    text,
-                    to: Audience::Connection(_),
-                    ..
-                }) => Some(text.clone()),
+                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
                 _ => None,
             })
             .collect();
@@ -346,7 +342,7 @@ mod tests {
         let out = line(&mut d, &mut world, id, "look");
         assert!(matches!(
             out.as_slice(),
-            [Outgoing::Event(Event {
+            [Outgoing::Event(Delivery {
                 kind: EventKind::Feedback,
                 ..
             })]
@@ -370,11 +366,7 @@ mod tests {
         let rendered: Vec<String> = out
             .iter()
             .filter_map(|o| match o {
-                Outgoing::Event(Event {
-                    text,
-                    to: Audience::Connection(_),
-                    ..
-                }) => Some(text.clone()),
+                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
                 _ => None,
             })
             .collect();
@@ -432,11 +424,7 @@ mod tests {
     fn conn_texts(out: &[Outgoing]) -> Vec<String> {
         out.iter()
             .filter_map(|o| match o {
-                Outgoing::Event(Event {
-                    text,
-                    to: Audience::Connection(_),
-                    ..
-                }) => Some(text.clone()),
+                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
                 _ => None,
             })
             .collect()

@@ -117,9 +117,10 @@ Built:
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
-- `musce_proto`: the shared command/event vocabulary (`Command`, `Event`,
-  `Audience`, `EventKind`, `ConnectionId`, `Capabilities`), depended on by net,
-  action, and host so the action layer never touches the transport.
+- `musce_proto`: the wire vocabulary (`Command`/`Input`, `Outgoing` with its
+  connection-bound `Delivery`, `EventKind`, `ConnectionId`, `Capabilities`), a
+  dependency-free leaf shared by net and host. The world-addressed authoring form
+  (`Event`/`Audience`) lives in `musce_action`, since it never crosses to net.
 - `musce_action`: the engine's action layer, free of game content. The
   structural executor (the full `Action` set:
   `Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`,

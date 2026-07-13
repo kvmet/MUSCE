@@ -797,9 +797,6 @@ dependencies = [
 [[package]]
 name = "musce_proto"
 version = "0.1.0"
-dependencies = [
- "musce_core",
-]
 
 [[package]]
 name = "musce_ref"

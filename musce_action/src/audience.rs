@@ -2,12 +2,15 @@
 //! locus, to an entity, to a connection); turning `Locus`/`Entity` into the
 //! connections that should actually see it needs world state (who is in the locus)
 //! and the connection<->actor map, so it happens here, before output reaches net.
-//! Net is left a pure `Connection` pipe. See `docs/architecture/actions.md`.
+//! Resolution produces `Delivery`s (already bound to a connection), so net is left
+//! a pure pipe that can never receive an unresolved audience. See
+//! `docs/architecture/actions.md`.
 
 use musce_core::{EntityId, World};
-use musce_proto::{Audience, Event, Outgoing};
+use musce_proto::{Delivery, Outgoing};
 
 use crate::bindings::Actors;
+use crate::event::{Audience, Event};
 
 /// One handler-emitted piece of output before audience resolution. `exclude` names
 /// the entities to omit when expanding a broadcast: a verb sends the actor a
@@ -38,10 +41,10 @@ impl Outbound {
     }
 }
 
-/// Expand one `Outbound` into `Connection`-addressed `Outgoing` events, pushing
-/// each through `emit`. A `Connection` audience passes through; `Entity` fans out
-/// to every connection driving that entity; `Locus` fans out to every connection
-/// whose actor stands directly in the locus.
+/// Expand one `Outbound` into connection-bound `Delivery`s, pushing each through
+/// `emit`. A `Connection` audience passes through; `Entity` fans out to every
+/// connection driving that entity; `Locus` fans out to every connection whose
+/// actor stands directly in the locus.
 pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl FnMut(Outgoing)) {
     let Outbound { event, exclude } = out;
 
@@ -52,8 +55,8 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
         if excluded_conns.contains(&conn) {
             return;
         }
-        emit(Outgoing::Event(Event {
-            to: Audience::Connection(conn),
+        emit(Outgoing::Event(Delivery {
+            to: conn,
             kind: event.kind,
             text: event.text.clone(),
         }));
@@ -82,7 +85,7 @@ mod tests {
     use musce_core::EntityId;
     use musce_core::Locus;
     use musce_core::hecs::EntityBuilder;
-    use musce_proto::{ConnectionId, EventKind};
+    use musce_proto::{ConnectionId, Delivery, EventKind};
 
     fn collect(world: &World, actors: &Actors, out: Outbound) -> Vec<Outgoing> {
         let mut v = Vec::new();
@@ -120,10 +123,7 @@ mod tests {
         let conns: Vec<ConnectionId> = events
             .iter()
             .map(|o| match o {
-                Outgoing::Event(Event {
-                    to: Audience::Connection(c),
-                    ..
-                }) => *c,
+                Outgoing::Event(Delivery { to: c, .. }) => *c,
                 other => panic!("expected connection event, got {other:?}"),
             })
             .collect();
@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0],
-            Outgoing::Event(Event { to: Audience::Connection(c), .. }) if c == ConnectionId(2)
+            Outgoing::Event(Delivery { to: c, .. }) if c == ConnectionId(2)
         ));
     }
 
@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0],
-            Outgoing::Event(Event { to: Audience::Connection(c), .. }) if c == ConnectionId(3)
+            Outgoing::Event(Delivery { to: c, .. }) if c == ConnectionId(3)
         ));
     }
 }

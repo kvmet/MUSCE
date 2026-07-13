@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 
 use musce_action::Actors;
 use musce_core::{EntityId, World};
-use musce_proto::{ConnectionId, Event, EventKind, Outgoing};
+use musce_proto::{ConnectionId, Delivery, EventKind, Outgoing};
 
 use crate::ChooseActor;
 use crate::auth::{AccountId, Accounts};
@@ -91,7 +91,7 @@ impl Sessions {
                 ..Default::default()
             },
         );
-        emit(Outgoing::Event(Event::to_connection(
+        emit(Outgoing::Event(Delivery::new(
             id,
             EventKind::System,
             "Welcome to MUSCE. @play to enter the world, @help for commands.",
@@ -407,7 +407,7 @@ impl Sessions {
 }
 
 fn feedback(id: ConnectionId, text: &str, emit: &mut impl FnMut(Outgoing)) {
-    emit(Outgoing::Event(Event::to_connection(
+    emit(Outgoing::Event(Delivery::new(
         id,
         EventKind::Feedback,
         text,
@@ -420,7 +420,6 @@ mod tests {
     use crate::auth::{AccountsSnapshot, CapRegistry};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Controls, Description, EntityId, Id};
-    use musce_proto::Audience;
     use std::sync::Arc;
 
     /// A local stand-in for a game's player kind: the engine has no `Player`
@@ -465,7 +464,7 @@ mod tests {
         s.connect(id, None, &mut |o| out.push(o));
         assert!(matches!(
             out.as_slice(),
-            [Outgoing::Event(Event { kind: EventKind::System, to: Audience::Connection(c), .. })] if *c == id
+            [Outgoing::Event(Delivery { kind: EventKind::System, to: c, .. })] if *c == id
         ));
         assert!(s.is_live(id));
     }
@@ -489,7 +488,7 @@ mod tests {
         );
         assert!(matches!(
             out[0],
-            Outgoing::Event(Event {
+            Outgoing::Event(Delivery {
                 kind: EventKind::Feedback,
                 ..
             })
@@ -517,7 +516,7 @@ mod tests {
         );
         assert!(matches!(
             out.as_slice(),
-            [Outgoing::Event(Event {
+            [Outgoing::Event(Delivery {
                 kind: EventKind::Feedback,
                 ..
             })]

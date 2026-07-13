@@ -174,11 +174,14 @@ the audience resolver. See [engine-and-game.md](engine-and-game.md).
 
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to
-test. The
-commands-in / events-out vocabulary (`Command`, `Event`, `Audience`, `EventKind`,
-`ConnectionId`, ...) lives in a small `musce_proto` crate shared by `musce_action`,
-`musce_net`, and `musce_host`, so the action layer never depends on the transport.
-`musce_host` invokes the dispatcher and holds no command knowledge.
+test. The wire vocabulary (`Command`/`Input`, `Outgoing` carrying a
+connection-bound `Delivery`, `EventKind`, `ConnectionId`) lives in a small,
+dependency-free `musce_proto` crate shared by `musce_net` and `musce_host`. The
+semantic authoring form the handlers emit, `Event` and its world-addressed
+`Audience`, lives in `musce_action` itself, since it references world entities and
+never crosses to net; the resolver turns it into `Delivery`s. Either way the action
+layer never depends on the transport. `musce_host` invokes the dispatcher and holds
+no command knowledge.
 
 ## MVP starting set
 
@@ -210,8 +213,8 @@ third-person narration to the actor's locus excluding a set of parties (the acto
 alone, or the actor and a target both, so a directed act like `wave at` never shows
 either party the bystander view they already received). The audience resolver expands
 `Locus`/`Entity` into the connections that should see it and drops the excluded
-entities' connections before anything reaches net. Net is left a pure `Connection`
-pipe.
+entities' connections, producing connection-bound `Delivery`s before anything
+reaches net. Net is left a pure pipe that can never receive an unresolved audience.
 
 The full structural action set (`Create`/`Destroy`/`SetComponent`/
 `RemoveComponent`), the type-erased reflection primitives it rides

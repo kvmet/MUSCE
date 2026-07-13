@@ -175,10 +175,10 @@ fn is_being(world: &World, entity: EntityId) -> bool {
 mod tests {
     use super::*;
     use crate::kinds::{Container, Creature, Item, Player};
-    use musce_action::{Ctx, Outbound, Verdict};
+    use musce_action::{Audience, Ctx, Outbound, Verdict};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, EntityId, Locus, Name, World};
-    use musce_proto::{Audience, ConnectionId};
+    use musce_proto::ConnectionId;
 
     struct Fixture {
         world: World,

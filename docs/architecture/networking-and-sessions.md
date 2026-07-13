@@ -187,19 +187,24 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 
 - `musce_net`: a `Connection` trait splitting any transport into line-oriented
   read/write halves plus `Capabilities`; the raw TCP impl; the per-connection
-  task and event router; and the boundary vocabulary (`Command`/`Input`,
-  `Outgoing`/`Event`/`Audience`/`EventKind`, `ConnectionId`). Net is the producer
-  of `Command`s and consumer of `Outgoing`; it holds only per-connection
-  presentation state.
+  task and event router; and the wire vocabulary in `musce_proto`
+  (`Command`/`Input`, `Outgoing` carrying a connection-bound `Delivery`,
+  `EventKind`, `ConnectionId`). That crate is the wire boundary only: it holds no
+  world identity and depends on nothing, because output has been resolved to a
+  connection by the time it reaches this layer. The semantic, world-addressed
+  authoring form (`Event`/`Audience`) lives in `musce_action` next to the resolver.
+  Net is the producer of `Command`s and consumer of `Outgoing`; it holds only
+  per-connection presentation state.
 - Connection lifecycle rides the command channel as `Input::Connected` /
   `Line` / `Disconnected`, so the sim has one entry point for allocating, driving,
   and tearing down a session.
-- Net handles only `Audience::Connection`. Resolving `Entity`/`Locus` to the
-  connections that should see an event is **sim-side** (it needs world state and
-  the connection-to-entity map), done by the action layer's audience resolver
-  before output reaches net; net never resolves audiences and logs an error if an
-  unresolved audience ever reaches it. The conn->actor map the resolver consumes
-  is derived from the floor's session attachments, which own it.
+- Net routes a `Delivery`, which is already bound to a single connection.
+  Resolving `Entity`/`Locus` to the connections that should see an event is
+  **sim-side** (it needs world state and the connection-to-entity map), done by the
+  action layer's audience resolver, which produces `Delivery`s; an unresolved
+  audience therefore cannot reach net by construction, rather than being caught by a
+  runtime guard. The conn->actor map the resolver consumes is derived from the
+  floor's session attachments, which own it.
 - A single sim-side dispatcher (`musce_host`, `dispatch.rs`) is the one entry
   point the tick loop calls as it drains the inbox; it owns the input-stack
   routing above and takes `&mut World`. The `@`-namespace and connection lifecycle

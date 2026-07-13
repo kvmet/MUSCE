@@ -20,6 +20,7 @@ mod bindings;
 mod caps;
 mod ctx;
 mod dispatch;
+mod event;
 mod executor;
 
 use musce_core::{EntityId, World};
@@ -29,6 +30,7 @@ pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};
 pub use ctx::{Ctx, System, SystemCtx};
 pub use dispatch::{CommandTable, Gate, Handler, dispatch_command};
+pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};
 
 /// The actor's own description, for floor confirmations like "You are now X."

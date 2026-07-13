@@ -2,16 +2,19 @@
 
 > Status: **built.** The command/action boundary, the `CommandTable` registry and
 > its prefix lookup, and the sim-side `Event` output channel with audience
-> resolution all ship in `musce_action` (the shared `Command`/`Event` vocabulary in
-> `musce_proto`). This document covers the input edge (a `Command` becoming a verb
+> resolution all ship in `musce_action`, which also owns the world-addressed
+> `Event`/`Audience` authoring vocabulary. The wire form a resolved event becomes
+> (`Command`/`Input` in, a connection-bound `Delivery` out) is the dependency-free
+> `musce_proto`. This document covers the input edge (a `Command` becoming a verb
 > call) and the output edge (verbs emitting `Event`s); the action vocabulary and
 > the executor those verbs drive are in [actions.md](actions.md).
 
 ## Command vs Action
 
 The thread boundary is unchanged from `concurrency.md`: the net thread speaks
-`Command` in, `Event` out. `Action` is internal to the sim and never crosses the
-channel.
+`Command` in and a connection-bound `Delivery` out (the resolved form of an
+`Event`; net never sees the world-addressed `Event`/`Audience`). `Action` is
+internal to the sim and never crosses the channel.
 
 - A **Command** is a request with provenance. It may be rejected.
 - An **Action** is the authorized, validated mutation.

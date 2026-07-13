@@ -1,14 +1,22 @@
-//! The shared protocol vocabulary: the types that cross the net <-> sim thread
-//! boundary (commands in, events out) plus the audience/event model the action
-//! layer addresses output with. Pure and transport-free (no tokio): `musce_net`,
-//! `musce_action`, and `musce_host` all speak it, so the action layer never
-//! depends on the transport. See `docs/architecture/actions.md` and
-//! `docs/architecture/networking-and-sessions.md`.
+//! The wire vocabulary: the types that actually cross the net <-> sim thread
+//! boundary. Commands in (`Command`/`Input`), events out (`Outgoing`, whose
+//! `Delivery` payload is already resolved to a single `ConnectionId`), plus the
+//! per-connection presentation state net owns (`Capabilities`). Transport-free (no
+//! tokio) and dependency-free: `musce_net` and `musce_host` speak it, and it
+//! references no world identity, because by the time output reaches this layer the
+//! audience has been resolved to a connection. The semantic, world-addressed
+//! authoring vocabulary (`Event`/`Audience`) lives in `musce_action`, which owns
+//! resolution; net never sees it.
+//!
+//! These types are **ephemeral**: they ride an in-process channel and are never
+//! persisted, so nothing here derives `serde`. A connection is a live socket, not a
+//! saved record; if that ever changes it is a deliberate decision, not a reflex.
+//!
+//! See `docs/architecture/networking-and-sessions.md` and
+//! `docs/architecture/actions.md`.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use musce_core::EntityId;
 
 /// Net-local identity for one live connection. Monotonic and never reused, so a
 /// stale reference can never resolve to a different connection.
@@ -22,6 +30,13 @@ impl ConnectionId {
     }
 }
 
+/// A terminal's size in character cells, as advertised by the transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// Per-connection presentation state net holds locally because it owns framing.
 /// The sim reads it (handed up on connect) and later updates it via outbound
 /// directives; it never lives in the world.
@@ -32,8 +47,8 @@ pub struct Capabilities {
     /// Client can only do line-mode (no char/raw keystroke mode). A dumb TCP
     /// client is line-only; SSH/WebSocket will report `false` here.
     pub line_mode_only: bool,
-    /// Terminal size in (cols, rows), if known.
-    pub size: Option<(u16, u16)>,
+    /// Terminal size, if known.
+    pub size: Option<TerminalSize>,
 }
 
 /// A request from a connection to the sim. Lifecycle (`Connected`/`Disconnected`)
@@ -63,64 +78,32 @@ pub enum Input {
 /// extend this when those land.)
 #[derive(Debug, Clone)]
 pub enum Outgoing {
-    Event(Event),
+    Event(Delivery),
     /// Drop a connection (e.g. after `@quit`). Net flushes any already-queued
     /// content for it first, then closes the socket.
     Close(ConnectionId),
 }
 
-/// A semantic, addressed piece of output. Kept semantic (not pre-rendered) so a
-/// richer client can render it its own way later.
+/// A fully-resolved event bound for one connection: what actually crosses to net.
+/// Audience resolution (and the session floor's direct-to-connection emits)
+/// produce these, so an unresolved `Entity`/`Locus` audience can never reach net,
+/// it is unrepresentable here. Kept semantic (not pre-rendered) so a richer client
+/// can render `text` its own way later; net turns it into wire bytes.
 #[derive(Debug, Clone)]
-pub struct Event {
-    pub to: Audience,
+pub struct Delivery {
+    pub to: ConnectionId,
     pub kind: EventKind,
     pub text: String,
 }
 
-impl Event {
-    /// Convenience for the common case: text aimed at one connection.
-    pub fn to_connection(id: ConnectionId, kind: EventKind, text: impl Into<String>) -> Self {
-        Event {
-            to: Audience::Connection(id),
+impl Delivery {
+    pub fn new(to: ConnectionId, kind: EventKind, text: impl Into<String>) -> Self {
+        Delivery {
+            to,
             kind,
             text: text.into(),
         }
     }
-
-    /// Text aimed at everyone directly within a locus (a scope boundary; the
-    /// reference game's rooms are loci). The sim-side audience resolver expands
-    /// this into per-connection events; net never sees it.
-    pub fn to_locus(locus: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
-        Event {
-            to: Audience::Locus(locus),
-            kind,
-            text: text.into(),
-        }
-    }
-
-    /// Text aimed at one entity, resolved to the connection(s) driving it. The
-    /// sim-side resolver expands this like `to_locus`; if the entity drives no
-    /// connection it reaches no one. Net never sees it.
-    pub fn to_entity(entity: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
-        Event {
-            to: Audience::Entity(entity),
-            kind,
-            text: text.into(),
-        }
-    }
-}
-
-/// Who an event is for. `Entity`/`Locus` are resolved to `Connection` sim-side by
-/// the action layer's audience resolver (it needs world state and the
-/// connection-to-entity map); net only ever routes `Connection`. A `Locus` is a
-/// scope boundary: the event reaches every connection whose actor stands directly
-/// within it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Audience {
-    Connection(ConnectionId),
-    Entity(EntityId),
-    Locus(EntityId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

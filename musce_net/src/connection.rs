@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::Sender;
 use tokio::sync::mpsc;
 
-use musce_proto::{Capabilities, Command, ConnectionId, Event, Input, Outgoing};
+use musce_proto::{Capabilities, Command, ConnectionId, Delivery, Input, Outgoing};
 
 /// A reader half: yields input one line at a time. `None` means end of stream.
 /// The newline framing is the transport's concern (a WebSocket frame is already
@@ -44,7 +44,7 @@ pub trait Connection: Send + 'static {
 /// What the router pushes into a single connection's mailbox.
 #[derive(Debug, Clone)]
 pub enum ConnMsg {
-    Event(Event),
+    Event(Delivery),
     /// Close after the already-queued messages ahead of this drain.
     Close,
 }
@@ -57,7 +57,7 @@ pub type Registry = Arc<Mutex<HashMap<ConnectionId, mpsc::UnboundedSender<ConnMs
 /// Render a semantic event to the wire format for a connection. Plain ANSI-less
 /// text for now; `caps` (color, size) will shape this when richer rendering
 /// lands. CRLF because line-mode clients expect it.
-pub fn render(ev: &Event, _caps: &Capabilities) -> String {
+pub fn render(ev: &Delivery, _caps: &Capabilities) -> String {
     format!("{}\r\n", ev.text)
 }
 
@@ -116,20 +116,14 @@ pub async fn serve_connection<C: Connection>(
 }
 
 /// Drain the sim's outbox and fan each message into the right connection mailbox.
-/// Net is a pure `Connection` pipe: the action layer's audience resolver expands
-/// `Entity`/`Locus` into `Connection` events sim-side before they reach here, so a
-/// non-connection audience at this point is a bug upstream, not normal traffic.
+/// Net is a pure pipe: a `Delivery` is already bound to a connection (the action
+/// layer's audience resolver expanded `Entity`/`Locus` sim-side), so there is no
+/// audience left to route on and an unresolved one cannot reach here by
+/// construction.
 pub async fn route_events(mut outbox: mpsc::UnboundedReceiver<Outgoing>, registry: Registry) {
-    use musce_proto::Audience;
-
     while let Some(out) = outbox.recv().await {
         match out {
-            Outgoing::Event(ev) => match ev.to {
-                Audience::Connection(id) => send_to(&registry, id, ConnMsg::Event(ev)),
-                Audience::Entity(_) | Audience::Locus(_) => {
-                    tracing::error!(audience = ?ev.to, "unresolved audience reached net; resolver should have expanded it");
-                }
-            },
+            Outgoing::Event(ev) => send_to(&registry, ev.to, ConnMsg::Event(ev)),
             Outgoing::Close(id) => {
                 send_to(&registry, id, ConnMsg::Close);
                 registry.lock().unwrap().remove(&id);

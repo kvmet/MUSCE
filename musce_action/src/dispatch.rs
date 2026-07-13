@@ -130,7 +130,7 @@ mod tests {
     use crate::CapSet;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus};
-    use musce_proto::{Audience, Event, EventKind};
+    use musce_proto::{Delivery, EventKind};
 
     /// Two test verbs over the public emit API, standing in for game content so
     /// the engine routing is exercised without depending on a real game. `ping`
@@ -183,11 +183,7 @@ mod tests {
         );
         out.into_iter()
             .map(|o| match o {
-                Outgoing::Event(Event {
-                    text,
-                    to: Audience::Connection(_),
-                    ..
-                }) => text,
+                Outgoing::Event(Delivery { text, .. }) => text,
                 other => panic!("expected connection event, got {other:?}"),
             })
             .collect()
@@ -237,7 +233,7 @@ mod tests {
         );
         assert!(matches!(
             out.as_slice(),
-            [Outgoing::Event(Event {
+            [Outgoing::Event(Delivery {
                 kind: EventKind::Narration,
                 ..
             })]
@@ -269,7 +265,7 @@ mod tests {
             &mut |o| out.push(o),
         );
         let text = match &out[..] {
-            [Outgoing::Event(Event { text, .. })] => text.clone(),
+            [Outgoing::Event(Delivery { text, .. })] => text.clone(),
             other => panic!("expected one event, got {other:?}"),
         };
         assert!(text.contains("aren't allowed"), "got: {text:?}");
@@ -288,7 +284,7 @@ mod tests {
             &mut |o| out.push(o),
         );
         assert!(
-            matches!(&out[..], [Outgoing::Event(Event { text, .. })] if text.contains("zap")),
+            matches!(&out[..], [Outgoing::Event(Delivery { text, .. })] if text.contains("zap")),
             "the granted verdict should run the verb, got: {out:?}"
         );
 
@@ -306,7 +302,7 @@ mod tests {
             &mut |o| out.push(o),
         );
         assert!(
-            matches!(&out[..], [Outgoing::Event(Event { text, .. })] if text.contains("zap")),
+            matches!(&out[..], [Outgoing::Event(Delivery { text, .. })] if text.contains("zap")),
             "su should bypass the gate, got: {out:?}"
         );
     }

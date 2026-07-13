@@ -296,10 +296,9 @@ mod tests {
     use super::*;
     use crate::exits::{LeadsFrom, LeadsTo};
     use crate::kinds::{Creature, Exit, Item};
-    use musce_action::Outbound;
+    use musce_action::{Audience, Outbound};
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, Name};
-    use musce_proto::Audience;
     use std::time::SystemTime;
 
     /// Ticks per patrol step in the tests. The first beat fires at `next_at == STEP`
