@@ -46,6 +46,40 @@ The blob is **JSON**: human-readable for debugging while the schema churns, and
 Postgres can store it as JSONB (admin-queryable) later. Switching to a binary
 format is an option only if save size ever becomes a real problem.
 
+## Hot and cold data
+
+> Status: not built; recorded so the seam is known. Nothing here changes the
+> current model.
+
+Everything registered is **hot**: resident in memory and written into the
+per-entity blob every save. That is the only tier today and is right for the data
+an entity reasons about each tick. Some data is different: large, rarely read, and
+wasteful to keep resident (a book's full text, a mail archive, a long audit log).
+The intended home for it is **cold storage**, and the model already leaves room for
+it without a migration.
+
+- **Cold fields.** The entity stays resident (it keeps its name, weight, location,
+  perhaps a `HasText` marker), but one heavy field lives in a side store keyed by
+  `(EntityId, key)` and is fetched on demand (a `read` verb pulls a book's text
+  when someone reads it). This is a **persistence + game** feature: a side table
+  and an explicit load call. Core needs no change, because a cold field is simply
+  *not a registered hot component*, so it never enters the main blob. The invariant
+  to preserve: the `ComponentRegistry` stays the single authority for what the main
+  blob contains, so "cold" means exactly "not registered hot," with no competing
+  notion of what is persisted.
+- **Transparency is deferred.** We may later want cold access to feel like an
+  ordinary component (auto-materialized on read, written back on change), or a way
+  to pre-flag a component type as cold. That is a larger abstraction touching the
+  registry and the access path; we are **not** building it yet, and specifically
+  not engine-side. The book case is served by an explicit fetch.
+- **Cold entities (paging) is a different feature.** A vast library where most
+  entities are not resident until browsed is not field-laziness; it is paging, and
+  it lands on the `EntityIndex`, which today is binary (an id resolves to a live
+  handle or is absent) and would need a third "exists but not loaded" state. It
+  overlaps sharding's zone-scoped load (the same `zone` column selects a subset),
+  so whenever one is built the other should be looked at with it. Deferred until a
+  concrete need appears.
+
 ## The save / confirm contract
 
 Deletes are the fragile part of save. A despawned entity is already gone from the
