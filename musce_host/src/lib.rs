@@ -362,7 +362,7 @@ fn sim_loop(
 /// a current-version world is a no-op; an older version with no transform falls
 /// through unchanged and the subsequent load fails loudly rather than silently
 /// dropping data. See `docs/architecture/persistence.md`.
-fn migrate_blobs(from: u32, _entities: &mut [EntityBlob]) {
+fn migrate_blobs(from: u32, _entities: &mut Vec<EntityBlob>) {
     if from == SCHEMA_VERSION {
         return;
     }
@@ -494,10 +494,13 @@ mod tests {
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
         store.init().await.unwrap();
 
-        // Persist an entity carrying a component tag no game registers, so load
-        // fails. A hand-built snapshot writes it (the normal save path only emits
-        // known tags); save does not validate, it just stores the blob.
+        // Persist an otherwise-valid entity carrying a component tag no game
+        // registers, so load fails on the unknown tag. A hand-built snapshot writes
+        // it (the normal save path only emits known tags); save does not validate,
+        // it just stores the rows. The `id` component keeps it structurally valid so
+        // it is the *unknown tag*, not a missing Id, that refuses the boot.
         let mut data = Map::new();
+        data.insert("id".into(), Value::from(1u64));
         data.insert("nonexistent_component".into(), Value::Null);
         let snap = Snapshot {
             entities: vec![EntityBlob {

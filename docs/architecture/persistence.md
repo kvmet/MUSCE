@@ -1,8 +1,11 @@
 # Persistence
 
 The database is the **saved** form of the world; the in-memory world is the live
-truth. The DB is written and read, never queried during runtime. That single
-decision shapes everything here. See
+truth. The DB is never queried on the runtime tick path. It is written and read for
+save/load, and, because entities are stored shredded into per-component rows (see
+Storage shape), it also serves **out-of-band** analytics run by tooling off the hot
+path (a component census, a cross-entity aggregation). That single decision (the tick
+never waits on the DB) shapes everything here. See
 [musce_persistence](../../musce_persistence/src/lib.rs) and
 [snapshot.rs](../../musce_core/src/snapshot.rs).
 
@@ -28,50 +31,77 @@ are spawned, reverse lists are rebuilt in one O(n) pass.
 
 ## Storage shape
 
-Because the DB is never queried at runtime, components do not need to be
-SQL-queryable. So: **one JSON blob per entity**, plus a couple of extracted
-columns for future shard-scoped loading.
+The tick never queries the DB, so components need not be individually SQL-queryable
+for the *engine*. They are still stored **one row per component**, because that shape
+costs nothing on the save/load path and makes the data legible to out-of-band tools
+(a `GROUP BY tag` census, a `json_extract` filter across entities). An entity is a
+roster row plus its component rows:
 
 ```sql
 entities (
-  entity_id  INTEGER PRIMARY KEY,   -- the global EntityId
-  zone       INTEGER,               -- extracted for shard-scoped load (unused yet)
-  data       TEXT,                  -- components as JSON (Postgres: JSONB)
-  updated_at INTEGER
+  entity_id INTEGER PRIMARY KEY,   -- the global EntityId
+  zone      INTEGER                -- extracted for shard-scoped load (unused yet)
+)
+components (
+  entity_id INTEGER NOT NULL REFERENCES entities(entity_id),
+  tag       TEXT    NOT NULL,      -- the component's stable string tag
+  data      TEXT    NOT NULL,      -- that one component's value as JSON (Postgres: JSONB)
+  PRIMARY KEY (entity_id, tag)
 )
 meta (key TEXT PRIMARY KEY, value TEXT)  -- next_id high-water mark, schema version
 ```
 
-The blob is **JSON**: human-readable for debugging while the schema churns, and
-Postgres can store it as JSONB (admin-queryable) later. Switching to a binary
-format is an option only if save size ever becomes a real problem.
+`data` is **JSON text**: human-readable while the schema churns, JSONB on Postgres
+later. A component's value is stored as its JSON string, so a marker (which
+serializes to `null`) is the text `"null"`, never a SQL `NULL`. The `entities` roster
+carries entity-level columns (only `zone` today) and anchors existence for load; the
+component rows hang off it.
+
+The split costs more write volume than one blob per entity: a full save rewrites
+`~N x (1 + components)` rows instead of `~N`, all of them every save (snapshots are
+whole-world). Dirty-tracked partial saves (deferred; see the save contract) reclaim
+it, and become *more* precise here, rewriting only the changed component rows.
 
 ## Hot and cold data
 
-> Status: not built; recorded so the seam is known. Nothing here changes the
-> current model.
+> Status: the cold content store (`KvStore`) is built as a primitive
+> (`kv_init`/`kv_get`/`kv_put`); the async cold-read path that wires it to a verb is
+> deferred (see below), and cold *entities* (paging) remain unbuilt.
 
-Everything registered is **hot**: resident in memory and written into the
-per-entity blob every save. That is the only tier today and is right for the data
-an entity reasons about each tick. Some data is different: large, rarely read, and
-wasteful to keep resident (a book's full text, a mail archive, a long audit log).
-The intended home for it is **cold storage**, and the model already leaves room for
-it without a migration.
+Everything registered is **hot**: resident in memory and written into the component
+rows every save. That is the only tier that reaches the world, and is right for the
+data an entity reasons about each tick. Some data is different: large, rarely read,
+and wasteful to keep resident (a book's full text, a mail archive, a long audit log).
+The home for it is **cold storage**, and the model already leaves room for it without
+a migration.
 
-- **Cold fields.** The entity stays resident (it keeps its name, weight, location,
-  perhaps a `HasText` marker), but one heavy field lives in a side store keyed by
-  `(EntityId, key)` and is fetched on demand (a `read` verb pulls a book's text
-  when someone reads it). This is a **persistence + game** feature: a side table
-  and an explicit load call. Core needs no change, because a cold field is simply
-  *not a registered hot component*, so it never enters the main blob. The invariant
-  to preserve: the `ComponentRegistry` stays the single authority for what the main
-  blob contains, so "cold" means exactly "not registered hot," with no competing
-  notion of what is persisted.
+- **Cold content, `KvStore`.** The entity stays resident (its name, location, and a
+  small hot component holding a **key**), but the heavy payload lives in a separate
+  content store, `kv (key TEXT PRIMARY KEY, value BLOB)`, fetched on demand (a `read`
+  verb pulls a book's text by key). The store is a flat, game-owned keyspace, exactly
+  like an object store (S3): the game namespaces by key prefix (`book:<hash>`,
+  `notes:<id>`), and a **shared key is many-to-one dedup** (every copy of one book
+  points at a single row). Values are engine-opaque bytes the game encodes and
+  decodes; the engine never interprets cold data, which is why it can stay off-heap.
+  `KvStore` is a **separate trait** from `Persistence` (the whole-world save/load
+  contract) precisely so cold storage can later be backed differently (object
+  storage) without disturbing world save. Core needs no change: a cold payload is
+  simply *not a registered hot component*, so it never enters the component rows. The
+  invariant to preserve: the `ComponentRegistry` stays the single authority for what
+  the component rows contain, so "cold" means exactly "not registered hot," with no
+  competing notion of what is persisted.
+- **No cascade, no cross-store transaction (yet).** A deleted entity does **not**
+  delete `kv` rows: a row may be shared, so its lifetime is not entity-scoped.
+  Orphans (a `kv` row no entity references) are an accepted storage cost; a GC pass
+  (mark-sweep over referenced keys, or a refcount) is a future addition. The cold
+  read/write path is also not yet wired; when it is, the ordering contract is **cold
+  data first, then the referencing component**, so a failed `kv_put` leaves a harmless
+  orphan rather than a dangling reference to a missing key.
 - **Transparency is deferred.** We may later want cold access to feel like an
   ordinary component (auto-materialized on read, written back on change), or a way
   to pre-flag a component type as cold. That is a larger abstraction touching the
   registry and the access path; we are **not** building it yet, and specifically
-  not engine-side. The book case is served by an explicit fetch.
+  not engine-side. The book case is served by an explicit fetch by key.
 - **Cold entities (paging) is a different feature.** A vast library where most
   entities are not resident until browsed is not field-laziness; it is paging, and
   it lands on the `EntityIndex`, which today is binary (an id resolves to a live
@@ -86,8 +116,11 @@ Deletes are the fragile part of save. A despawned entity is already gone from th
 live world, so the pending-delete set is the *only* record of it. Therefore:
 
 - `snapshot()` **copies** the pending deletes; it does not clear them.
-- The persistence layer's `save()` applies upserts and deletes in one
-  transaction.
+- The persistence layer's `save()` runs in one transaction. Each upserted entity has
+  its component set **replaced** (delete its rows, insert the current set), so a
+  component dropped since the last save cannot leak and resurrect on reload. Each
+  despawned id deletes its component rows then its roster row (the FK is RESTRICT, so
+  correctness never rides on the `foreign_keys` pragma being on).
 - Only after a successful save does the caller invoke
   `World::confirm_saved(&snapshot.deletes)`, which drops exactly those ids from
   the pending set. Deletes that accumulated since the snapshot are preserved.
@@ -106,11 +139,22 @@ deferred until full-snapshot size hurts.
 The DB owns it, which also pre-solves shard allocation: a future hub hands
 disjoint id ranges to shards from the same source.
 
+On load, `next_id` is clamped to `max(stored marker, max live id + 1)`, so it can
+never fall to or below a live id and let the next save reissue an id over a stored
+entity. A missing or stale-low marker (a restored dump with no `meta`) is corrected
+and warned, not silently trusted.
+
 ## Integrity and evolution
 
 - On load, the DB primary key and the entity's own `Id` component are checked to
-  agree (a `debug_assert`), catching corrupt or wrongly-keyed blobs instead of
+  agree (a `debug_assert`), catching corrupt or wrongly-keyed data instead of
   letting index and component silently diverge.
+- Per-component storage can represent states a single blob could not, so load rejects
+  them rather than dropping data: an entity whose rows reassemble with no `Id`
+  component is a hard error (an Id-less entity would otherwise only detonate at the
+  next snapshot, since the id-agreement check above is a release-disabled
+  `debug_assert`), and component rows referencing an entity absent from the roster
+  (orphans a roster-driven load would silently skip) are a hard error too.
 - An unknown component tag on load is a hard error, not a silent skip, and a load
   error is **fatal**: the runtime refuses to boot rather than run an empty world.
   Running empty would reissue ids from 1 that the next save would write over the
@@ -128,9 +172,18 @@ disjoint id ranges to shards from the same source.
   problem it avoids. No transforms exist yet (the schema has only ever been at
   version 1), and the seam is a no-op for a current-version world; a world written
   before versioning existed has no marker and is read as current (those are
-  dev-only worlds carrying today's schema). Whole-world or structural migrations
-  (splitting an entity, not just renaming a tag) may need more than the per-blob
-  transform; that is deferred until a concrete case asks for it.
+  dev-only worlds carrying today's schema). The seam takes the full
+  `&mut Vec<EntityBlob>` (not a fixed slice), so a transform can add or drop whole
+  entities, not just mutate them in place; whole-world or structural migrations
+  (splitting an entity, not just renaming a tag) are still deferred until a concrete
+  case asks for it.
+- **`schema_version` versions the vocabulary, not the layout.** It marks the
+  component tag/value shape, and the seam runs on already-reassembled blobs, so it
+  cannot express or migrate a change to the *physical* table layout. Pointing new
+  code at a database written in an older physical layout fails to load and refuses to
+  boot (it never corrupts): the stored data is left untouched. With only dev worlds
+  today that means recreating the DB; a real layout migration would be a one-time
+  operational step outside the seam.
 
 ## Backends
 
