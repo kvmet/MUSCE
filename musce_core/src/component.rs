@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,12 @@ pub struct ComponentRegistry {
     removes: HashMap<&'static str, RemoveFn>,
     gets: HashMap<&'static str, GetFn>,
     relation_tags: HashSet<&'static str>,
+    /// Reverse of `NamedComponent::TAG`: the runtime `TypeId` of a registered
+    /// component back to its stable tag. The typed mutation paths (`insert<C>`,
+    /// `remove<C>`, `modify<C>`) are bounded only by `hecs::Component` and so hold no
+    /// tag; this lets them resolve one to emit a `ComponentChanged` fact without
+    /// tightening their bound. Populated in `register::<C>()`.
+    type_tags: HashMap<TypeId, &'static str>,
 }
 
 impl ComponentRegistry {
@@ -173,6 +180,22 @@ impl ComponentRegistry {
         self.inserts.insert(C::TAG, insert_one::<C>);
         self.removes.insert(C::TAG, remove_one::<C>);
         self.gets.insert(C::TAG, get_one::<C>);
+        self.type_tags.insert(TypeId::of::<C>(), C::TAG);
+    }
+
+    /// The stable tag of a registered component by its Rust type, or `None` if the
+    /// type was never registered. Lets the typed mutation paths recover a tag from a
+    /// `hecs::Component` bound alone.
+    pub fn tag_of<C: 'static>(&self) -> Option<&'static str> {
+        self.type_tags.get(&TypeId::of::<C>()).copied()
+    }
+
+    /// Resolve a runtime tag string to its interned `&'static str` key, or `None`
+    /// if unregistered. The tag-driven mutation paths hold a borrowed `&str` but a
+    /// `ComponentChanged` fact carries a `&'static str`; this recovers the static
+    /// form from the registry's own keys.
+    pub fn static_tag(&self, tag: &str) -> Option<&'static str> {
+        self.desers.get_key_value(tag).map(|(k, _)| *k)
     }
 
     /// Mark a tag as a relation forward-link. The live mutation paths refuse it,

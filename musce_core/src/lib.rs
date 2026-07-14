@@ -480,4 +480,128 @@ mod tests {
         );
         assert_eq!(w2.next_id(), snap.next_id);
     }
+
+    // --- ComponentChanged triggers ---------------------------------------
+    //
+    // `Description` is a registered component, so it stands in for a tracked game
+    // component here (the engine ships no trackable game vocabulary of its own).
+
+    fn changed_tags(facts: &[Fact]) -> Vec<&'static str> {
+        facts
+            .iter()
+            .filter_map(|f| match f {
+                Fact::ComponentChanged { tag, .. } => Some(*tag),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn untracked_component_emits_no_fact() {
+        let mut w = World::new();
+        let it = item(&mut w, "x");
+        let _ = w.take_facts();
+
+        // Nothing tracked: a set is silent.
+        w.set_component(it, "description", serde_json::json!("y"))
+            .unwrap();
+        w.insert(it, Description("z".into()));
+        assert!(w.take_facts().is_empty(), "untracked writes emit nothing");
+    }
+
+    #[test]
+    fn tracked_set_insert_remove_emit_component_changed() {
+        let mut w = World::new();
+        w.track_component::<Description>();
+        let it = item(&mut w, "x");
+        let _ = w.take_facts();
+
+        w.set_component(it, "description", serde_json::json!("y"))
+            .unwrap();
+        w.insert(it, Description("z".into()));
+        w.remove::<Description>(it);
+        let facts = w.take_facts();
+
+        assert_eq!(changed_tags(&facts), ["description"; 3]);
+        assert!(facts.iter().all(|f| matches!(
+            f,
+            Fact::ComponentChanged { entity, .. } if *entity == it
+        )));
+    }
+
+    #[test]
+    fn tracked_create_emits_only_for_tracked_tags() {
+        let mut w = World::new();
+        w.track_component::<Description>();
+
+        // Blob carries a tracked tag (description) and an untracked one (locus).
+        let id = w
+            .create(&serde_json::json!({ "locus": null, "description": "a lamp" }))
+            .unwrap();
+        let facts = w.take_facts();
+
+        assert_eq!(changed_tags(&facts), ["description"]);
+        assert!(matches!(
+            facts[0],
+            Fact::ComponentChanged { entity, .. } if entity == id
+        ));
+    }
+
+    #[test]
+    fn modify_emits_when_present_and_is_silent_when_absent() {
+        let mut w = World::new();
+        w.track_component::<Description>();
+        let it = item(&mut w, "old");
+        let bare = w.spawn(EntityBuilder::new());
+        let _ = w.take_facts();
+
+        // Present: mutate in place, report true, emit one trigger.
+        assert!(w.modify::<Description>(it, |d| d.0 = "new".into()));
+        assert_eq!(
+            w.component_value(it, "description"),
+            Some(serde_json::json!("new"))
+        );
+
+        // Absent component: no mutation, report false, emit nothing.
+        assert!(!w.modify::<Description>(bare, |d| d.0 = "unreached".into()));
+
+        assert_eq!(changed_tags(&w.take_facts()), ["description"]);
+    }
+
+    #[test]
+    fn raw_ecs_mutation_bypasses_the_trigger() {
+        // The footgun `modify` and `forbid_tracking` exist for: an in-place write
+        // through the raw ecs handle mutates below the mutator layer and emits
+        // nothing, so a tracked index over it would silently desync.
+        let mut w = World::new();
+        w.track_component::<Description>();
+        let it = item(&mut w, "x");
+        let _ = w.take_facts();
+
+        {
+            let e = w.index().get(it).unwrap();
+            let mut d = w.ecs().get::<&mut Description>(e).unwrap();
+            d.0 = "silently changed".into();
+        }
+        assert!(
+            w.take_facts().is_empty(),
+            "a raw &mut write cannot signal the change"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot be tracked")]
+    fn tracking_a_forbidden_component_panics() {
+        let mut w = World::new();
+        w.forbid_tracking::<Description>();
+        w.track_component::<Description>();
+    }
+
+    #[test]
+    #[should_panic(expected = "already tracked")]
+    fn forbidding_a_tracked_component_panics() {
+        let mut w = World::new();
+        w.track_component::<Description>();
+        w.forbid_tracking::<Description>();
+    }
 }

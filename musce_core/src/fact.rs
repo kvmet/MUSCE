@@ -5,15 +5,31 @@
 //! buffer hangs off `World` and is drained once per tick; see
 //! `docs/architecture/facts.md`.
 //!
-//! The set is deliberately small. A mutation earns a fact only where a reaction
-//! needs something it cannot reconstruct by querying the post-mutation world:
-//! either the mutation destroyed that state (destruction annihilates the dying
-//! entity's locus and name, hence the pre-removal snapshot in `Destroyed`) or the
-//! change is otherwise unobservable (a cascade removal happens below `execute`). A
-//! mutation whose result is fully queryable afterward gets no fact. Facts recover
-//! the unrecoverable; they do not narrate. `Moved` and `LocusChanged` are the
-//! proposed near-term additions (movement's vanished prior container and prior
-//! locus); see the doc for the full reasoning.
+//! The set is deliberately small. A mutation earns a fact only for one of two
+//! reasons:
+//!
+//! 1. It carries state a reaction needs that the post-mutation world can no longer
+//!    answer: either the mutation destroyed that state (destruction annihilates the
+//!    dying entity's locus and name, hence the pre-removal snapshot in `Destroyed`)
+//!    or the change happened somewhere unobservable (a cascade removal below
+//!    `execute`). This is the payload-carrier role; `Destroyed`/`Moved`/
+//!    `LocusChanged` fill it.
+//! 2. It is a bounded trigger a per-tick maintainer cannot cheaply poll for. Some
+//!    consumers keep a derived read-model current and would otherwise rescan the
+//!    world every tick to find what changed; a trigger lets them react to the few
+//!    entities that moved instead of the whole table. `ComponentChanged` fills this
+//!    role. It is kept bounded by an explicit opt-in (`World::track_component`): a
+//!    component emits nothing until something asks to track it, so the stream never
+//!    grows to narrate-everything.
+//!
+//! The two roles are not disjoint: `Destroyed` already serves both, carrying an
+//! unrecoverable payload for a death reaction while an index consumes it purely as a
+//! lifecycle trigger (evict the gone entity, reread nothing). `ComponentChanged`
+//! extends that existing trigger-consumption rather than inverting the charter.
+//!
+//! A mutation whose result is fully queryable afterward and that no maintainer needs
+//! a trigger for still gets no fact. Facts recover the unrecoverable or feed a
+//! bounded maintainer; they do not narrate.
 
 use crate::id::EntityId;
 
@@ -75,4 +91,19 @@ pub enum Fact {
         from: Option<EntityId>,
         to: Option<EntityId>,
     },
+    /// A tracked component was set, overwritten, or removed on an entity. A
+    /// payload-free *trigger*, not a payload-carrier: it names only the entity and
+    /// the component's `tag`, and a maintainer reconciles by rereading the current
+    /// value (present after a set, absent after a remove, recovering the old key from
+    /// its own reverse map). Nothing here is unrecoverable, so nothing is carried;
+    /// see the two-reason charter above.
+    ///
+    /// Emitted only for components a consumer opted into via
+    /// `World::track_component`, and only from the `World` mutator layer (set/remove
+    /// by tag, typed insert/remove, `create`, and `modify`), never from a raw
+    /// `ecs().get::<&mut _>()` write, which bypasses the mutator entirely (see
+    /// `World::modify` and the tracking guard). Duplicate triggers in a tick are
+    /// safe: reread is idempotent, and order against a same-entity `Destroyed` is
+    /// irrelevant because reread converges either way.
+    ComponentChanged { entity: EntityId, tag: &'static str },
 }

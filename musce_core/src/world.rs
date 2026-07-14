@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
@@ -41,6 +42,15 @@ pub struct World {
     /// the runtime drains via `take_facts` before running systems. Not persisted
     /// (a snapshot serializes only registered components); mirrors `despawned`.
     facts: Vec<Fact>,
+    /// Component tags a consumer opted into via `track_component`. A
+    /// `ComponentChanged` fact fires only for a tag in this set, keeping the trigger
+    /// stream bounded to components someone actually maintains an index over.
+    tracked: HashSet<&'static str>,
+    /// Component types a game declared unsafe to track (via `forbid_tracking`)
+    /// because it mutates them in place through `ecs().get::<&mut _>()`, below the
+    /// mutator layer where no fact can fire. `track_component` refuses these, so a
+    /// tracked index can never silently desync; `modify` is the supported path.
+    forbid_track: HashSet<TypeId>,
 }
 
 impl Default for World {
@@ -59,6 +69,8 @@ impl World {
             components: ComponentRegistry::default(),
             despawned: Vec::new(),
             facts: Vec::new(),
+            tracked: HashSet::new(),
+            forbid_track: HashSet::new(),
         };
         w.register_defaults();
         w
@@ -78,6 +90,42 @@ impl World {
 
     pub fn register_component<C: NamedComponent>(&mut self) {
         self.components.register::<C>();
+    }
+
+    /// Opt a component into the `ComponentChanged` trigger stream. Until a component
+    /// is tracked it emits nothing; this is the bound that keeps the trigger charter
+    /// honest (see fact.rs). `C` must be registered, so every mutator path can
+    /// resolve its tag, and must not have been `forbid_tracking`-marked. Startup
+    /// wiring; tracking the same component twice is a harmless no-op.
+    pub fn track_component<C: NamedComponent>(&mut self) {
+        assert!(
+            self.components.tag_of::<C>().is_some(),
+            "cannot track unregistered component {:?}; register it first",
+            C::TAG
+        );
+        assert!(
+            !self.forbid_track.contains(&TypeId::of::<C>()),
+            "component {:?} is mutated in place below the mutator layer and cannot \
+             be tracked; route its writes through World::modify first",
+            C::TAG
+        );
+        self.tracked.insert(C::TAG);
+    }
+
+    /// Declare a component unsafe to track: game code mutates it in place via
+    /// `ecs().get::<&mut _>()`, which cannot emit `ComponentChanged`, so a tracked
+    /// index over it would silently desync. A later `track_component` of the same
+    /// type is then a hard error. Lift the restriction by routing those writes
+    /// through `World::modify` and dropping this call.
+    pub fn forbid_tracking<C: hecs::Component>(&mut self) {
+        if let Some(tag) = self.components.tag_of::<C>() {
+            assert!(
+                !self.tracked.contains(tag),
+                "component {:?} is already tracked; cannot forbid tracking it",
+                tag
+            );
+        }
+        self.forbid_track.insert(TypeId::of::<C>());
     }
 
     pub fn register_relation<R: Relation>(&mut self) {
@@ -169,6 +217,29 @@ impl World {
         self.facts.push(fact);
     }
 
+    /// Emit `ComponentChanged` for a tag-driven mutation (set/remove/create), gated
+    /// on the tracked set. The runtime `tag` is resolved to its registered
+    /// `&'static str` for the fact; an unregistered tag never reaches here (the
+    /// mutation would have failed first) and would carry no static tag anyway.
+    fn note_component_change(&mut self, entity: EntityId, tag: &str) {
+        if self.tracked.contains(tag)
+            && let Some(stag) = self.components.static_tag(tag)
+        {
+            self.emit_fact(Fact::ComponentChanged { entity, tag: stag });
+        }
+    }
+
+    /// Emit `ComponentChanged` for a typed mutation (`insert`/`remove`/`modify`),
+    /// gated on the tracked set. Resolves the tag from `C`'s runtime type; an
+    /// unregistered type has none and emits nothing.
+    fn note_component_change_typed<C: 'static>(&mut self, entity: EntityId) {
+        if let Some(tag) = self.components.tag_of::<C>()
+            && self.tracked.contains(tag)
+        {
+            self.emit_fact(Fact::ComponentChanged { entity, tag });
+        }
+    }
+
     /// Drain the structural-fact buffer. The runtime calls this once per tick
     /// before running systems; facts not drained leak into the next tick.
     pub fn take_facts(&mut self) -> Vec<Fact> {
@@ -225,7 +296,14 @@ impl World {
         }
         let mut b = hecs::EntityBuilder::new();
         self.components.deserialize_into(components, &mut b)?;
-        Ok(self.spawn(b))
+        let id = self.spawn(b);
+        // Post-spawn: the entity is live, so a maintainer that rereads on the trigger
+        // sees the new values. Only tracked tags emit; the identity tag `spawn` adds
+        // is not in the blob and is never tracked.
+        for tag in obj.keys() {
+            self.note_component_change(id, tag);
+        }
+        Ok(id)
     }
 
     /// Deserialize one component from `value` and overwrite it on a live entity.
@@ -241,6 +319,7 @@ impl World {
         self.guard_tag(tag)?;
         self.components
             .insert_component(&mut self.ecs, e, tag, value)?;
+        self.note_component_change(id, tag);
         Ok(())
     }
 
@@ -250,6 +329,7 @@ impl World {
         let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
         self.guard_tag(tag)?;
         self.components.remove_component(&mut self.ecs, e, tag)?;
+        self.note_component_change(id, tag);
         Ok(())
     }
 
@@ -264,6 +344,7 @@ impl World {
     pub fn insert<C: hecs::Component>(&mut self, id: EntityId, component: C) {
         if let Some(e) = self.index.get(id) {
             let _ = self.ecs.insert_one(e, component);
+            self.note_component_change_typed::<C>(id);
         }
     }
 
@@ -273,7 +354,28 @@ impl World {
     pub fn remove<C: hecs::Component>(&mut self, id: EntityId) {
         if let Some(e) = self.index.get(id) {
             let _ = self.ecs.remove_one::<C>(e);
+            self.note_component_change_typed::<C>(id);
         }
+    }
+
+    /// Mutate a component in place and emit `ComponentChanged`. The supported
+    /// alternative to `ecs().get::<&mut C>()`, which mutates below the mutator layer
+    /// and cannot signal the change: a tracked index over such a raw write silently
+    /// desyncs (see `forbid_tracking`). Returns `false` (emitting nothing) if the
+    /// entity or the component is absent, so no trigger claims a change that did not
+    /// happen. Typed and JSON-free, for the hot path.
+    pub fn modify<C: hecs::Component>(&mut self, id: EntityId, f: impl FnOnce(&mut C)) -> bool {
+        let Some(e) = self.index.get(id) else {
+            return false;
+        };
+        {
+            let Ok(mut c) = self.ecs.get::<&mut C>(e) else {
+                return false;
+            };
+            f(&mut *c);
+        }
+        self.note_component_change_typed::<C>(id);
+        true
     }
 
     /// Serialize just one named component back to JSON; `None` if absent. The read
