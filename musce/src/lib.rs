@@ -58,6 +58,14 @@ pub mod wire {
 /// Accounts and capabilities, re-exported wholesale from the auth layer.
 pub use musce_host::auth;
 
+/// Generic secondary indexes over a component, behind the `musce_index` feature. A
+/// game enables `features = ["musce_index"]` and reaches the index machinery here;
+/// a game that does not is unaffected.
+#[cfg(feature = "musce_index")]
+pub mod index {
+    pub use musce_index::*;
+}
+
 // The composition-root API: what a game's `main` wires up and hands to `run`.
 pub use musce_host::{
     ChooseActor, Config, Game, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed, TICK_INTERVAL,

@@ -37,6 +37,7 @@ pub fn register(world: &mut World) {
     crate::exits::register(world);
     crate::names::register(world);
     crate::sequences::register(world);
+    crate::spatial::register(world);
 }
 
 /// How often, in ticks, a wanderer takes a step. Small, so the runtime demo and

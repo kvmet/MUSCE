@@ -43,6 +43,12 @@ pub fn seed(world: &mut World) {
     link(world, garden, hall, "south");
     link(world, cellar, hall, "up");
 
+    // Coordinates matching the exits: the garden lies north of the hall, the cellar
+    // below it. Gives the spatial index and `@nearby` something to work on at boot.
+    world.insert(hall, crate::spatial::Xyz { x: 0, y: 0, z: 0 });
+    world.insert(garden, crate::spatial::Xyz { x: 0, y: 10, z: 0 });
+    world.insert(cellar, crate::spatial::Xyz { x: 0, y: 0, z: -10 });
+
     let key = item(
         world,
         "a brass key",

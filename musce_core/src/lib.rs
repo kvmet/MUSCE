@@ -481,6 +481,31 @@ mod tests {
         assert_eq!(w2.next_id(), snap.next_id);
     }
 
+    #[test]
+    fn resources_are_transient_and_snapshot_excluded() {
+        #[derive(PartialEq, Debug)]
+        struct Counter(u32);
+
+        let mut w = World::new();
+        assert!(w.resource::<Counter>().is_none());
+        assert!(w.insert_resource(Counter(1)).is_none()); // no prior value
+        assert_eq!(w.resource::<Counter>(), Some(&Counter(1)));
+        assert_eq!(w.insert_resource(Counter(2)), Some(Counter(1))); // hands back the prior
+
+        // A resource never reaches the snapshot: a reloaded world starts without it,
+        // while the entity table still round-trips.
+        let coin = item(&mut w, "coin");
+        let snap = w.snapshot();
+        let mut w2 = World::new();
+        w2.load(&snap.entities, snap.next_id).unwrap();
+        assert!(w2.resource::<Counter>().is_none());
+        assert!(w2.entity(coin).is_some());
+
+        // take_resource hands the value out and clears it.
+        assert_eq!(w.take_resource::<Counter>(), Some(Counter(2)));
+        assert!(w.resource::<Counter>().is_none());
+    }
+
     // --- ComponentChanged triggers ---------------------------------------
     //
     // `Description` is a registered component, so it stands in for a tracked game

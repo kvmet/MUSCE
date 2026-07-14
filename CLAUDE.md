@@ -31,6 +31,7 @@ Touch the doc when you touch the code:
 | command dispatch, command tables, the `Event` output channel | `command-dispatch.md` |
 | admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
 | sequences, effects, timers | `sequences.md` |
+| secondary indexes (`musce_index`), the `World` resource store, coordinates | `indexes.md` |
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
 | the engine/game boundary, the injected `Game` | `engine-and-game.md` |
 | zones, locator, entity handoff | `sharding.md` |

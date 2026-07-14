@@ -21,6 +21,7 @@ use musce::wire::EventKind;
 use crate::commit_or_log;
 use crate::kinds::{Container, Creature, Exit, Item};
 use crate::names::display_name;
+use crate::spatial::{CELL, Xyz, coords, near};
 use crate::systems::Wander;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
@@ -47,6 +48,9 @@ pub fn commands(caps: &mut CapRegistry) -> CommandTable {
     t.register("possess", Gate::Cap(possess_cap), possess);
     t.register("purge", Gate::Cap(build), purge);
     t.register("unpossess", Gate::Cap(possess_cap), unpossess);
+    t.register("setpos", Gate::Cap(build), setpos);
+    t.register("pos", Gate::Cap(build), pos);
+    t.register("nearby", Gate::Cap(build), nearby);
     t
 }
 
@@ -463,6 +467,104 @@ fn purge_entity(world: &mut World, e: EntityId) {
 
 /// Resolve a `#<id>` token to a live entity. `None` if it lacks the `#`, is not a
 /// number, or names nothing in the world.
+/// `@setpos #<room> <x> <y> <z>`: set a room's integer coordinates. Writes through
+/// the tracked `xyz` component, so the spatial index updates on the next tick.
+pub fn setpos(ctx: &mut Ctx, args: &str) {
+    let mut p = args.split_whitespace();
+    let (Some(ref_tok), Some(xs), Some(ys), Some(zs)) = (p.next(), p.next(), p.next(), p.next())
+    else {
+        ctx.emit_self(EventKind::Feedback, "Usage: @setpos #<room> <x> <y> <z>.");
+        return;
+    };
+    let Some(id) = parse_ref(ctx.world, ref_tok) else {
+        ctx.emit_self(EventKind::Feedback, bad_ref());
+        return;
+    };
+    let (Ok(x), Ok(y), Ok(z)) = (xs.parse(), ys.parse(), zs.parse()) else {
+        ctx.emit_self(EventKind::Feedback, "Coordinates must be whole numbers.");
+        return;
+    };
+    ctx.world.insert(id, Xyz { x, y, z });
+    ctx.emit_self(
+        EventKind::Feedback,
+        format!("Set #{} to ({x}, {y}, {z}).", id.0),
+    );
+}
+
+/// `@pos [#<thing>]`: report the coordinates of a thing, or of the room you are in
+/// when given no argument.
+pub fn pos(ctx: &mut Ctx, args: &str) {
+    let target = match args.trim() {
+        "" => {
+            let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+                ctx.emit_self(EventKind::Feedback, "You are nowhere.");
+                return;
+            };
+            room
+        }
+        token => {
+            let Some(id) = parse_ref(ctx.world, token) else {
+                ctx.emit_self(EventKind::Feedback, bad_ref());
+                return;
+            };
+            id
+        }
+    };
+    match coords(ctx.world, target) {
+        Some(p) => ctx.emit_self(
+            EventKind::Feedback,
+            format!("#{} is at ({}, {}, {}).", target.0, p.x, p.y, p.z),
+        ),
+        None => ctx.emit_self(
+            EventKind::Feedback,
+            format!("#{} has no coordinates.", target.0),
+        ),
+    }
+}
+
+/// `@nearby [<radius>]`: list the rooms within `radius` (default one cell) of the
+/// room you are in, nearest first. Uses the spatial index, not a full scan.
+pub fn nearby(ctx: &mut Ctx, args: &str) {
+    let radius: i64 = match args.trim() {
+        "" => CELL,
+        s => match s.parse() {
+            Ok(r) if r >= 0 => r,
+            _ => {
+                ctx.emit_self(EventKind::Feedback, "Usage: @nearby [<radius>].");
+                return;
+            }
+        },
+    };
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+        ctx.emit_self(EventKind::Feedback, "You are nowhere.");
+        return;
+    };
+    let Some(here) = coords(ctx.world, room) else {
+        ctx.emit_self(EventKind::Feedback, "This room has no coordinates.");
+        return;
+    };
+    let mut lines = Vec::new();
+    for (entity, d2) in near(ctx.world, &here, radius) {
+        if entity == room {
+            continue; // the room you are standing in
+        }
+        let dist = (d2 as f64).sqrt();
+        lines.push(format!(
+            "  #{} {} ({dist:.1})",
+            entity.0,
+            display_name(ctx.world, entity)
+        ));
+    }
+    if lines.is_empty() {
+        ctx.emit_self(EventKind::Feedback, format!("No rooms within {radius}."));
+    } else {
+        ctx.emit_self(
+            EventKind::Feedback,
+            format!("Rooms within {radius}:\n{}", lines.join("\n")),
+        );
+    }
+}
+
 fn parse_ref(world: &World, token: &str) -> Option<EntityId> {
     let id = EntityId(token.strip_prefix('#')?.parse().ok()?);
     world.entity(id).is_some().then_some(id)

@@ -28,6 +28,7 @@ bench in a lower crate can't see the real verbs or systems.
 | `snapshot_roundtrip` | `musce_persistence` | How does the DB save/load cost scale with entity count, and how much of it is SQL vs serialization? |
 | `command_latency` | `musce_ref` | What does a full player command cost end-to-end, on the read path (`look`) and the write path (`go`)? |
 | `tick_work` | `musce_ref` | What does one simulation tick cost when no one is typing (the system pipeline running over the seed)? |
+| `index_query` | `musce_ref` | When does a maintained secondary index (the spatial `near`) beat a naive full scan, and at what world size do they cross? |
 
 ## Running them
 
@@ -74,6 +75,16 @@ work is (re-check them, don't trust the prose blindly):
 - **The in-memory engine loop is not currently a concern.** Command dispatch and a
   bare tick sit in the low microseconds against the seed; the ECS hot paths (`hecs`
   queries) are fast. Effort spent there now would be premature.
+- **The spatial index is a large-world tool, not a small-world one.** `index_query`
+  pits the indexed `near` against a naive full scan on a fixed-density lattice: the
+  indexed query is roughly flat once its query neighborhood is populated (~75 us),
+  the scan is linear (~1 us at 100 rooms up to ~110 us at 100k). They cross around
+  **~70k rooms**; below that the scan wins, because the index's bounded
+  neighborhood walk carries a larger constant than a linear pass over a small world.
+  So a typical MUD (hundreds to low thousands of rooms) is better served by the
+  scan, and the index's value at that scale is the reusable maintained-read-model
+  machinery, not a speedup. The cell size and query radius set that constant and are
+  the lever if the crossover needs to move (see indexes.md).
 
 ## Measuring a change's gain
 

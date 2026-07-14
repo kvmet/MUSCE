@@ -191,10 +191,10 @@ the internal split churns freely behind it.
 compile error in this repo, not a downstream game's discovery.
 
 Optional subsystems attach as cargo features on the facade, not as dependencies a
-game wires itself. The first is `musce_index` (a generic component index), taken
-with `features = ["musce_index"]` and a scaffold today; a plugin thus costs one
-feature flag on the crate a game already depends on, and stays invisible to games
-that do not enable it.
+game wires itself. The first is `musce_index` (a generic component index, reached
+at `musce::index`; see indexes.md), taken with `features = ["musce_index"]`; a
+plugin thus costs one feature flag on the crate a game already depends on, and stays
+invisible to games that do not enable it.
 
 ## What moves where
 

@@ -965,7 +965,6 @@ dependencies = [
 name = "musce_index"
 version = "0.1.0"
 dependencies = [
- "musce_action",
  "musce_core",
  "serde",
 ]

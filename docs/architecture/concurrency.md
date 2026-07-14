@@ -35,7 +35,9 @@ loop {
 
 Fixed order means deterministic ticks: reproducible bugs and sane resolution
 order. The game injects its systems as `Game.systems` (a `fn(&mut SystemCtx)`
-list); the runtime runs them in registration order each tick. A `SystemCtx`
+list); the runtime runs them in registration order each tick. Order is a contract a
+system can rely on: the reference game registers its index maintainer first (see
+indexes.md) so a later system in the same tick reads the updated index. A `SystemCtx`
 mirrors a verb's `Ctx` for the simulation half: it carries the world the system
 mutates (through the same `execute`) and an emit buffer addressed to rooms, which
 the runtime resolves to connections through the same audience resolver verbs use,

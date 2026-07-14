@@ -47,6 +47,9 @@ These hold across every subsystem:
   principle (a fact recovers only what a reaction cannot reconstruct), the
   `Destroyed`/`Moved`/`LocusChanged` facts, and the carried-subtree boundary.
   *(Built.)*
+- [indexes.md](indexes.md): the generic secondary-index crate (`musce_index`), the
+  `World` resource store it is homed in, its `ComponentChanged`-driven maintenance,
+  and the reference spatial consumer (`Xyz` on rooms, `@nearby`). *(Built.)*
 - [command-dispatch.md](command-dispatch.md): the command/action boundary, the
   `CommandTable` dispatch registry with prefix lookup, and the `Event` output
   channel with sim-side audience resolution. *(Built.)*
@@ -90,7 +93,9 @@ Built:
   component, wired with the `DespawnSources` cascade; the `Exit` kind marker itself
   is game vocabulary), the structural-fact channel
   (`Fact::Destroyed`/`Moved`/`LocusChanged`, emitted at the mutator layer; see
-  facts.md), JSON snapshot. (Permissions are
+  facts.md), JSON snapshot, and a transient `World` resource store for derived,
+  non-persisted singletons (type-keyed, snapshot-excluded; see indexes.md).
+  (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
 - `musce_persistence`: World-as-truth save/load behind one `WorldStore` handle
   chosen by URL scheme, with SQLite and Postgres backends sharing one schema (the
@@ -175,6 +180,13 @@ Built:
   layer: the `Steps`/`Sequences` components, the `sequence_sweep` system, and a
   seeded patrolling sentry and burning torch); builds the `Game`
   and has `main` plus the end-to-end test. A real game forks this crate.
+- `musce_index`: a generic, type-agnostic secondary index over a component (a key
+  function per index, `Multi`/`Unique` policy, exact `get` plus on-request
+  `conflicts`), maintained incrementally off the `ComponentChanged` trigger and
+  `Destroyed`, homed in a `World` resource (transient, never persisted). Its
+  reference consumer is `musce_ref`'s coordinate layer: an integer `Xyz` on rooms,
+  the `xyz_cell`/`xyz_level` indexes, `near` range queries, and the
+  `@setpos`/`@pos`/`@nearby` verbs. See indexes.md.
 
 Deferred (with seams in place where noted):
 
@@ -204,6 +216,7 @@ Deferred (with seams in place where noted):
   skill-check check grows from), but two-sided door state is still deferred.
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.
-- Relationship traversal index, spatial proximity index, coordinates.
+- Relationship traversal index (the generic secondary index and the spatial
+  proximity index over room coordinates are **built**; see indexes.md).
 - Sense propagation (sound/smell/light) as timed exit-graph walks.
 - Command journal for sub-snapshot crash recovery; dirty-tracked snapshots.

@@ -35,6 +35,12 @@ runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
   rather than hand-written strings; a typo is a type error. The raw tag->value path
   is reserved for genuinely runtime input (`@set` from a user).
 - `@set #<id>.<component> <json>` overwrites a whole component.
+- `@setpos #<room> <x> <y> <z>` sets a room's integer coordinates; `@pos [#<thing>]`
+  reports them (defaulting to the room you are in); `@nearby [<radius>]` lists rooms
+  within a radius, using the spatial index rather than a full scan. These are the
+  reference game's coordinate layer over the generic secondary index (see
+  indexes.md), not engine machinery; `@setpos` writes the tracked `xyz` component,
+  which is what feeds the index.
 - `@destroy #<target>` despawns one entity, spilling its contents up into its own
   container (the safe, recoverable default); `@purge #<target>` is the recursive
   opt-in that takes the contents with it (irreversible).

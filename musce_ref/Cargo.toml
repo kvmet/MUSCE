@@ -20,3 +20,7 @@ harness = false
 [[bench]]
 name = "tick_work"
 harness = false
+
+[[bench]]
+name = "index_query"
+harness = false

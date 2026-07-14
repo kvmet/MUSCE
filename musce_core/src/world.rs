@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
@@ -51,6 +51,14 @@ pub struct World {
     /// mutator layer where no fact can fire. `track_component` refuses these, so a
     /// tracked index can never silently desync; `modify` is the supported path.
     forbid_track: HashSet<TypeId>,
+    /// Transient singleton state a game hangs off the world without persisting it:
+    /// derived, rebuilt-on-boot data (a secondary index, a cache), keyed by type,
+    /// at most one value per type. Like `facts` and `tracked` it lives beside the
+    /// entity table and `snapshot` never serializes it, so it costs nothing at save
+    /// time and starts empty every boot. The engine never reads a resource; it is
+    /// opaque game state, homed here only because a `fn`-pointer system can reach no
+    /// state but the world.
+    resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl Default for World {
@@ -71,6 +79,7 @@ impl World {
             facts: Vec::new(),
             tracked: HashSet::new(),
             forbid_track: HashSet::new(),
+            resources: HashMap::new(),
         };
         w.register_defaults();
         w
@@ -126,6 +135,37 @@ impl World {
             );
         }
         self.forbid_track.insert(TypeId::of::<C>());
+    }
+
+    // --- transient resources --------------------------------------------
+    //
+    // Type-keyed singleton state that is never persisted: a game's derived,
+    // rebuilt-on-boot data (a secondary index, a cache). The engine stores and
+    // hands these back but never interprets one; `snapshot` does not see them.
+
+    /// Insert or replace the resource of type `T`, returning the previous value if
+    /// one was set.
+    pub fn insert_resource<T: Any + Send + Sync>(&mut self, value: T) -> Option<T> {
+        self.resources
+            .insert(TypeId::of::<T>(), Box::new(value))
+            .and_then(|prev| prev.downcast::<T>().ok().map(|b| *b))
+    }
+
+    /// Borrow the resource of type `T`, if set.
+    pub fn resource<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.resources
+            .get(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_ref::<T>())
+    }
+
+    /// Remove and return the resource of type `T`, if set. The take-out that lets a
+    /// maintainer own its state while it reads the rest of the world through
+    /// `&World` (an index rereads component values as it applies its deltas), then
+    /// reinsert it.
+    pub fn take_resource<T: Any + Send + Sync>(&mut self) -> Option<T> {
+        self.resources
+            .remove(&TypeId::of::<T>())
+            .and_then(|b| b.downcast::<T>().ok().map(|b| *b))
     }
 
     pub fn register_relation<R: Relation>(&mut self) {

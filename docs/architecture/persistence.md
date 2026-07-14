@@ -24,6 +24,10 @@ What is and isn't serialized:
 - **Not persisted:** reverse relation lists (`RelSources`) and the `EntityId`
   index. Both are derived and rebuilt on load. This shrinks the save and removes
   a class of "the two sides disagree on disk" bugs.
+- **Not persisted:** `World` resources (`insert_resource`/`resource`/
+  `take_resource`), type-keyed transient singletons for derived state such as a
+  secondary index (see indexes.md). `snapshot` enumerates the entity table only, so
+  a resource is never written; it is rebuilt on boot, the same as the reverse lists.
 
 Load is order-independent: forward links are `EntityId`s resolved through the
 index, so a target need not exist when its source is spawned. After all entities

@@ -11,6 +11,7 @@ mod kinds;
 mod names;
 mod seed;
 mod sequences;
+pub mod spatial;
 mod systems;
 mod verbs;
 
@@ -36,6 +37,8 @@ pub fn game() -> Game {
         seed: seed::seed,
         choose_actor: seed::choose_actor,
         systems: vec![
+            // First, so later systems in the same tick read the updated index.
+            spatial::maintain,
             systems::wander,
             sequences::sequence_sweep,
             systems::death_cry,
