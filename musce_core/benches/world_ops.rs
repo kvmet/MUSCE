@@ -141,7 +141,11 @@ fn despawn_reparent(c: &mut Criterion) {
                 },
                 |(mut world, bag)| {
                     world.despawn(bag);
-                    black_box(world.take_facts())
+                    // Return the world so its O(n) drop lands outside the timed
+                    // section (as `world_load` does), leaving only the cascade
+                    // measured.
+                    let facts = world.take_facts();
+                    (world, facts)
                 },
                 BatchSize::SmallInput,
             );

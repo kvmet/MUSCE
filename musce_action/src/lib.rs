@@ -28,7 +28,7 @@ use musce_core::{EntityId, World};
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};
-pub use ctx::{ColdOp, Ctx, System, SystemCtx};
+pub use ctx::{ColdOp, Ctx, System, SystemCtx, run_systems};
 pub use dispatch::{Caller, CommandTable, Gate, Handler, dispatch_command};
 pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};

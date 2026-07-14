@@ -6,7 +6,7 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Caller, ColdOp, CommandTable, Outbound, SystemCtx, dispatch_command, resolve};
+use musce_action::{Caller, ColdOp, CommandTable, dispatch_command, run_systems};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
 
@@ -69,22 +69,11 @@ impl Dispatch {
     /// `dispatch_command` does for a verb. The audience index is built once
     /// (owned, so it does not borrow the world the systems mutate).
     pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
+        // The audience index is built once (owned, so it does not borrow the world
+        // the systems mutate); the shared `run_systems` owns the fact-drain and the
+        // per-system loop.
         let actors = self.floor.audience_index(world);
-        // Drain the tick's structural facts once, before the loop: every system
-        // sees the same batch, and a fact a system emits buffers for the next tick
-        // rather than being seen within this pass (so system order is cosmetic).
-        // Unconditional even with no reactions registered, or facts would leak.
-        let facts = world.take_facts();
-        for system in &self.game.systems {
-            let mut out: Vec<Outbound> = Vec::new();
-            {
-                let mut sctx = SystemCtx::new(world, ctx.tick, ctx.now, &facts, &mut out);
-                system(&mut sctx);
-            }
-            for ob in out {
-                resolve(world, &actors, ob, emit);
-            }
-        }
+        run_systems(world, &self.game.systems, &actors, ctx.tick, ctx.now, emit);
     }
 
     fn handle_line(

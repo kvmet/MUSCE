@@ -11,9 +11,10 @@
 use std::time::SystemTime;
 
 use musce_core::{EntityId, Fact, World};
-use musce_proto::{ConnectionId, EventKind};
+use musce_proto::{ConnectionId, EventKind, Outgoing};
 
-use crate::audience::Outbound;
+use crate::audience::{Outbound, resolve};
+use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
 use crate::event::Event;
 
@@ -232,5 +233,40 @@ impl<'a> SystemCtx<'a> {
     pub fn emit_locus(&mut self, locus: EntityId, kind: EventKind, text: impl Into<String>) {
         self.out
             .push(Outbound::new(Event::to_locus(locus, kind, text)));
+    }
+}
+
+/// Run `systems` over `world` for one tick and audience-resolve their output.
+///
+/// Drains the tick's structural facts once up front, so every system sees the same
+/// batch and a fact a system emits buffers for the next tick rather than being seen
+/// within this pass (making system order cosmetic). Each system mutates the world
+/// and emits into its own buffer, which is then resolved to connections through
+/// `emit` against `actors`, exactly as [`dispatch_command`] resolves a verb's
+/// output.
+///
+/// This is the single system-loop implementation: the runtime's per-tick step
+/// (`Dispatch::run_systems`) and the `tick_work` benchmark both call it, so neither
+/// can drift from the other.
+///
+/// [`dispatch_command`]: crate::dispatch_command
+pub fn run_systems(
+    world: &mut World,
+    systems: &[System],
+    actors: &Actors,
+    tick: u64,
+    now: SystemTime,
+    emit: &mut impl FnMut(Outgoing),
+) {
+    let facts = world.take_facts();
+    for system in systems {
+        let mut out: Vec<Outbound> = Vec::new();
+        {
+            let mut sctx = SystemCtx::new(world, tick, now, &facts, &mut out);
+            system(&mut sctx);
+        }
+        for ob in out {
+            resolve(world, actors, ob, emit);
+        }
     }
 }

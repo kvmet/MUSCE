@@ -1,9 +1,9 @@
 //! Per-tick simulation cost: the work the tick loop does every beat when no
 //! player is typing. It runs the reference game's real system set (`wander`, the
-//! sequence sweep, and the `death_cry` reaction) exactly as the host's
-//! `run_systems` does: drain the tick's facts once, run each system over a
-//! `SystemCtx`, and audience-resolve its output. Each iteration runs a fixed span
-//! of ticks over a fresh seed and reports per-tick throughput, so the number is a
+//! sequence sweep, and the `death_cry` reaction) through the engine's own
+//! `run_systems`, the same function the host's tick step calls, so the bench
+//! cannot drift from the real per-tick loop. Each iteration runs a fixed span of
+//! ticks over a fresh seed and reports per-tick throughput, so the number is a
 //! representative sim-second rather than the anomalously light first tick.
 //!
 //! This measures the seed world's fixed population. Watching per-tick cost scale
@@ -15,7 +15,7 @@ use std::hint::black_box;
 use std::time::SystemTime;
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use musce::action::{Actors, Outbound, System, SystemCtx, resolve};
+use musce::action::{Actors, System, run_systems};
 use musce::world::World;
 use musce::{Register, Seed};
 
@@ -35,25 +35,6 @@ fn setup() -> (World, Vec<System>) {
     (world, game.systems)
 }
 
-/// One tick of the system pipeline, mirroring the host's `run_systems`: facts are
-/// drained once up front so every system in the tick sees the same batch, and each
-/// system's output is resolved against the (here empty) audience index.
-fn tick(world: &mut World, systems: &[System], actors: &Actors, tick: u64) {
-    let facts = world.take_facts();
-    for system in systems {
-        let mut out: Vec<Outbound> = Vec::new();
-        {
-            let mut sctx = SystemCtx::new(world, tick, SystemTime::UNIX_EPOCH, &facts, &mut out);
-            system(&mut sctx);
-        }
-        for ob in out {
-            resolve(world, actors, ob, &mut |o| {
-                black_box(o);
-            });
-        }
-    }
-}
-
 fn tick_work(c: &mut Criterion) {
     // No connections: audience resolution is exercised but drops every event,
     // isolating the systems' world work from delivery.
@@ -65,7 +46,16 @@ fn tick_work(c: &mut Criterion) {
             setup,
             |(world, systems)| {
                 for t in 1..=TICKS {
-                    tick(world, systems, &actors, t);
+                    run_systems(
+                        world,
+                        systems,
+                        &actors,
+                        t,
+                        SystemTime::UNIX_EPOCH,
+                        &mut |o| {
+                            black_box(o);
+                        },
+                    );
                 }
             },
             BatchSize::SmallInput,
