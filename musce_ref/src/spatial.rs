@@ -6,9 +6,10 @@
 //! `Game.register`/`Game.systems`, like any other game type.
 //!
 //! Two indexes read the one `xyz` component with different keys: `xyz_cell`, a
-//! spatial hash keyed by the cell a room falls in (so `near` scans only the cells
-//! a sphere touches), and `xyz_level`, a bucket per z-level. One `xyz` write fans
-//! out to both through the component-keyed trigger. The registry is derived,
+//! spatial hash keyed by the cell a room falls in (so `near` retrieves a region by
+//! unioning the buckets of the cells it covers), and `xyz_level`, a bucket per
+//! z-level. One `xyz` write fans out to both through the component-keyed trigger.
+//! The registry is derived,
 //! in-memory state held in a `World` resource and rebuilt on boot; nothing about
 //! it persists. See `docs/architecture/indexes.md`.
 
@@ -32,10 +33,11 @@ impl NamedComponent for Xyz {
     const TAG: &'static str = "xyz";
 }
 
-/// Edge length of a spatial-hash cell, in coordinate units. `near` scans the cells
-/// a query sphere touches rather than every room, so this brackets the typical
-/// query radius: large enough that a query hits a handful of cells, small enough
-/// that a cell holds few rooms. Also the default `@nearby` radius.
+/// Edge length of a spatial-hash cell, in coordinate units, and the grid a range
+/// query quantizes to. `near` retrieves every room in the cells a query region
+/// covers, so this is a precision/lookups tradeoff: smaller cells hug the requested
+/// radius more tightly but make more bucket lookups; larger cells mean fewer
+/// lookups over a coarser region. Also the default `@nearby` radius.
 pub const CELL: i64 = 10;
 
 /// The spatial-hash index (range queries) and the z-level index, by name.
@@ -51,14 +53,6 @@ fn cell_of(p: &Xyz) -> Cell {
         p.y.div_euclid(CELL),
         p.z.div_euclid(CELL),
     )
-}
-
-/// Squared Euclidean distance, so a range test avoids a sqrt (`dist2 <= r*r`).
-pub fn dist2(a: &Xyz, b: &Xyz) -> i64 {
-    let dx = a.x - b.x;
-    let dy = a.y - b.y;
-    let dz = a.z - b.z;
-    dx * dx + dy * dy + dz * dz
 }
 
 /// Register the game's `xyz` component and its two indexes' wiring: the component
@@ -92,11 +86,14 @@ pub fn coords(world: &World, entity: EntityId) -> Option<Xyz> {
         .and_then(|er| er.get::<&Xyz>().map(|c| *c))
 }
 
-/// Entities whose coordinates fall within `radius` of `center`, nearest first,
-/// each paired with its squared distance. Scans only the cells the query sphere
-/// touches (via `xyz_cell`) and exact-distance-filters them. Empty if the index is
-/// not built yet (before the maintainer's first run).
-pub fn near(world: &World, center: &Xyz, radius: i64) -> Vec<(EntityId, i64)> {
+/// Rooms whose cell falls within `radius` of `center`, in arbitrary order. A pure
+/// index retrieve: it enumerates the cell keys the query region covers and unions
+/// their buckets, reading no room's position. The region is quantized to the cell
+/// grid (`CELL`), so results are a superset of an exact sphere near the boundary; a
+/// caller that needs exact distance filters this batch itself (the index does
+/// retrieval, not geometry). Empty if the index is not built yet (before the
+/// maintainer's first run).
+pub fn near(world: &World, center: &Xyz, radius: i64) -> Vec<EntityId> {
     let Some(reg) = world.resource::<IndexRegistry>() else {
         return Vec::new();
     };
@@ -105,23 +102,14 @@ pub fn near(world: &World, center: &Xyz, radius: i64) -> Vec<(EntityId, i64)> {
     };
     let (cx, cy, cz) = cell_of(center);
     let span = radius.div_euclid(CELL) + 1;
-    let r2 = radius * radius;
     let mut out = Vec::new();
     for dx in -span..=span {
         for dy in -span..=span {
             for dz in -span..=span {
-                for &entity in idx.get(&(cx + dx, cy + dy, cz + dz)) {
-                    if let Some(p) = coords(world, entity) {
-                        let d2 = dist2(center, &p);
-                        if d2 <= r2 {
-                            out.push((entity, d2));
-                        }
-                    }
-                }
+                out.extend_from_slice(idx.get(&(cx + dx, cy + dy, cz + dz)));
             }
         }
     }
-    out.sort_by_key(|(_, d2)| *d2);
     out
 }
 
@@ -143,33 +131,29 @@ mod tests {
         world.insert_resource(reg);
     }
 
-    fn ids(hits: &[(EntityId, i64)]) -> Vec<EntityId> {
-        hits.iter().map(|(e, _)| *e).collect()
-    }
-
     #[test]
-    fn near_returns_within_radius_nearest_first() {
+    fn near_retrieves_the_covered_region() {
         let mut w = World::new();
         let here = place(&mut w, 0, 0, 0);
-        let close = place(&mut w, 3, 0, 0); // distance 3
-        let far = place(&mut w, 0, 12, 0); // distance 12, outside radius 10
+        let close = place(&mut w, 3, 0, 0);
+        let far = place(&mut w, 100, 0, 0); // cell (10,0,0), outside the covered span
         build_index(&mut w);
 
         let hits = near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10);
-        assert_eq!(ids(&hits), vec![here, close]);
-        assert!(!ids(&hits).contains(&far));
+        assert!(hits.contains(&here) && hits.contains(&close));
+        assert!(!hits.contains(&far));
     }
 
     #[test]
     fn near_spans_adjacent_cells() {
-        // Two rooms straddling a cell boundary but within the radius: the sphere
-        // must scan both cells, not just the center's.
+        // Two rooms straddling a cell boundary: the region unions both cells, not
+        // just the center's.
         let mut w = World::new();
         let a = place(&mut w, CELL - 1, 0, 0); // cell 0
-        let b = place(&mut w, CELL + 1, 0, 0); // cell 1, distance 2 from a
+        let b = place(&mut w, CELL + 1, 0, 0); // cell 1
         build_index(&mut w);
 
-        let hits = ids(&near(
+        let hits = near(
             &w,
             &Xyz {
                 x: CELL - 1,
@@ -177,7 +161,7 @@ mod tests {
                 z: 0,
             },
             5,
-        ));
+        );
         assert!(hits.contains(&a) && hits.contains(&b));
     }
 

@@ -75,16 +75,19 @@ work is (re-check them, don't trust the prose blindly):
 - **The in-memory engine loop is not currently a concern.** Command dispatch and a
   bare tick sit in the low microseconds against the seed; the ECS hot paths (`hecs`
   queries) are fast. Effort spent there now would be premature.
-- **The spatial index is a large-world tool, not a small-world one.** `index_query`
-  pits the indexed `near` against a naive full scan on a fixed-density lattice: the
-  indexed query is roughly flat once its query neighborhood is populated (~75 us),
-  the scan is linear (~1 us at 100 rooms up to ~110 us at 100k). They cross around
-  **~70k rooms**; below that the scan wins, because the index's bounded
-  neighborhood walk carries a larger constant than a linear pass over a small world.
-  So a typical MUD (hundreds to low thousands of rooms) is better served by the
-  scan, and the index's value at that scale is the reusable maintained-read-model
-  machinery, not a speedup. The cell size and query radius set that constant and are
-  the lever if the crossover needs to move (see indexes.md).
+- **The spatial index is a retrieve, and it earns its keep at small-MUD scale.**
+  `index_query` pits the indexed `near` against a naive full scan that selects the
+  same region, both returning the set unordered so the number is pure retrieval cost.
+  The indexed retrieve is flat in world size (O(keys + results): ~2.4 us at 100 rooms
+  rising to a ~5.5 us plateau once the region is fully populated); the scan is linear
+  (~0.6 us at 100 rooms up to ~138 us at 100k). They cross around **~1k rooms**, and
+  past that the retrieve wins by the full O(world)/O(results) margin (~25x at 100k).
+  The earlier "~70k crossover" was an artifact of a `near` that scanned its retrieved
+  candidates and re-read each one's position from the ECS; a linear archetype scan
+  beats that random-access pattern until the world is huge. Turning `near` into a
+  pure retrieve (union the covered cells' buckets, filter nothing) is what moved the
+  crossover by ~70x. Cell size trades region precision against the number of bucket
+  lookups; it is a granularity knob, not a performance lever (see indexes.md).
 
 ## Measuring a change's gain
 
@@ -103,7 +106,9 @@ cargo bench -- --baseline pre-<change>
 ```
 
 The baseline must be captured on the immediately-preceding code, not weeks earlier,
-or unrelated drift pollutes the delta. The first planned use is the relationship /
-proximity index (deferred; see the README roadmap): when it lands, a
-`pre-index` baseline taken right before the merge is what turns "indexing should
-help" into a number.
+or unrelated drift pollutes the delta. The batched-save win already used this: a
+`pre-batch` baseline on `snapshot_roundtrip` is what turned "batching should help"
+into the ~9-10x above. The next planned use is the persistence storage-layout
+redesign (the dirty-tracked / incremental snapshot and EAV split in
+[persistence.md](persistence.md)): a `pre-incremental` baseline taken right before
+that merge is what will size its gain against today's batched save.

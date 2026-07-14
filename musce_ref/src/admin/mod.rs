@@ -522,8 +522,9 @@ pub fn pos(ctx: &mut Ctx, args: &str) {
     }
 }
 
-/// `@nearby [<radius>]`: list the rooms within `radius` (default one cell) of the
-/// room you are in, nearest first. Uses the spatial index, not a full scan.
+/// `@nearby [<radius>]`: list the rooms in the region within `radius` (default one
+/// cell) of the room you are in, in no particular order. A pure index retrieve, so
+/// the region is quantized to the cell grid. Uses the spatial index, not a scan.
 pub fn nearby(ctx: &mut Ctx, args: &str) {
     let radius: i64 = match args.trim() {
         "" => CELL,
@@ -544,13 +545,12 @@ pub fn nearby(ctx: &mut Ctx, args: &str) {
         return;
     };
     let mut lines = Vec::new();
-    for (entity, d2) in near(ctx.world, &here, radius) {
+    for entity in near(ctx.world, &here, radius) {
         if entity == room {
             continue; // the room you are standing in
         }
-        let dist = (d2 as f64).sqrt();
         lines.push(format!(
-            "  #{} {} ({dist:.1})",
+            "  #{} {}",
             entity.0,
             display_name(ctx.world, entity)
         ));
