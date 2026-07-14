@@ -1,13 +1,18 @@
 use std::str::FromStr;
 
 use musce_core::Snapshot;
-use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{QueryBuilder, Row};
 
 use crate::{
     Error, KvStore, Loaded, NEXT_ID_KEY, Persistence, Result, SCHEMA_VERSION, SCHEMA_VERSION_KEY,
     assemble, kv_table_ddl, world_tables_ddl,
 };
+
+/// The most bound parameters allowed in one statement. Postgres caps bound
+/// parameters at 65535 per statement. Row chunks divide this by their param count
+/// (2 for a roster row, 3 for a component row, 1 for a delete id).
+const MAX_VARS: usize = 65535;
 
 #[derive(Clone)]
 pub struct PostgresStore {
@@ -38,44 +43,70 @@ impl Persistence for PostgresStore {
     async fn save(&self, snapshot: &Snapshot) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
+        // Flatten the snapshot into row sets once, so the writes below are plain
+        // batched inserts. The blob is always a `{tag: value}` object; a non-object
+        // is a producer bug, surfaced rather than written. Component `data` is the
+        // JSON text of the value (`"null"` for a marker, never a SQL NULL).
+        let mut entity_rows: Vec<(i64, Option<i64>)> = Vec::with_capacity(snapshot.entities.len());
+        let mut comp_rows: Vec<(i64, &str, String)> = Vec::new();
         for blob in &snapshot.entities {
             let obj = blob.data.as_object().ok_or(Error::NotAnObject(blob.id))?;
-
-            sqlx::query(
-                "INSERT INTO entities (entity_id, zone) VALUES ($1, $2)
-                 ON CONFLICT(entity_id) DO UPDATE SET zone = excluded.zone",
-            )
-            .bind(blob.id.0 as i64)
-            .bind(blob.zone.map(|z| z.0 as i64))
-            .execute(&mut *tx)
-            .await?;
-
-            // Replace the whole component set: delete then insert, so a tag
-            // dropped since the last save does not resurrect on reload.
-            sqlx::query("DELETE FROM components WHERE entity_id = $1")
-                .bind(blob.id.0 as i64)
-                .execute(&mut *tx)
-                .await?;
-
+            let id = blob.id.0 as i64;
+            entity_rows.push((id, blob.zone.map(|z| z.0 as i64)));
             for (tag, value) in obj {
-                sqlx::query("INSERT INTO components (entity_id, tag, data) VALUES ($1, $2, $3)")
-                    .bind(blob.id.0 as i64)
-                    .bind(tag.as_str())
-                    .bind(serde_json::to_string(value)?)
-                    .execute(&mut *tx)
-                    .await?;
+                comp_rows.push((id, tag.as_str(), serde_json::to_string(value)?));
             }
         }
 
-        for id in &snapshot.deletes {
-            sqlx::query("DELETE FROM components WHERE entity_id = $1")
-                .bind(id.0 as i64)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("DELETE FROM entities WHERE entity_id = $1")
-                .bind(id.0 as i64)
-                .execute(&mut *tx)
-                .await?;
+        // Upsert the roster rows first: a component row's FK requires its entity to
+        // exist. Two bound params per row.
+        for chunk in entity_rows.chunks(MAX_VARS / 2) {
+            let mut qb = QueryBuilder::new("INSERT INTO entities (entity_id, zone) ");
+            qb.push_values(chunk, |mut row, (id, zone)| {
+                row.push_bind(*id).push_bind(*zone);
+            });
+            qb.push(" ON CONFLICT(entity_id) DO UPDATE SET zone = excluded.zone");
+            qb.build().execute(&mut *tx).await?;
+        }
+
+        // Replace each live entity's whole component set: clear its old rows, then
+        // insert the current ones, so a tag dropped since the last save does not
+        // resurrect on reload. One bound param per id.
+        for chunk in entity_rows.chunks(MAX_VARS) {
+            let mut qb = QueryBuilder::new("DELETE FROM components WHERE entity_id IN (");
+            let mut sep = qb.separated(", ");
+            for (id, _) in chunk {
+                sep.push_bind(*id);
+            }
+            qb.push(")");
+            qb.build().execute(&mut *tx).await?;
+        }
+
+        // Three bound params per component row.
+        for chunk in comp_rows.chunks(MAX_VARS / 3) {
+            let mut qb = QueryBuilder::new("INSERT INTO components (entity_id, tag, data) ");
+            qb.push_values(chunk, |mut row, (id, tag, data)| {
+                row.push_bind(*id).push_bind(*tag).push_bind(data.as_str());
+            });
+            qb.build().execute(&mut *tx).await?;
+        }
+
+        for chunk in snapshot.deletes.chunks(MAX_VARS) {
+            let mut qb = QueryBuilder::new("DELETE FROM components WHERE entity_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in chunk {
+                sep.push_bind(id.0 as i64);
+            }
+            qb.push(")");
+            qb.build().execute(&mut *tx).await?;
+
+            let mut qb = QueryBuilder::new("DELETE FROM entities WHERE entity_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in chunk {
+                sep.push_bind(id.0 as i64);
+            }
+            qb.push(")");
+            qb.build().execute(&mut *tx).await?;
         }
 
         sqlx::query(

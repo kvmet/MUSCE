@@ -165,7 +165,13 @@ live world, so the pending-delete set is the *only* record of it. Therefore:
   its component set **replaced** (delete its rows, insert the current set), so a
   component dropped since the last save cannot leak and resurrect on reload. Each
   despawned id deletes its component rows then its roster row (the FK is RESTRICT, so
-  correctness never rides on the `foreign_keys` pragma being on).
+  correctness never rides on the `foreign_keys` pragma being on). The roster upserts,
+  the per-entity component clears, and the component inserts are each issued as
+  **batched multi-row** statements (chunked to stay under the backend's bind-variable
+  limit: 999 on SQLite, 65535 on Postgres), not row-at-a-time, so save cost is bound by
+  the number of batches, not the number of rows. The delete-then-insert semantics are
+  unchanged: the batched form clears every live entity's old rows (`DELETE ... WHERE
+  entity_id IN (…)`) before inserting the current set.
 - Only after a successful save does the caller invoke
   `World::confirm_saved(&snapshot.deletes)`, which drops exactly those ids from
   the pending set. Deletes that accumulated since the snapshot are preserved.
