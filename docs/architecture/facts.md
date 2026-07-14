@@ -147,7 +147,10 @@ value is present after a set (upsert it) and absent after a remove (drop it,
 recovering the old key from the maintainer's own `entity -> key` reverse map). Nothing
 here is unrecoverable, so on principle nothing is carried; and on cost, `Fact` is a
 non-generic enum, so any payload would be type-erased (`Value` or `Box<dyn Any>`) at a
-serialization or heap cost per write that a free typed reread beats.
+serialization or heap cost per write that a free typed reread beats. The one variant
+also does not split set from remove: reread folds both into one reconcile step
+(present = upsert, absent = drop), so an add-vs-remove distinction would hand a
+consumer nothing it cannot already see by presence, and is not added.
 
 **Bounded by opt-in.** A component emits nothing until a consumer calls
 `World::track_component::<C>()`. The tracked set is what stops this from becoming a
@@ -187,6 +190,13 @@ queryable afterward (a new link is readable) and no maintainer needs a trigger f
 them yet, so a game hooks them with a marker or a system. They become facts only if a
 concrete reaction ever needs pre-mutation state they destroy (e.g. the old target a
 re-`relate` overwrote), and then carrying exactly that and no more.
+
+There is likewise no `RelationChanged` *trigger* paralleling `ComponentChanged`, and
+the asymmetry is the point: a component index needed a trigger because nothing
+maintained it, but relations already ship a derived reverse index (`RelSources`,
+rebuilt on load), so there is no per-tick maintainer left to feed. Such a trigger
+would earn its place only if a game wanted a *keyed* index over relations rather than
+the reverse-membership `RelSources` already gives, which nothing needs yet.
 
 `Created` is the instructive one: it fails **both** halves of the test. It carries
 nothing unrecoverable (a spawned entity is right there to query), and as a trigger it
