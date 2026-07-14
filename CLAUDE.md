@@ -34,6 +34,7 @@ Touch the doc when you touch the code:
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
 | the engine/game boundary, the injected `Game` | `engine-and-game.md` |
 | zones, locator, entity handoff | `sharding.md` |
+| criterion benches (`*/benches/`) | `benchmarks.md` |
 
 ## Status markers
 

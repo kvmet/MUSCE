@@ -76,6 +76,9 @@ These hold across every subsystem:
   floor, and durable `Controls`/`Focus` embodiment; the rest proposed.)*
 - [sharding.md](sharding.md): the deferred sharding plan and the seams kept now
   to make it possible.
+- [benchmarks.md](benchmarks.md): the criterion benchmark set, where micro vs
+  macro benches live and why, how to run and read them, and the named-baseline
+  workflow for measuring a change's gain. *(Built.)*
 
 ## Status
 
@@ -89,9 +92,11 @@ Built:
   (`Fact::Destroyed`/`Moved`/`LocusChanged`, emitted at the mutator layer; see
   facts.md), JSON snapshot. (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
-- `musce_persistence`: World-as-truth save/load with a SQLite backend, plus the
-  cold content store (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB` table) for
-  large, rarely-read payloads kept off-heap.
+- `musce_persistence`: World-as-truth save/load behind one `WorldStore` handle
+  chosen by URL scheme, with SQLite and Postgres backends sharing one schema (the
+  per-component-row layout, `data` as JSON text), plus the cold content store
+  (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB`/`BYTEA` table) for large,
+  rarely-read payloads kept off-heap.
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
@@ -197,7 +202,6 @@ Deferred (with seams in place where noted):
   aliases. Designed in ecs-and-relations.md. A minimal `Locked` exit marker now
   exists in `musce_ref` as the first `can_traverse` veto (the seam a richer door /
   skill-check check grows from), but two-sided door state is still deferred.
-- Postgres backend (same schema, JSONB).
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.
 - Relationship traversal index, spatial proximity index, coordinates.

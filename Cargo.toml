@@ -12,6 +12,7 @@ thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+criterion = { version="0.8.2", features = ["html_reports"] }
 
 # internal
 musce = { path = "musce" }
