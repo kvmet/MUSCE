@@ -1,14 +1,13 @@
 //! Capability identity and the authorization verdict: the primitives the gate
 //! check compares. This layer decides only whether a verdict admits a capability;
 //! it knows nothing of accounts, sessions, or where grants come from. A [`CapId`]
-//! is an opaque handle the account layer's caps registry mints (see the auth module
-//! in `musce_host`); the same registry resolves an account's grant strings to the
-//! same ids, so a gate's id and a grant's id denote the same capability. See
-//! `docs/architecture/accounts.md`.
+//! is an opaque handle [`CapRegistry`](crate::CapRegistry) mints from a capability
+//! name; the same registry resolves an account's grant names to the same ids, so a
+//! gate's id and a grant's id denote the same capability.
 
 use std::collections::HashSet;
 
-/// An interned capability id. Opaque: minted by the account layer's caps registry,
+/// An interned capability id. Opaque: minted by [`CapRegistry`](crate::CapRegistry),
 /// only compared here. Equality is identity, so two ids name the same capability iff
 /// they came from the same registration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,6 +75,19 @@ impl Verdict {
         Verdict { caps, su_override }
     }
 
+    /// Resolve the verdict for an account from its authorization and a connection's
+    /// quell state. A quelled connection becomes a plain user: it drops to the guest
+    /// verdict, setting aside both su and every granted cap, so quell means "act as
+    /// the character," not "set aside only god-mode." Unquelled, the account's su and
+    /// caps are in force. The whole quell rule lives here so no caller re-derives it.
+    pub fn resolved(caps: CapSet, su: bool, quelled: bool) -> Self {
+        if quelled {
+            Verdict::guest()
+        } else {
+            Verdict::new(caps, su)
+        }
+    }
+
     /// A connection with no account: no caps, no su. The `Open`-only floor an
     /// unauthenticated or guest connection runs under.
     pub fn guest() -> Self {
@@ -128,5 +140,31 @@ mod tests {
         let guest = Verdict::guest();
         assert!(!guest.permits(build));
         assert!(!guest.is_su());
+    }
+
+    #[test]
+    fn quell_drops_to_guest() {
+        // A quelled connection becomes its character: an su account that also holds a
+        // cap loses both under quell, evaluated as a plain user.
+        let build = CapId(0);
+        let v = Verdict::resolved([build].into_iter().collect(), true, true);
+        assert!(!v.is_su(), "quell sets aside su");
+        assert!(!v.permits(build), "quell sets aside granted caps too");
+    }
+
+    #[test]
+    fn unquelled_su_is_in_force() {
+        let ban = CapId(1);
+        let v = Verdict::resolved(CapSet::new(), true, false);
+        assert!(v.is_su());
+        assert!(v.permits(ban), "su in force bypasses the empty grant set");
+    }
+
+    #[test]
+    fn unquelled_caps_are_in_force() {
+        let build = CapId(0);
+        let v = Verdict::resolved([build].into_iter().collect(), false, false);
+        assert!(!v.is_su());
+        assert!(v.permits(build), "a granted cap holds when not quelled");
     }
 }

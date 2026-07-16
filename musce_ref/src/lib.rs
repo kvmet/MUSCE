@@ -18,8 +18,8 @@ mod verbs;
 use std::sync::Arc;
 
 use musce::Game;
+use musce::action::CapRegistry;
 use musce::action::{Action, execute};
-use musce::auth::CapRegistry;
 use musce::world::World;
 
 /// Build the reference game: its bare and admin command tables, its world seed,
@@ -45,6 +45,9 @@ pub fn game() -> Game {
         ],
         register: systems::register,
         caps: Arc::new(caps),
+        // This reference game gates no logins beyond the engine's own `Disabled`
+        // hard gate, so it admits every authenticated account.
+        login_veto: |_| Ok(()),
         // This game's cold content is a book's text, stored as UTF-8. Decoding is
         // the game's job (it owns the encoding); the engine's cold task calls this
         // and never interprets the bytes. Non-UTF-8 is corruption on this path, so

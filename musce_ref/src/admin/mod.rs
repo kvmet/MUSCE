@@ -15,7 +15,7 @@ use musce::action::{Action, CommandTable, Ctx, Gate, execute};
 use musce::world::{ComponentBlob, Controls, Description, EntityId, Locus, Name, Value, World};
 
 use crate::exits::ExitQueries;
-use musce::auth::CapRegistry;
+use musce::action::CapRegistry;
 use musce::wire::EventKind;
 
 use crate::commit_or_log;
@@ -35,8 +35,8 @@ const KINDS: &str = "torch, rock, goblin, box, rat";
 /// `d` prefix resolves to `dig`; and `possess` before `purge` so the `p` prefix
 /// resolves to `possess`.
 pub fn commands(caps: &mut CapRegistry) -> CommandTable {
-    let build = caps.register_cap("build");
-    let possess_cap = caps.register_cap("possess");
+    let build = caps.register("build");
+    let possess_cap = caps.register("possess");
     let mut t = CommandTable::new();
     t.register("tel", Gate::Cap(build), tel);
     t.register("goto", Gate::Cap(build), goto);

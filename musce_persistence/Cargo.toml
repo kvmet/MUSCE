@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+musce_auth = { workspace = true }
 musce_core = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }

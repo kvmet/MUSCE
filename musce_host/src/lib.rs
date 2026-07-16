@@ -3,12 +3,11 @@
 //! until networking lands). The world is loaded before the first tick and saved
 //! synchronously on shutdown.
 
-/// The account authority lives in its own leaf crate (`musce_auth`); re-exported
-/// under the path it grew up at so a game keeps addressing `musce_host::auth`.
-pub use musce_auth as auth;
-
+mod accounts;
 mod dispatch;
 mod session;
+
+pub use accounts::{AccountView, LoginVeto};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -16,15 +15,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
-use musce_action::{ColdOp, CommandTable, System};
+use musce_action::{CapRegistry, ColdOp, CommandTable, System};
+use musce_auth::Account;
 use musce_core::{EntityBlob, EntityId, Snapshot, World};
-use musce_persistence::{KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
+use musce_persistence::{AccountStore, KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
 use musce_proto::{Command, Delivery, EventKind, Outgoing};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::auth::{AccountBackend, Accounts, AccountsSnapshot, CapRegistry};
-use crate::dispatch::Dispatch;
+use crate::accounts::{AccountOp, AccountOutcome, OPERATOR_USERNAME, account_task};
+use crate::dispatch::{Dispatch, HostOp};
 
 /// Base tick period. 100ms = 10 Hz. Change here to retune the heartbeat.
 pub const TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -99,12 +99,18 @@ pub struct Game {
     /// deserializes and persists. No-op for a game that adds no types.
     pub register: Register,
     /// The game's capability vocabulary, interned to `CapId`s while it wired its
-    /// gates. Shared (`Arc`) so the account authority can hold the same registry it
-    /// resolves account grant strings against, so a gate's id and a grant's id denote
-    /// the same capability. Immutable once the game is built (all registration happens
-    /// during construction). Empty for a game with no capability-gated verbs. See
-    /// `docs/architecture/authorization.md`.
+    /// gates. Shared (`Arc`) so the off-thread account task resolves an account's
+    /// grant names against the same registry the gates use, so a gate's id and a
+    /// grant's id denote the same capability. Immutable once the game is built (all
+    /// registration happens during construction). Empty for a game with no
+    /// capability-gated verbs. See `docs/architecture/authorization.md`.
     pub caps: Arc<CapRegistry>,
+    /// The app's login veto, run off-thread after a connection's account passes the
+    /// engine's hard gate (`Disabled` refused): `Ok(())` admits, `Err(reason)`
+    /// refuses with a shown reason. It can only further restrict, never lift a hard
+    /// refusal. An app that does not gate logins uses `|_| Ok(())`. See
+    /// `docs/architecture/authorization.md`.
+    pub login_veto: LoginVeto,
     /// Turns a cold-store value's opaque bytes into the text delivered to a reader.
     /// Injected because decoding is game knowledge (the game encoded the bytes on
     /// write), so the engine's cold task never interprets a cold value: it calls
@@ -135,25 +141,29 @@ enum Ack {
 /// data and never holds a store.
 pub async fn run(
     store: WorldStore,
-    account_store: AccountBackend,
     config: Config,
     shutdown: Arc<AtomicBool>,
     game: Game,
 ) -> Result<RunReport, Box<dyn std::error::Error + Send + Sync>> {
     store.init().await?;
     store.kv_init().await?; // the cold content table shares the world's store
+    store.accounts_init().await?; // accounts share the world's store, own table
     let loaded = store.load().await?; // boot load, before any tick
 
-    // A store that fails to read refuses to boot, never treated as empty: the
-    // empty snapshot is the bootstrap-an-operator path, and minting a fresh
-    // operator over accounts that merely failed to load would fork the store.
-    account_store.init().await?;
-    let account_snap = account_store.load().await?;
+    // Bootstrap: a store with no superuser gets one seeded operator, so a fresh
+    // world is administrable at all. Passwordless and reachable only via the
+    // loopback `@operator` stub. Checked after a successful load, so a store that
+    // merely failed to read never mints an operator over accounts it could not see.
+    if !store.any_superuser().await? {
+        let mut operator = Account::new(OPERATOR_USERNAME);
+        operator.set_su(true);
+        store.account_upsert(&operator).await?;
+        tracing::info!(username = OPERATOR_USERNAME, "seeded bootstrap operator");
+    }
 
     let (snap_tx, snap_rx) = tokio::sync::mpsc::unbounded_channel::<Snapshot>();
     let (ack_tx, ack_rx) = crossbeam_channel::unbounded::<Ack>();
     let (done_tx, done_rx) = oneshot::channel::<Result<RunReport, String>>();
-    let (acct_tx, acct_rx) = tokio::sync::mpsc::unbounded_channel::<AccountsSnapshot>();
 
     // The net <-> sim boundary: commands in (crossbeam, drained by the sim
     // thread), events out (tokio mpsc, drained by the net router).
@@ -168,6 +178,14 @@ pub async fn run(
     // A fn pointer, copied out before `game` moves into the sim thread.
     let decode_cold = game.decode_cold;
 
+    // The account boundary: ops out to the off-thread account task, outcomes back to
+    // the *sim* (unlike cold results, which go straight to the reader) because they
+    // mutate sim-owned session state. Copied out before `game` moves into the sim.
+    let (account_op_tx, account_op_rx) = tokio::sync::mpsc::unbounded_channel::<AccountOp>();
+    let (account_result_tx, account_result_rx) = crossbeam_channel::unbounded::<AccountOutcome>();
+    let account_caps = game.caps.clone();
+    let login_veto = game.login_veto;
+
     if let Some(addr) = config.listen_addr {
         match musce_net::start(addr, cmd_tx, event_rx).await {
             Ok(bound) => tracing::info!(%bound, "listening"),
@@ -176,12 +194,18 @@ pub async fn run(
     }
 
     let persist = tokio::spawn(persistence_task(store.clone(), snap_rx, ack_tx));
-    let account_persist = tokio::spawn(account_persistence_task(account_store.clone(), acct_rx));
     let cold = tokio::spawn(cold_task(
         store.clone(),
         cold_rx,
         cold_event_tx,
         decode_cold,
+    ));
+    let account = tokio::spawn(account_task(
+        store.clone(),
+        account_caps,
+        login_veto,
+        account_op_rx,
+        account_result_tx,
     ));
 
     let sim = std::thread::Builder::new()
@@ -189,13 +213,13 @@ pub async fn run(
         .spawn(move || {
             sim_loop(
                 loaded,
-                account_snap,
                 snap_tx,
-                acct_tx,
                 ack_rx,
                 cmd_rx,
                 event_tx,
                 cold_tx,
+                account_op_tx,
+                account_result_rx,
                 shutdown,
                 config,
                 game,
@@ -210,29 +234,13 @@ pub async fn run(
         .await?
         .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
     let _ = persist.await; // ends once the sim thread drops snap_tx
-    // Awaited explicitly: the channel buffers unwritten snapshots after the sim
-    // drops its sender, and returning before the drain would cancel them mid-write.
-    let _ = account_persist.await;
-    // The cold task ends when the sim drops `cold_tx`; awaiting it drains any
-    // buffered cold writes to durability (a final `inscribe`'s bytes), the same
-    // reason the snapshot writer is awaited. The reader-facing ack is best-effort.
+    // The cold and account tasks end when the sim drops their op senders; awaiting
+    // drains any buffered work (a final `inscribe`'s bytes, an in-flight account
+    // upsert) to durability, the same reason the snapshot writer is awaited.
     let _ = cold.await;
+    let _ = account.await;
     let _ = sim.join();
     Ok(report)
-}
-
-/// Receives account snapshots and writes each in full. No ack channel: every
-/// message is the complete set, so a failed write is repaired by the next one
-/// (and the shutdown drain runs this task to empty before `run` returns).
-async fn account_persistence_task(
-    store: AccountBackend,
-    mut acct_rx: UnboundedReceiver<AccountsSnapshot>,
-) {
-    while let Some(snap) = acct_rx.recv().await {
-        if let Err(e) = store.save(&snap).await {
-            tracing::error!(error = %e, "account save failed; the next full-set save heals it");
-        }
-    }
 }
 
 /// Receives snapshots, writes them, and acks. A failed save sends `Failed` (not
@@ -319,13 +327,13 @@ async fn cold_task(
 #[allow(clippy::too_many_arguments)]
 fn sim_loop(
     loaded: Loaded,
-    account_snap: AccountsSnapshot,
     snap_tx: UnboundedSender<Snapshot>,
-    acct_tx: UnboundedSender<AccountsSnapshot>,
     ack_rx: Receiver<Ack>,
     cmd_rx: Receiver<Command>,
     event_tx: UnboundedSender<Outgoing>,
     cold_tx: UnboundedSender<ColdOp>,
+    account_op_tx: UnboundedSender<AccountOp>,
+    account_result_rx: Receiver<AccountOutcome>,
     shutdown: Arc<AtomicBool>,
     config: Config,
     game: Game,
@@ -357,21 +365,7 @@ fn sim_loop(
         tracing::info!("seeded starter world");
     }
 
-    // Bring up the account authority from the loaded snapshot, resolving grants
-    // against the game's caps registry. An empty snapshot bootstraps one su
-    // operator; a populated one with no su, or an unknown grant, refuses to boot
-    // rather than run mis-authorized.
-    let accounts = match Accounts::boot(account_snap, game.caps.clone()) {
-        Ok(accounts) => accounts,
-        Err(e) => {
-            let msg = format!("account authority refused to boot: {e}");
-            tracing::error!(error = %e, "account authority refused to boot");
-            let _ = done_tx.send(Err(msg));
-            return;
-        }
-    };
-
-    let mut dispatch = Dispatch::new(game, accounts);
+    let mut dispatch = Dispatch::new(game);
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -384,9 +378,6 @@ fn sim_loop(
         }
 
         if shutdown.load(Ordering::Relaxed) {
-            // Belt and suspenders: the per-tick beat below already persisted any
-            // mutation, but a final check here costs one bool read.
-            persist_accounts(&mut dispatch, &acct_tx);
             send_snapshot(&mut world, &snap_tx, &mut pending_saves, &mut saves);
             // Block until every outstanding save (including the final one) is
             // durable. This is the one place the sim waits on the DB.
@@ -413,23 +404,34 @@ fn sim_loop(
             }
         };
 
-        // Drain the command inbox: the only entry point for external mutation.
-        // The loop holds no command knowledge; it hands each command to the
-        // dispatcher, which routes it to the right input-stack frame and emits
-        // events (and, for in-game frames, runs `execute` against the world). A
-        // handler may also queue cold-store requests; those flow out here to the
-        // cold task exactly as snapshots flow to the persistence task.
+        // Apply account outcomes from the off-thread task: each feeds a line back
+        // and may bind or refresh a session. Applied before draining commands so a
+        // login that completed last tick is in force for this tick's commands.
+        while let Ok(outcome) = account_result_rx.try_recv() {
+            dispatch.apply_account_outcome(outcome, &mut emit);
+        }
+
+        // Drain the command inbox: the only entry point for external mutation. The
+        // loop holds no command knowledge; it hands each command to the dispatcher
+        // and routes the host ops that come back: a cold read/write to the cold
+        // task, an account op to the account task, exactly as snapshots flow to the
+        // persistence task.
         while let Ok(cmd) = cmd_rx.try_recv() {
             for op in dispatch.handle(cmd, &mut world, &mut emit) {
-                if cold_tx.send(op).is_err() {
-                    tracing::error!("cold request channel closed; dropping request");
+                match op {
+                    HostOp::Cold(c) => {
+                        if cold_tx.send(c).is_err() {
+                            tracing::error!("cold request channel closed; dropping request");
+                        }
+                    }
+                    HostOp::Account(a) => {
+                        if account_op_tx.send(a).is_err() {
+                            tracing::error!("account op channel closed; dropping op");
+                        }
+                    }
                 }
             }
         }
-
-        // The account persist beat: commands are the only account mutators, so
-        // right after the drain is the one place a mutation can be freshly dirty.
-        persist_accounts(&mut dispatch, &acct_tx);
 
         dispatch.run_systems(&mut world, &ctx, &mut emit);
 
@@ -468,16 +470,6 @@ fn migrate_blobs(from: u32, _entities: &mut Vec<EntityBlob>) {
     );
 }
 
-/// Send a full account snapshot to the writer task if anything mutated since the
-/// last check. Every mutator marks the authority dirty (the one choke point, so
-/// none can forget), and every save carries the complete set, so a lost or failed
-/// write is healed by the next one.
-fn persist_accounts(dispatch: &mut Dispatch, acct_tx: &UnboundedSender<AccountsSnapshot>) {
-    if dispatch.accounts.take_dirty() && acct_tx.send(dispatch.accounts.snapshot()).is_err() {
-        tracing::error!("account persistence channel closed; snapshot dropped");
-    }
-}
-
 fn apply_ack(world: &mut World, ack: Ack, pending: &mut u32) {
     *pending = pending.saturating_sub(1);
     match ack {
@@ -507,11 +499,6 @@ mod tests {
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, World};
 
-    /// A fresh in-memory account store; `run` initializes its schema.
-    async fn mem_accounts() -> AccountBackend {
-        AccountBackend::connect("sqlite::memory:").await.unwrap()
-    }
-
     /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
     /// nothing, no systems, and a no-op `register`. The runtime, not game content,
     /// is what this crate tests, so the lifecycle test needs only a `Game`-shaped
@@ -525,6 +512,7 @@ mod tests {
             systems: vec![],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),
+            login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
         }
     }
@@ -561,15 +549,9 @@ mod tests {
             save_every: 2,
             listen_addr: None, // headless: no real socket in the lifecycle test
         };
-        let report = run(
-            store.clone(),
-            mem_accounts().await,
-            config,
-            shutdown,
-            test_game(),
-        )
-        .await
-        .unwrap();
+        let report = run(store.clone(), config, shutdown, test_game())
+            .await
+            .unwrap();
 
         // Shutdown always saves at least once, regardless of timing.
         assert!(report.saves >= 1);
@@ -615,14 +597,7 @@ mod tests {
             save_every: 1000,
             listen_addr: None,
         };
-        let result = run(
-            store.clone(),
-            mem_accounts().await,
-            config,
-            shutdown,
-            test_game(),
-        )
-        .await;
+        let result = run(store.clone(), config, shutdown, test_game()).await;
         assert!(
             result.is_err(),
             "boot should fail on an unreadable world, got: {result:?}"

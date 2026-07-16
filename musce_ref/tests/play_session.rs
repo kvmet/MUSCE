@@ -13,14 +13,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-/// A fresh in-memory account store, one per test sim. `run` initializes its
-/// schema; an empty store boots into the operator bootstrap.
-async fn accounts_db() -> musce::auth::AccountBackend {
-    musce::auth::AccountBackend::connect("sqlite::memory:")
-        .await
-        .unwrap()
-}
-
 /// Grab a currently-free loopback port by binding and immediately dropping a
 /// listener. `run` does not surface its bound address, so the test picks the port
 /// and hands it in. The brief gap before the sim rebinds is the standard
@@ -102,7 +94,6 @@ async fn connect_play_look_go_take() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -171,7 +162,6 @@ async fn inscribe_then_read_a_book_round_trips_cold_storage() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -232,7 +222,6 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -303,7 +292,6 @@ async fn possess_then_pilot_drives_a_created_thing() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -367,7 +355,6 @@ async fn a_wandering_creature_moves_with_no_input() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -419,7 +406,6 @@ async fn destroying_a_thing_cries_out_in_the_room() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -470,7 +456,6 @@ async fn admin_verbs_build_the_world() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -545,7 +530,6 @@ async fn a_patrolling_sentry_moves_with_no_input() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -593,7 +577,6 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -637,7 +620,6 @@ async fn attack_wears_a_foe_down_then_kills_it() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -698,7 +680,6 @@ async fn put_a_coin_in_the_chest_then_see_it_inside() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -758,7 +739,6 @@ async fn give_a_coin_to_the_drone() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -797,9 +777,10 @@ async fn give_a_coin_to_the_drone() {
 
 /// Authorization end to end: the operator mints a builder account, grants it the
 /// `build` capability, and logs in as it; the granted `@create` works, `@quell`
-/// sets aside the quellable build cap so `@create` is refused, and un-quelling
-/// restores it. This is the falsifying flow the authorization model could not
-/// exercise until a non-su account with a granted cap and a login existed.
+/// drops the builder to its character (setting aside every cap) so `@create` is
+/// refused, and un-quelling restores it. This is the falsifying flow the
+/// authorization model could not exercise until a non-su account with a granted
+/// cap and a login existed.
 #[tokio::test]
 async fn a_granted_builder_creates_until_quelled() {
     let addr = free_port().await;
@@ -812,7 +793,6 @@ async fn a_granted_builder_creates_until_quelled() {
     };
     let handle = tokio::spawn(run(
         store.clone(),
-        accounts_db().await,
         config,
         shutdown.clone(),
         musce_ref::game(),
@@ -857,7 +837,7 @@ async fn a_granted_builder_creates_until_quelled() {
         "the granted builder can create, got: {built:?}"
     );
 
-    // Quell sets aside the quellable build cap: @create is now refused.
+    // Quell drops the builder to its character (no caps): @create is now refused.
     send(&mut writer, "@quell").await;
     let _ = read_burst(&mut reader).await;
     send(&mut writer, "@create torch").await;
@@ -882,18 +862,18 @@ async fn a_granted_builder_creates_until_quelled() {
 }
 
 /// Durability end to end: accounts survive a full sim restart. The first sim's
-/// operator mints a builder and grants it `build`; the same account store then
-/// feeds a second sim, where the builder logs straight in and the granted cap
-/// still admits `@create`. That one flow falsifies the whole durable path: the
-/// per-mutation writer persisted the bootstrap operator, the account, and the
-/// grant; the shutdown drain flushed them; and the second boot loaded them
-/// rather than re-bootstrapping (a re-bootstrap would hold only the operator,
-/// so `@login builder` would fail).
+/// operator mints a builder and grants it `build`; the same store then feeds a
+/// second sim, where the builder logs straight in and the granted cap still
+/// admits `@create`. Accounts live in the world store now, so one shared store
+/// spans both sims. That one flow falsifies the whole durable path: the account
+/// task persisted the bootstrap operator, the account, and the grant with per-row
+/// upserts; and the second boot loaded them rather than re-bootstrapping (a
+/// re-bootstrap would hold only the operator, so `@login builder` would fail).
 #[tokio::test]
 async fn accounts_survive_a_restart() {
-    // One account store across both sims; the shared pool keeps the in-memory
-    // database alive between them. Each sim gets its own throwaway world DB.
-    let accounts = accounts_db().await;
+    // Accounts live in the world store, so one shared store spans both sims; the
+    // shared pool keeps the in-memory database alive between them.
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let config = |addr| Config {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
@@ -902,11 +882,9 @@ async fn accounts_survive_a_restart() {
 
     // Sim 1: mint the builder and grant it build.
     let addr = free_port().await;
-    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let handle = tokio::spawn(run(
-        store,
-        accounts.clone(),
+        store.clone(),
         config(addr),
         shutdown.clone(),
         musce_ref::game(),
@@ -928,14 +906,11 @@ async fn accounts_survive_a_restart() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 
-    // Sim 2: same account store, fresh world. The builder and its grant must
-    // already be there.
+    // Sim 2: the same store, so the builder and its grant are already there.
     let addr = free_port().await;
-    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
     let shutdown = Arc::new(AtomicBool::new(false));
     let handle = tokio::spawn(run(
-        store,
-        accounts.clone(),
+        store.clone(),
         config(addr),
         shutdown.clone(),
         musce_ref::game(),

@@ -22,6 +22,7 @@ mod ctx;
 mod dispatch;
 mod event;
 mod executor;
+mod registry;
 
 use musce_core::{EntityId, World};
 
@@ -32,6 +33,7 @@ pub use ctx::{ColdOp, Ctx, System, SystemCtx, run_systems};
 pub use dispatch::{Caller, CommandTable, Gate, Handler, dispatch_command};
 pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};
+pub use registry::CapRegistry;
 
 /// The actor's own description, for floor confirmations like "You are now X."
 /// `None` if the entity has no description. This is a plain component read, not

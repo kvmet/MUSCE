@@ -1,0 +1,380 @@
+//! The off-thread account task and the ops it serves.
+//!
+//! Anything that touches the account store runs here, never on the sim thread: the
+//! store is async, and credential verification (a later slice) is CPU-heavy enough
+//! that it must not stall the tick. The sim hands this task an [`AccountOp`] and gets
+//! an [`AccountOutcome`] back, which it applies against session state and feeds to
+//! the connection. This is the account analogue of the cold-content task. See
+//! `docs/architecture/authorization.md`.
+
+use std::sync::Arc;
+
+use musce_action::{CapRegistry, CapSet};
+use musce_auth::{Account, AccountId, AccountStatus};
+use musce_core::Value;
+use musce_persistence::{AccountStore, WorldStore};
+use musce_proto::ConnectionId;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+/// The username of the account seeded when the store holds no superuser. `@operator`
+/// authenticates as it (loopback-only) so a fresh world is administrable.
+pub(crate) const OPERATOR_USERNAME: &str = "operator";
+
+/// A restricted view of an account handed to the app's login veto: identity and the
+/// app's own data, never the credential hash. The app reads `status`/`app_data` to
+/// decide admission (approval workflows, region locks) without ever seeing the
+/// secret.
+pub struct AccountView<'a> {
+    pub username: &'a str,
+    pub status: AccountStatus,
+    pub app_data: &'a Value,
+}
+
+/// The app's login veto: `Ok(())` admits, `Err(reason)` refuses (the reason is shown
+/// to the connection). It can only *further* restrict an account the engine already
+/// admitted; it cannot lift a hard refusal. An app that does not gate logins uses
+/// `|_| Ok(())`.
+pub type LoginVeto = fn(&AccountView) -> Result<(), String>;
+
+/// An account operation the sim hands to the off-thread task. Each carries the
+/// originating connection so the outcome routes back to it.
+pub(crate) enum AccountOp {
+    /// Authenticate `conn` as `username`. This slice is passwordless: the floor has
+    /// already loopback-gated the `@operator`/`@login` stubs that issue it.
+    Authenticate {
+        conn: ConnectionId,
+        username: String,
+    },
+    /// Create a new plain account.
+    Create {
+        conn: ConnectionId,
+        username: String,
+    },
+    /// Add or remove a capability on an account.
+    Grant {
+        conn: ConnectionId,
+        target: String,
+        cap: String,
+        add: bool,
+    },
+}
+
+/// The resolved authorization to cache in a session: an account's id, its resolved
+/// capabilities, and its superuser bit.
+pub(crate) struct Authorization {
+    pub account: AccountId,
+    pub caps: CapSet,
+    pub su: bool,
+}
+
+/// What an [`AccountOp`] produced. Always a line for the originating connection;
+/// optionally a session binding (an authentication) or a refresh of some account's
+/// cached authorization (a mutation that must reach an online target).
+pub(crate) struct AccountOutcome {
+    pub conn: ConnectionId,
+    pub line: String,
+    /// Present iff this op authenticated `conn`: bind it to this authorization.
+    pub authenticated: Option<Authorization>,
+    /// Present iff this op changed an account's authorization: refresh it wherever
+    /// that account is online.
+    pub refreshed: Option<Authorization>,
+}
+
+impl AccountOutcome {
+    /// An outcome that only feeds a line back, changing no session state.
+    fn line(conn: ConnectionId, line: impl Into<String>) -> Self {
+        Self {
+            conn,
+            line: line.into(),
+            authenticated: None,
+            refreshed: None,
+        }
+    }
+}
+
+/// Serve account ops until the sim drops the sender. Holds its own store clone (a
+/// pooled handle), the app's capability registry (to resolve grant names to a
+/// `CapSet`), and the app's login veto.
+pub(crate) async fn account_task(
+    store: WorldStore,
+    caps: Arc<CapRegistry>,
+    veto: LoginVeto,
+    mut ops: UnboundedReceiver<AccountOp>,
+    outcomes: crossbeam_channel::Sender<AccountOutcome>,
+) {
+    while let Some(op) = ops.recv().await {
+        let outcome = match op {
+            AccountOp::Authenticate { conn, username } => {
+                authenticate(&store, &caps, veto, conn, username).await
+            }
+            AccountOp::Create { conn, username } => create(&store, conn, username).await,
+            AccountOp::Grant {
+                conn,
+                target,
+                cap,
+                add,
+            } => mutate(&store, &caps, conn, target, cap, add).await,
+        };
+        if outcomes.send(outcome).is_err() {
+            break; // the sim is gone; nothing more to serve
+        }
+    }
+}
+
+/// Resolve an account's grant names to a `CapSet`, logging any the vocabulary no
+/// longer defines rather than dropping them silently.
+fn resolve_caps(caps: &CapRegistry, account: &Account) -> CapSet {
+    let (set, unknown) = caps.resolve_set(account.caps());
+    if !unknown.is_empty() {
+        tracing::warn!(
+            username = account.username(),
+            ?unknown,
+            "account holds capability grants the vocabulary no longer defines"
+        );
+    }
+    set
+}
+
+async fn authenticate(
+    store: &WorldStore,
+    caps: &CapRegistry,
+    veto: LoginVeto,
+    conn: ConnectionId,
+    username: String,
+) -> AccountOutcome {
+    let account = match store.account_by_username(&username).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return AccountOutcome::line(conn, format!("No account named \"{username}\".")),
+        Err(e) => {
+            tracing::error!(error = %e, username, "account lookup failed");
+            return AccountOutcome::line(conn, "Authentication failed.");
+        }
+    };
+
+    // Engine hard gate: a disabled account cannot authenticate, ahead of any app
+    // policy, and the app veto below cannot lift it.
+    if account.status() == AccountStatus::Disabled {
+        return AccountOutcome::line(conn, "That account is disabled.");
+    }
+
+    // App soft veto: may further restrict an otherwise-admitted account.
+    let view = AccountView {
+        username: account.username(),
+        status: account.status(),
+        app_data: account.app_data(),
+    };
+    if let Err(reason) = veto(&view) {
+        return AccountOutcome::line(conn, reason);
+    }
+
+    let authz = Authorization {
+        account: account.id(),
+        caps: resolve_caps(caps, &account),
+        su: account.is_su(),
+    };
+    AccountOutcome {
+        conn,
+        line: format!("You are now logged in as {username}."),
+        authenticated: Some(authz),
+        refreshed: None,
+    }
+}
+
+async fn create(store: &WorldStore, conn: ConnectionId, username: String) -> AccountOutcome {
+    match store.account_by_username(&username).await {
+        Ok(Some(_)) => {
+            return AccountOutcome::line(
+                conn,
+                format!("An account named \"{username}\" already exists."),
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, username, "account lookup failed");
+            return AccountOutcome::line(conn, "Could not create the account.");
+        }
+    }
+    let account = Account::new(&username);
+    if let Err(e) = store.account_upsert(&account).await {
+        tracing::error!(error = %e, username, "account create failed");
+        return AccountOutcome::line(conn, "Could not create the account.");
+    }
+    AccountOutcome::line(conn, format!("Created account \"{username}\"."))
+}
+
+async fn mutate(
+    store: &WorldStore,
+    caps: &CapRegistry,
+    conn: ConnectionId,
+    target: String,
+    cap: String,
+    add: bool,
+) -> AccountOutcome {
+    // A grant of a name outside the app's vocabulary is a typo, not a stored grant:
+    // refuse it up front rather than persist a cap no gate will ever check.
+    if caps.resolve(&cap).is_none() {
+        return AccountOutcome::line(conn, format!("There is no capability named \"{cap}\"."));
+    }
+
+    let mut account = match store.account_by_username(&target).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return AccountOutcome::line(conn, format!("No account named \"{target}\".")),
+        Err(e) => {
+            tracing::error!(error = %e, target, "account lookup failed");
+            return AccountOutcome::line(conn, "Could not update the account.");
+        }
+    };
+
+    let changed = if add {
+        account.grant(&cap)
+    } else {
+        account.revoke(&cap)
+    };
+    if !changed {
+        let state = if add { "already has" } else { "does not have" };
+        return AccountOutcome::line(conn, format!("{target} {state} \"{cap}\"."));
+    }
+
+    if let Err(e) = store.account_upsert(&account).await {
+        tracing::error!(error = %e, target, "account update failed");
+        return AccountOutcome::line(conn, "Could not update the account.");
+    }
+
+    let (verb, prep) = if add {
+        ("Granted", "to")
+    } else {
+        ("Revoked", "from")
+    };
+    AccountOutcome {
+        conn,
+        line: format!("{verb} \"{cap}\" {prep} {target}."),
+        authenticated: None,
+        refreshed: Some(Authorization {
+            account: account.id(),
+            caps: resolve_caps(caps, &account),
+            su: account.is_su(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use musce_persistence::AccountStore;
+
+    async fn store() -> WorldStore {
+        let s = WorldStore::connect("sqlite::memory:").await.unwrap();
+        s.accounts_init().await.unwrap();
+        s
+    }
+
+    fn caps() -> CapRegistry {
+        let mut c = CapRegistry::new();
+        c.register("build");
+        c
+    }
+
+    fn admit(_: &AccountView) -> Result<(), String> {
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn authenticate_binds_a_known_account_with_resolved_caps() {
+        let store = store().await;
+        let mut acc = Account::new("builder");
+        acc.grant("build");
+        store.account_upsert(&acc).await.unwrap();
+
+        let out = authenticate(&store, &caps(), admit, ConnectionId(1), "builder".into()).await;
+        let authz = out.authenticated.expect("a known account authenticates");
+        assert_eq!(authz.account, acc.id());
+        assert!(!authz.su);
+        assert_eq!(authz.caps.len(), 1, "the build grant resolved");
+    }
+
+    #[tokio::test]
+    async fn authenticate_refuses_an_unknown_account() {
+        let out = authenticate(
+            &store().await,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "ghost".into(),
+        )
+        .await;
+        assert!(out.authenticated.is_none());
+        assert!(out.line.contains("No account"));
+    }
+
+    #[tokio::test]
+    async fn engine_gate_refuses_a_disabled_account_before_the_veto() {
+        let store = store().await;
+        let mut acc = Account::new("banned");
+        acc.set_status(AccountStatus::Disabled);
+        store.account_upsert(&acc).await.unwrap();
+
+        // A veto that would admit anything still never runs: the hard gate is first.
+        let out = authenticate(&store, &caps(), admit, ConnectionId(1), "banned".into()).await;
+        assert!(out.authenticated.is_none());
+        assert!(out.line.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn app_veto_can_refuse_an_active_account() {
+        fn deny(_: &AccountView) -> Result<(), String> {
+            Err("pending approval".into())
+        }
+        let store = store().await;
+        store.account_upsert(&Account::new("newbie")).await.unwrap();
+
+        let out = authenticate(&store, &caps(), deny, ConnectionId(1), "newbie".into()).await;
+        assert!(out.authenticated.is_none());
+        assert!(out.line.contains("pending approval"));
+    }
+
+    #[tokio::test]
+    async fn grant_persists_and_refreshes() {
+        let store = store().await;
+        store
+            .account_upsert(&Account::new("builder"))
+            .await
+            .unwrap();
+
+        let out = mutate(
+            &store,
+            &caps(),
+            ConnectionId(1),
+            "builder".into(),
+            "build".into(),
+            true,
+        )
+        .await;
+        let authz = out.refreshed.expect("a grant refreshes the target");
+        assert_eq!(authz.caps.len(), 1);
+
+        // It is durable: a re-fetch holds the grant.
+        let back = store.account_by_username("builder").await.unwrap().unwrap();
+        assert_eq!(back.caps(), ["build".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn grant_of_an_unknown_capability_is_refused() {
+        let store = store().await;
+        store
+            .account_upsert(&Account::new("builder"))
+            .await
+            .unwrap();
+
+        let out = mutate(
+            &store,
+            &caps(),
+            ConnectionId(1),
+            "builder".into(),
+            "nonesuch".into(),
+            true,
+        )
+        .await;
+        assert!(out.refreshed.is_none(), "an unknown cap is never persisted");
+        assert!(out.line.contains("no capability"));
+    }
+}

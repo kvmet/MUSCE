@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 
+use musce_auth::{Account, AccountId, AccountStatus};
 use musce_core::{EntityBlob, EntityId, Id, Map, NamedComponent, Snapshot, Value};
 
 mod postgres;
@@ -29,6 +30,8 @@ pub enum Error {
     IdlessEntity(EntityId),
     #[error("component rows reference entities absent from the roster: {0:?}")]
     OrphanComponents(Vec<EntityId>),
+    #[error("malformed account row: {0}")]
+    MalformedAccount(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -91,6 +94,30 @@ pub trait KvStore {
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
+/// Storage for accounts, a third concern beside [`Persistence`] and [`KvStore`] with
+/// its own access pattern: point reads by username at login, per-row upserts on
+/// mutation, and an existence check at bootstrap. The [`Account`] type lives in
+/// `musce_auth`; this keeps it durable in the same store as the world, columnar (one
+/// column per field), so the row stays legible and `username`/`su` are real indexed
+/// columns rather than fields buried in a blob.
+pub trait AccountStore {
+    /// Create the accounts table if absent.
+    fn accounts_init(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+    /// The account with this username, or `None` if there is none.
+    fn account_by_username(
+        &self,
+        username: &str,
+    ) -> impl std::future::Future<Output = Result<Option<Account>>> + Send;
+    /// Insert the account, or replace the existing row with the same id.
+    fn account_upsert(
+        &self,
+        account: &Account,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    /// Whether any superuser account exists. The bootstrap gate: `false` means the
+    /// runtime must seed an operator before it can be administered.
+    fn any_superuser(&self) -> impl std::future::Future<Output = Result<bool>> + Send;
+}
+
 const NEXT_ID_KEY: &str = "next_id";
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -132,6 +159,52 @@ fn kv_table_ddl(bytes_ty: &str) -> String {
             value {bytes_ty} NOT NULL
         )"
     )
+}
+
+/// The accounts table, kept parallel to the world and kv DDL. Columnar: one column
+/// per account field. `caps` and `app_data` are JSON text (the same choice as the
+/// world's `data` column), `credential` is nullable (an account may have no
+/// password), and `username` is `UNIQUE` (the store-level enforcement the record
+/// cannot do on its own). Only the boolean type word varies: `INTEGER` on SQLite,
+/// `BOOLEAN` on Postgres.
+fn accounts_table_ddl(bool_ty: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS accounts (
+            id         TEXT PRIMARY KEY,
+            username   TEXT NOT NULL UNIQUE,
+            credential TEXT,
+            caps       TEXT NOT NULL,
+            su         {bool_ty} NOT NULL,
+            status     TEXT NOT NULL,
+            app_data   TEXT NOT NULL
+        )"
+    )
+}
+
+/// Rebuild an [`Account`] from the primitives a backend read out of a row, enforcing
+/// the parse invariants once for both stores: a valid uuid id, a known status, and
+/// well-formed `caps`/`app_data` JSON. Corrupt data surfaces as an error, never a
+/// silently defaulted field.
+fn assemble_account(
+    id: String,
+    username: String,
+    credential: Option<String>,
+    caps: String,
+    su: bool,
+    status: String,
+    app_data: String,
+) -> Result<Account> {
+    let account_id = id
+        .parse::<AccountId>()
+        .map_err(|e| Error::MalformedAccount(format!("id {id:?}: {e}")))?;
+    let status = status
+        .parse::<AccountStatus>()
+        .map_err(|e| Error::MalformedAccount(e.to_string()))?;
+    let caps: Vec<String> = serde_json::from_str(&caps)?;
+    let app_data: Value = serde_json::from_str(&app_data)?;
+    Ok(Account::from_stored(
+        account_id, username, credential, caps, su, status, app_data,
+    ))
 }
 
 /// Reassemble the rows a backend read into the world's `Loaded` form, enforcing
@@ -279,6 +352,36 @@ impl KvStore for WorldStore {
     }
 }
 
+impl AccountStore for WorldStore {
+    async fn accounts_init(&self) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.accounts_init().await,
+            WorldStore::Postgres(p) => p.accounts_init().await,
+        }
+    }
+
+    async fn account_by_username(&self, username: &str) -> Result<Option<Account>> {
+        match self {
+            WorldStore::Sqlite(s) => s.account_by_username(username).await,
+            WorldStore::Postgres(p) => p.account_by_username(username).await,
+        }
+    }
+
+    async fn account_upsert(&self, account: &Account) -> Result<()> {
+        match self {
+            WorldStore::Sqlite(s) => s.account_upsert(account).await,
+            WorldStore::Postgres(p) => p.account_upsert(account).await,
+        }
+    }
+
+    async fn any_superuser(&self) -> Result<bool> {
+        match self {
+            WorldStore::Sqlite(s) => s.any_superuser().await,
+            WorldStore::Postgres(p) => p.any_superuser().await,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +421,84 @@ mod tests {
     /// roster entity pass `assemble`'s Id-less check.
     fn id_row(id: i64) -> (i64, String, String) {
         (id, Id::TAG.to_string(), id.to_string())
+    }
+
+    #[tokio::test]
+    async fn account_upsert_then_by_username_roundtrips_every_column() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+
+        let mut acc = Account::new("alice");
+        acc.set_credential(Some("$argon2id$v=19$m=19456,t=2,p=1$stub".into()));
+        acc.grant("build");
+        acc.grant("teleport");
+        acc.set_su(true);
+        acc.set_status(AccountStatus::Disabled);
+        acc.set_app_data(serde_json::json!({ "tier": "founder" }));
+        store.account_upsert(&acc).await.unwrap();
+
+        let back = store.account_by_username("alice").await.unwrap().unwrap();
+        assert_eq!(back, acc, "every column round-trips through the store");
+    }
+
+    #[tokio::test]
+    async fn account_by_username_unknown_is_none() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+        assert!(store.account_by_username("nobody").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn account_upsert_replaces_the_row_with_the_same_id() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+
+        let mut acc = Account::new("bob");
+        store.account_upsert(&acc).await.unwrap();
+        // Same id, now mutated: the row updates in place rather than duplicating.
+        acc.grant("build");
+        acc.set_status(AccountStatus::Disabled);
+        store.account_upsert(&acc).await.unwrap();
+
+        let back = store.account_by_username("bob").await.unwrap().unwrap();
+        assert_eq!(back.caps(), ["build".to_string()]);
+        assert_eq!(back.status(), AccountStatus::Disabled);
+    }
+
+    #[tokio::test]
+    async fn account_nullable_credential_roundtrips() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+        store.account_upsert(&Account::new("carol")).await.unwrap();
+        let back = store.account_by_username("carol").await.unwrap().unwrap();
+        assert!(
+            back.credential().is_none(),
+            "a passwordless account stays null through the round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn any_superuser_tracks_su_accounts() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+        assert!(
+            !store.any_superuser().await.unwrap(),
+            "an empty store has no superuser"
+        );
+
+        store.account_upsert(&Account::new("plain")).await.unwrap();
+        assert!(
+            !store.any_superuser().await.unwrap(),
+            "a non-su account does not flip it"
+        );
+
+        let mut op = Account::new("operator");
+        op.set_su(true);
+        store.account_upsert(&op).await.unwrap();
+        assert!(
+            store.any_superuser().await.unwrap(),
+            "an su account flips it"
+        );
     }
 
     // `assemble` is the backend-free heart of every `load`: both stores hand it

@@ -56,19 +56,14 @@ These hold across every subsystem:
 - [admin-verbs.md](admin-verbs.md): the admin/builder `@`-verbs and the
   type-erased reflection primitives they ride (the full structural `Action` set,
   `SetComponent` granularity, the generic mutators and guards). *(Built.)*
+- [authorization.md](authorization.md): authentication vs authorization, the
+  account record and its columnar store, capabilities and the verdict (with the
+  quell rule), and the async auth flow. *(Built through the loopback-stub slice:
+  the account model and store, the interner and verdict, the off-thread account
+  task, and the host wiring. Real credential verification is the next slice.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
-- [authorization.md](authorization.md): the permission model that replaced the
-  `Staff` gate: account-scoped capabilities, the superuser account bit, `@quell`
-  (dropping su and quellable caps), and the out-of-band boundaries on su.
-  *(Authorization built, incl. the runtime account surface; real authentication
-  pending.)*
-- [accounts.md](accounts.md): the implementation half of authorization: resolving a
-  connection to a verdict at dispatch, the account authority (its own `musce_auth`
-  crate) and its relational SQLite store, account identity, the runtime account
-  mutators, and bootstrapping. *(Built, including the durable store; real
-  authentication pending.)*
 - [sequences.md](sequences.md): timed behavior as components, sequences and
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
@@ -101,20 +96,24 @@ Built:
   chosen by URL scheme, with SQLite and Postgres backends sharing one schema (the
   per-component-row layout, `data` as JSON text), plus the cold content store
   (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB`/`BYTEA` table) for large,
-  rarely-read payloads kept off-heap.
+  rarely-read payloads kept off-heap, plus the `accounts` table (`AccountStore`:
+  columnar per-account rows, `account_by_username`/`account_upsert`/`any_superuser`)
+  holding the auth layer's records in the same store (see authorization.md).
 - `musce_host`: the runtime as a library, parameterized by an injected `Game`
   (`run(store, config, shutdown, game)`): the tick loop (fixed cadence, `TickCtx`
   carrying both clocks), boot load, periodic + graceful-shutdown persistence, the
-  account floor (`@quit`/`@who`/`@help`/`@play`, the `@operator`/`@login` elevation
-  stubs, the operator's `@account`/`@grant`/`@revoke` account admin, and `@quell`, the
-  actor choice game-injected), and a single command dispatcher draining the inbox each
+  session floor (`@quit`/`@who`/`@help`/`@play`, the actor choice app-injected, plus
+  the account-auth verbs `@operator`/`@login`/`@account`/`@grant`/`@revoke`/`@quell`,
+  whose store-touching work runs off-thread on an account task), and a single command
+  dispatcher draining the inbox each
   tick:
   lifecycle `@`-verbs to the floor, other `@`-verbs to the game's capability-gated
-  admin table, bare commands to the embodiment frame. It resolves each connection's
-  account to an authorization verdict at the dispatch seam (the authority itself
-  lives in `musce_auth`, re-exported as `musce_host::auth`), and persists account
-  mutations through an async writer task fed by the sim loop's dirty-flag beat,
-  the account analogue of the snapshot path. It also runs a cold-content task that
+  admin table, bare commands to the embodiment frame. Authorization is resolved to a
+  `Verdict` at the dispatch seam from each connection's session-cached account
+  authorization, filled by the off-thread account task that owns account-store
+  access and runs the app's login veto; the account record, its store, and the
+  verdict primitive live in `musce_auth`/`musce_persistence`/`musce_action` (see
+  authorization.md). It also runs a cold-content task that
   owns the `KvStore` and serves the game's cold reads/writes (`ColdOp`) off the sim
   thread, delivering results back through the event outbox, with a game-injected
   `decode_cold` turning opaque cold bytes into deliverable text. After draining commands it runs the game's
@@ -122,13 +121,13 @@ Built:
   through the same audience resolver, and runs `Game.register` against a fresh
   world before load so a game's own component types deserialize and persist. Holds
   no game content; library-only (no binary).
-- `musce_auth`: the account authority as its own leaf crate, so account identity
-  can serve consumers beyond the sim host (a web or oauth frontend, admin
-  tooling). The caps registry, the account records and `AccountsSnapshot`, the
-  live `Accounts` authority (first-account-su bootstrap, the last-su boot check,
-  the runtime mutators, `verdict_for`), and the durable relational store: its own
-  SQLite database (`accounts` / `account_caps` / `meta` with the persisted
-  `next_id` high-water mark, so a deleted account's id is never reissued).
+- `musce_auth`: a pure domain leaf for account identity and authentication: the
+  `Account` record (v7-UUID id, unique mutable username, nullable PHC credential
+  hash, capability names, the `su` and `status` axes, opaque `app_data`) and
+  argon2id password hashing (`hash_password`/`verify_password`, PHC-encoded, run off
+  the sim thread). Holds no storage (that lives in `musce_persistence`) and no
+  capability vocabulary or verdict (that lives in `musce_action`). See
+  authorization.md.
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
   session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
@@ -141,7 +140,9 @@ Built:
   `Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent`,
   returning the action's subject), the `CommandTable` lookup and public `register`,
   the `Gate` variants (`Open`/`Cap(CapId)`) with the account-scoped capability check
-  (`CapId`/`CapSet`/`Verdict`/`permits`, plus the verdict carried read-only on `Ctx`),
+  (`CapId`/`CapSet`/`Verdict`/`permits`, the `CapRegistry` name->id interner, and
+  `Verdict::resolved` carrying the quell rule, plus the verdict carried read-only on
+  `Ctx`),
   and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface a game's verb handlers
   program against), `SystemCtx` and the `System` type (the tick-loop analogue of
@@ -206,9 +207,11 @@ Deferred (with seams in place where noted):
   `@operator`/`@login` stubs stand in for now, resolving to real accounts), the
   gameplay possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays
   (designed in networking-and-sessions.md). Raw TCP, the session floor, the session
-  attachment that `@play` sets, durable `Controls`/`Focus` embodiment, the account
-  authority and capability gate (authorization slice 1), and the
-  `@possess`/`@unpossess` admin verbs are built.
+  attachment that `@play` sets, durable `Controls`/`Focus` embodiment, and the
+  `@possess`/`@unpossess` admin verbs are built. The account/authorization layer is
+  built through the loopback-stub slice (the account model and store, the interner
+  and verdict, the off-thread account task, and the host wiring); real credential
+  verification is the next slice (see authorization.md).
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit
   aliases. Designed in ecs-and-relations.md. A minimal `Locked` exit marker now

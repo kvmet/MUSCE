@@ -1,231 +1,209 @@
-# Authorization: capabilities, superuser, and quell
+# Authorization
 
-> Status: **authorization built (including quellable caps and the runtime account
-> surface); real authentication not started.** The capability model, the superuser
-> bit, `@quell` (dropping su *and* elevated caps), the account authority, and the
-> operator's `@account`/`@grant`/`@revoke` verbs are live: `Gate` is `Open | Cap` in
-> `musce_action`, the authority resolves a connection's account to a verdict at the
-> dispatch seam, and the reference game re-gates its admin verbs on capabilities. What
-> remains is real authentication (passwords, tokens, oauth) behind the same store
-> seam; until then a connection elevates through the loopback-only `@operator`/`@login`
-> stubs.
+> Status: built, through the loopback-stub authentication slice. The primitives
+> (password hashing, the `Account` record, the columnar account store, the
+> capability interner and verdict) and the runtime that ties them together (the
+> off-thread account task, the async auth round-trip with pending-auth rejection,
+> the app login veto, operator bootstrap, and the host command wiring for
+> `@operator`/`@login`/`@account`/`@grant`/`@revoke`/`@quell`) are implemented and
+> tested. What is *not* yet built is real credential verification: the
+> `@operator`/`@login` stubs are still passwordless and loopback-gated. Wiring
+> argon2 into the login flow and adding a set-password path is the next slice.
 
-This covers the permission **model**: **who may do what**. The account as the bearer
-of permissions, the capability model that gates verbs, the superuser bit, and how to
-set it aside. The machinery that makes it real (resolving a connection to a verdict at
-dispatch, the account authority and its store, bootstrapping) is the implementation
-half in [accounts.md](accounts.md). This does **not** cover authentication (proving
-identity: passwords, tokens, oauth), a later slice behind the same store seam, nor
-session identity and embodiment, which live in
-[networking-and-sessions.md](networking-and-sessions.md).
+Two things are kept apart. **Authentication** proves which account a connection is:
+a credential check that yields an `AccountId`. **Authorization** decides what that
+connection may do: a `Verdict` the gate consults. They are separate because a
+connection has an account long before it has a body, and because the credential
+check is slow and off-thread while the gate check is a hot per-command read.
 
-## The engine authorizes accounts, nothing finer
+The shaping decision: **an account is infrastructure, not a world entity.** Accounts
+exist before any character, must not ride the world's snapshot cadence, and must not
+be walked by game systems or the reflection admin layer. So they are *not* entities
+in the ECS world. They are a thin, columnar table in the same store as the world.
+Authorization is then a `Verdict` resolved from an account's capabilities and its
+superuser bit, consulted at the dispatch seam.
 
-Account identity is the only permission-bearing thing the engine knows. A
-**character** is game vocabulary the engine never interprets, so anything finer than
-the account is not a lighter version of this system: it is a **different mechanism**,
-expressed as ordinary validation inside a game verb handler, exactly where `pilot`'s
-"you may only pilot what you control" and the takeable rule already live.
+## Accounts live in the one store, not a parallel one
 
-This line resolves several questions at once. A **per-character** permission (may
-this warrior cast) and a **scoped** permission (may I build *in this zone*) are both
-finer than the account, so both are game inline validation, not engine capabilities;
-the engine's grant set stays flat and global, and scope never enters it. `Gate`
-gates a verb on an account capability, full stop, and must not grow into a
-per-entity or per-scope framework. So that the game can write those inline checks
-without flying blind, the resolved permission verdict (see [accounts.md](accounts.md))
-is **available to game handlers**: an inline rule can ask "is this actor su / does it
-hold cap X" and decide accordingly.
+A prior design gave accounts their own authority object, their own database, their
+own snapshot-the-whole-set writer, and their own id space. That was a parallel
+universe bolted onto a World-as-truth engine, and it is the design this replaces.
 
-**Hardcoded rule vs. data-driven scoped grant, both game-side.** The scoped checks
-already in the game (`pilot`'s "you may only pilot what you control") are *hardcoded*:
-the policy is written into the handler. A game may also want *data-driven, runtime
-admin-grantable* scoped authority ("grant builder Bob edit rights to the market zone"),
-a `(principal, capability, scope)` record an operator creates live and a handler queries.
-Both are game-side, and neither touches the engine grant set. The scope-bearing record
-persists in **game state**, parallel to the account's flat engine caps; widening the
-persisted account grant to carry a scope is the one path this boundary forbids, because
-it drags scope into the engine. The engine keeps answering only "holds cap C," and the
-game composes that verdict with a scope check it owns. The scope shapes are game data,
-resolved however the game likes: a single entity id (match), a subtree (walk
-`enclosing_locus` up to the named zone), a tag or typeclass (a component check). Nothing
-here needs a precomputed scope-label index; the containment tree is shallow and
-authorization fires on a typed command, not per tick, so the walk is cheap until a
-profile says otherwise. Building this table is deferred until a scoped verb needs it; the
-commitment recorded now is only where it lives.
+The rule that holds instead is the same one the rest of the engine follows: **one
+persistence path.** The `accounts` table lives in the shared `WorldStore` (same
+database, same trait, same pool, same migration story), written with ordinary
+per-row upserts. A dedicated *table* is not a separate *path*; the mistake was the
+parallel store and the whole-set snapshot, never the fact that accounts have their
+own rows.
 
-**Creation confers no authority, and ownership is never an engine concept.** Recording
-who created an entity is audit provenance only: it grants nothing, and the engine never
-reads it to authorize. "Ownership" (a principal with standing authority over a thing it
-made) is a MUD convention, not an engine primitive. A game that wants it (player housing,
-say) builds it on top as a scoped grant or an authorization predicate it registers, over
-the same game-side machinery above. The engine ships no owner field and no `IsOwner`
-check, so it cannot couple provenance to authority by accident.
+The account authentication secret is not special-cased out of this. A password hash
+is a column on the account row like any other, kept out of the hot world for free
+because accounts are not resident world state to begin with.
 
-## Capabilities, not tiers
+## The account record
 
-There is no `guest < builder < admin` ladder; a linear hierarchy cannot express
-someone who edits rooms but cannot ban players. The model is composable:
+`Account` ([account.rs](../../musce_auth/src/account.rs)) is deliberately dumb and
+app-agnostic. Its fields, and why each is shaped the way it is:
 
-- A **capability** is an atomic named grant (`build.room`, `teleport`, `ban`),
-  **game vocabulary**: the game defines which capabilities exist and mean.
-- A **role** is a named bundle of capabilities, **pure game config**. The engine
-  never sees roles; the game expands a role to its capabilities and the engine sees
-  only the resolved set. Roles never reshape the persisted account.
-- An **account holds a flat set of grants**, persisted **by string name** (stable,
-  mirrors `NamedComponent::TAG`), resolved to fast ids at load. The set (not a tier)
-  is the decide-now cardinality; composability requires it.
+- **`id`** — a stable, opaque v7-UUID surrogate key, minted at creation, never
+  reused. Everything durable (sessions later, character ownership later) points at
+  this, not at the name. Natural keys are the problem it avoids.
+- **`username`** — the unique human login name. Kept *separate* from the id and
+  therefore free to change: rename is a non-event precisely because the username is
+  not load-bearing. Uniqueness is a store-level `UNIQUE` constraint plus a
+  creation-time check; the record cannot enforce it alone.
+- **`credential`** — a nullable PHC hash. `None` is a real state: the bootstrap
+  operator (reachable via the loopback stub) and future external-auth accounts have
+  no password.
+- **`caps`** — capability *names*, as a JSON array. Names, not ids: the record is a
+  leaf that knows nothing of any app's interned vocabulary. Stored as names because
+  a `CapId` is a runtime handle, not a stable key (see below).
+- **`su`** — the superuser bit, its own column. A distinct axis, *not* a capability,
+  so it maps onto the verdict's su override and stays off the generic grant path
+  (elevating someone to su is a guarded operation, not "grant a cap like any
+  other"), and "who are the superusers" is a real query.
+- **`status`** — `Active` / `Disabled`, the one authorization axis the engine
+  enforces itself. See below.
+- **`app_data`** — an opaque JSON value the engine stores and hands back but never
+  reads. All the app's own account machinery (subscriber tiers, approval flags, ban
+  reasons) lives here. Same treatment as cold content: the engine carries structure
+  it does not interpret.
 
-`Gate` generalizes from `Open | Staff` to `Open | Cap(CapId)`. The `Staff`
-world-marker **retires**, and the reference seed's `Staff` on the avatar body is
-stripped in the same change (leaving it is a possession-borrow escalation, below).
-The placement test applied straight: the game defines the vocabulary, the engine
-owns only the membership check.
+The engine reads exactly two account axes, `su` and `status`, and holds each as a
+column; caps are opaque membership; everything else is app data. That is "the engine
+owns a kind iff it reads it" applied to accounts.
 
-A capability is a **string, not a Rust type**, so it cannot register the way
-components and relations do (those key off `NamedComponent::TAG`, a type). The game
-declares its cap vocabulary through a **caps registry**, a `register_cap("build.room")
--> CapId` that interns each name to a stable `CapId` (like `register_relation`
-interns a name to an id, but a string-keyed interner on the caps registry, not the
-type-keyed table on `World`; a cap is a runtime string, not a type). `Gate::Cap` holds that interned id, taken **at table-build time** when the
-game builds its command tables; an account's persisted grant strings resolve against
-the **same** registry at load, so a gate's `CapId` and a grant's `CapId` denote the
-same cap. An unknown grant string at load is an error, never a silent drop. This
-registry is not deferrable behind the version seam: slice 1's very first `Gate::Cap`
-verb needs a `CapId` in hand, so the registry ships in slice 1.
+## Capabilities and the verdict
 
-## Superuser is an account bit, not a capability
+Capabilities are **strings in code and in the database, interned to a `CapId` at
+startup.** They cannot be a single compile-time enum: the engine and the app are
+different crates that must share one `CapId` space so a single `Verdict` can hold
+both, and an enum cannot span crates. So the app declares its vocabulary while
+wiring its gates, and `CapRegistry` ([registry.rs](../../musce_action/src/registry.rs))
+mints a `CapId` per name. Gate registration and grant resolution both go through
+that one registry, so a gate's id and a grant's id denote one capability. The
+**engine registers no capabilities of its own** (su and status are columns, not
+caps); every name is the app's.
 
-The engine reserves one concept, `superuser`, as a **boolean property of the
-account**, not a capability in the grant set. The effective check is:
+Because ids are runtime handles, grants persist as *names* and resolve at load.
+`CapRegistry::resolve_set` returns any names it could not resolve *separately* from
+the ones it could, so vocabulary drift (a grant naming a capability the current
+build no longer defines) surfaces as a log line rather than a silently dropped
+grant.
 
-```
-permits(cap) = (account.is_su && !connection.quelled) || account.caps.contains(cap)
-```
+The `Verdict` ([caps.rs](../../musce_action/src/caps.rs)) is the pure primitive the
+gate compares against: a resolved `CapSet` plus a superuser override. `permits(cap)`
+is `su_override || caps.contains(cap)`. `Verdict::resolved(caps, su, quelled)`
+builds it from an account's authorization and a connection's quell state, and is the
+one place the quell rule lives.
 
-su is a peer bit checked first, not a set member. A bit rather than a reserved
-capability is load-bearing:
+Two properties the verdict enforces:
 
-- **It kills role-escalation structurally.** Roles expand only into `caps`; a bit is
-  not nameable in game vocabulary, so "a role cannot grant su" needs no runtime rule
-  on the wrong side of the boundary.
-- **It stays honest and enumerable.** A set that must answer `true` for game caps the
-  engine has never heard of is a bypass wearing a set's clothes; the bit is what it
-  is, and an account's actual grants stay listable.
-- **Its source is operator-only**, settable only through out-of-band account
-  administration (below), never through grant or role expansion. (The one other
-  writer, the boot promotion in [accounts.md](accounts.md), is constrained so it
-  cannot become an escalation.)
+- **Authority is per-account, not per-body.** The verdict keys off the connection's
+  account, never the resolved actor, so possessing or `@play`-selecting a privileged
+  body cannot borrow its authority.
+- **`@quell` makes you your character.** A quelled connection drops to the guest
+  verdict, setting aside *both* su and every granted cap. Quell is not "set aside
+  god-mode only"; it is "act as a plain user," which is what the vast majority of
+  connections already are. (A cap that should survive quell would be a later opt-out
+  flag, unbuilt because nothing needs it.)
 
-**What su bypasses, and what it does not.** su bypasses **gates** (`Gate::Cap`
-checks), so an su account passes any gated verb, including the admin verbs, which are
-pure gates with no inline rule (intended: su is total on the builder surface). It
-does **not** bypass game **rules**, the inline handler validation above. That
-distinction is a property of the **player-verb surface**, not a global guarantee:
-whether su overrides a given restriction depends on which side the game author coded
-it. A "who may" check the author wants su to bypass belongs on the gate (a cap); a
-genuine world rule even su obeys stays inline. Because scoped authority cannot be a
-flat cap it lands inline, so an author who wants su to bypass a scoped check reads
-the authority verdict there and lets su through explicitly. The engine supplies the
-verdict; the placement is the game's call.
+## Credentials and hashing
 
-## Quell: setting su aside for a connection
+Password hashing ([password.rs](../../musce_auth/src/password.rs)) is argon2id,
+PHC-string encoded (algorithm, cost parameters, and a per-hash random salt all
+embedded in the output). It owns no storage: it turns a password into a
+self-describing string and checks a password against one.
 
-A superuser usually does not want god-mode live: it invites accidental edits and
-hides how the game plays for a normal account. `@quell` toggles a **per-connection
-suppression flag**, the `!connection.quelled` term above, that drops the su bit from
-the effective check. Quelled, an su account is evaluated purely on its actual `caps`,
-playing as exactly the authority those grants describe.
+Two rules it holds:
 
-Quell is **per-connection and ephemeral**: each new connection starts un-quelled, so
-opening a fresh connection reliably restores full su and there is no lockout. A
-second concurrent connection on the same account is quelled independently, so an
-operator who quells one connection still has su live on another; this is a footgun,
-not an escalation (it is the operator's own account), and is documented rather than
-prevented. Reconnect resetting the flag is the never-locked-out guarantee, so quell
-is deliberately *not* account-durable session state that survives disconnect.
+- **Never on the sim thread.** argon2 is deliberately slow; a verify on the 10 Hz
+  tick would stall every connected player. Hashing and verifying run on the async
+  side, on a blocking pool.
+- **A corrupt hash is not a wrong password.** `verify_password` returns `Ok(false)`
+  for a valid hash the password does not satisfy, but `Err` for a stored hash that
+  will not parse. A storage fault must never be counted as an ordinary failed login.
 
-Suppressing su is not the whole of it: **quell also drops elevated capabilities.** A
-`build` cap is elevated authority a builder sets aside for the same reason su is: to
-verify how the game plays for a normal account (that a non-builder genuinely cannot
-build), so quell drops it too. The mechanism: each capability carries a **quellable**
-flag, default quellable, so the common admin cap drops on quell with no configuration;
-a rare baseline right (a `member` cap gating member areas) opts out via
-`register_baseline_cap`, so quelling still shows the *member's* view rather than a bare
-guest's. The authority keeps each account's non-quellable **baseline** set apart from
-its full set at load, and `verdict_for` returns the baseline (and no su) for a quelled
-connection, so `Gate::Cap` **and** a game's inline `ctx.has_cap` respect it with no
-per-handler quell check. It is a pure addition: the verdict shape `{ caps, su_override }`
-and the persisted record are unchanged, and `register_cap` keeps its signature since
-caps default quellable. It landed with the runtime account surface (the operator's
-`@account`/`@grant` verbs plus the `@login` stub) that first made a non-su account
-holding a cap reachable; the falsifying flow (log in as a builder, quell, `@create`
-refused, un-quell, allowed) is exercised end to end by the reference game's
-`a_granted_builder_creates_until_quelled` session test. A still-finer grain (per
-control-stack, an arbitrary reduced grant set) stays deferred with no consumer.
+## Storage: the `accounts` table
 
-`@quell` is a **floor command handled in the host loop, like `@quit`**, not a
-`CommandTable` entry: it writes host-only `Session` state, which a `CommandTable`
-handler (`fn(&mut Ctx, &str)`, and `Ctx` has no session handle) cannot reach. Its
-rationale for being floor is narrow and exact: `connection.quelled` is a term in the
-engine's own `permits()` evaluation, read nowhere else, so the command that toggles
-it is engine mechanism. Un-quell is the same ungated floor command, **never behind a
-cap**, or a quelled su whose actual caps lack that cap would be stranded. (One
-consequence to accept: a quelled su lacking a possess cap cannot `@unpossess` a
-puppet it took while un-quelled until it un-quells; minor, and un-quell is always one
-floor command away. If a later slice moves possession lifecycle to the floor, this
-footgun vanishes; re-read it then.)
+The table is columnar, one column per field
+([accounts_table_ddl](../../musce_persistence/src/lib.rs)): `id`, `username`
+(`UNIQUE`), `credential` (nullable), `caps` (JSON text), `su` (the dialect's boolean
+word, `INTEGER` on SQLite / `BOOLEAN` on Postgres), `status`, and `app_data` (JSON
+text). Columnar over a JSON blob so the row is legible and `username`/`su` are real
+indexed columns rather than fields buried in a document.
 
-## Recovery is out of band
+`AccountStore` is a trait beside `Persistence` and `KvStore`, implemented on both
+backends and forwarded through `WorldStore`, with four methods: `accounts_init`,
+`account_by_username` (login and admin lookup), `account_upsert` (create / grant /
+revoke / status change), and `any_superuser` (the bootstrap gate). No full load, no
+whole-set snapshot: the sim holds no global account map, so the store is read by
+username on demand and written per row on mutation.
 
-A game rule can wedge the world (every exit `Locked`, no key entity exists). su
-bypasses gates but not rules, so su cannot type its way out with an in-game verb, and
-this is correct: the engine ships no builder command table to smuggle a god-verb
-into. A wedged world is un-wedged **out of band**, over the `execute(world, Action)`
-seam that is already engine-owned, run **offline against a stopped world** (a
-maintenance mode, not the live sim). Running it against the live sim would be a second
-writer holding `&mut World`, the exact single-writer invariant atomicity rests on, so
-recovery is explicitly the offline path. That surface is present in every game because
-`execute` is engine, so su has a recovery path without the engine owning a command.
+## The runtime flow
 
-A bad lock is a verb-or-data problem, so fixing it at the code/data layer offline is
-the right layer. A developer who could author a self-wedging lock could already do
-anything with code access, so the out-of-band fix concedes nothing. The tool is
-deferred; the architectural commitment (no engine in-game verbs, recovery is offline)
-is made now.
+**Startup.** The app declares its cap vocabulary (each name interned to a `CapId`);
+the shared store opens (world tables, kv, and `accounts` in one database). Bootstrap:
+if `any_superuser` is false, seed one su operator so the world can be administered.
 
-## Modifying su is out of band
+**Authenticate** (an async round-trip, the `ColdOp` analogue). A login line reaches
+the sim, which issues an auth op to an off-thread auth task and marks the connection
+*pending-auth*; further lines from a pending connection are **rejected**, not queued,
+so one connection cannot spam parallel argon2 work. The auth task looks the account
+up by username, applies the **engine hard gate** (`Disabled` is refused,
+unconditionally), verifies the credential (this slice is passwordless; argon2
+verification on a blocking pool is the next slice), then runs the **app login veto**:
+an injected hook given the account's status and `app_data` that may refuse an
+`Active` account (approval workflows, region locks). The veto can only *further
+restrict*; it cannot lift `Disabled`. On success the task hands the sim
+`{ conn, AccountId, CapSet, su }`, and the sim caches the resolved caps and su in the
+connection's session.
 
-The su bit has **no in-band write path, ever**: no verb, no floor command, no role
-expansion. It changes through the store, out of band; with the trivial slice-1
-backend that means edit the store and restart. This is the commitment, not a
-stopgap: the set of people who can bypass gates is controlled only from outside the
-game, so no in-game surface can be misused into minting one.
+**Authorized command.** The gate builds the `Verdict` from the session's cached
+`{ CapSet, su, quelled }`, no store touch on the hot path.
 
-Ordinary cap grants are not under that commitment; they simply ship no runtime
-surface in slice 1 (the seed plus offline store edits). Whatever live surface later
-arrives (the slice-2 writer, or a floor command if one is wanted sooner) obeys two
-constraints: it cannot be a `CommandTable` verb (the verdict on `Ctx` is a
-read-only snapshot; the same line that keeps `@quell` on the floor), and it can
-never write the su bit.
+**Mutation.** `@grant` / `@revoke` / account admin (su-gated) load the target by
+username, mutate, and upsert per-row; if the target is online, its cached caps are
+refreshed too.
 
-A game that wants runtime-grantable authority of its own builds it as **game
-vocabulary**, per the finer-than-account line above: game state checked by inline
-rules (the retired `Staff` pattern returning deliberately, as a character marker or
-any game-side record), granted live through its own verbs like anything else in the
-world. That mechanism is fully in-band and fully the game's; the one thing it can
-never reach is the su bit, because nothing in-band can.
+## Sessions and resumption
 
-One scope note: account **creation** is still a runtime store mutation once slice-2
-registration exists, so the post-image su floor and the first-account-su promotion
-(see [accounts.md](accounts.md)) are runtime invariants on the store, binding every
-future grant surface too.
+A session is in-memory and connection-scoped: the floor maps a `ConnectionId` to the
+account it authenticated as, plus play state (the driven character, the quell bit).
+It dies with the connection, which is correct: a process restart drops every
+connection anyway, so persisting session state would persist garbage.
 
-## Relation to existing docs
+**Resumable sessions** (close the client, reconnect still logged in) are deferred and
+purely additive: a `sessions` table of `{ token, account_id, expires_at }`, a token
+minted at login, and a resume path that looks the token up to an `AccountId` and
+skips the credential check. Two decisions already in place make it drop-in rather
+than surgery: the token references the immutable `id` (not the rename-able username),
+and authentication already yields an `AccountId` regardless of method, so
+token-resume is a third method into the same "establish a session from an
+`AccountId`" step. Getting the *body* back on reconnect is a separate concern
+(durable `Controls`/`Focus` embodiment plus `@play`), not the session's job.
 
-When built, this supersedes the `Gate` tiers in
-[command-dispatch.md](command-dispatch.md) (`Open | Staff` becomes `Open | Cap`) and
-the `Staff`-gated framing of the admin frame in [admin-verbs.md](admin-verbs.md) (the
-admin verbs re-gate from `Staff` to capabilities; the reference seed's body `Staff`
-marker is removed). Those docs are updated in the same change that builds this, not
-before.
+## Built vs deferred
+
+Built and tested:
+
+- Password hashing (`hash_password` / `verify_password`).
+- The `Account` record and its `AccountId` / `AccountStatus`, with the columnar
+  reconstruction API (`from_stored`, `AccountId: Display + FromStr`,
+  `AccountStatus::as_str`).
+- The `accounts` table and `AccountStore` on SQLite and Postgres.
+- The `CapRegistry` interner and `Verdict::resolved` (the quell rule).
+- The off-thread account task and its ops (authenticate, create, grant/revoke), the
+  async round-trip with pending-auth rejection, the app login veto, operator
+  bootstrap seeding, and the host command wiring, with session-cached authorization.
+
+Deferred:
+
+- Real credential verification: the `@operator`/`@login` stubs are passwordless and
+  loopback-gated. Wiring argon2 into the login flow and a set-password path is the
+  next slice.
+- Resumable sessions (the token store).
+- Cross-connection auth rate limiting (per-connection one-in-flight is the current
+  floor).
+- External authentication (OAuth) as an additional method resolving to an
+  `AccountId`.

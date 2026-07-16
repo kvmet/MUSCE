@@ -19,13 +19,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store = WorldStore::connect(&db_url).await?;
     tracing::info!(%db_url, "connected");
 
-    // Accounts live in their own database so a dev world reseed (deleting the
-    // world DB) does not wipe logins.
-    let accounts_url =
-        std::env::var("MUSCE_ACCOUNTS_DB").unwrap_or_else(|_| "sqlite://accounts.sqlite".into());
-    let account_store = musce::auth::AccountBackend::connect(&accounts_url).await?;
-    tracing::info!(%accounts_url, "accounts connected");
-
     let shutdown = Arc::new(AtomicBool::new(false));
     {
         let shutdown = shutdown.clone();
@@ -36,14 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     }
 
-    let report = run(
-        store,
-        account_store,
-        Config::default(),
-        shutdown,
-        musce_ref::game(),
-    )
-    .await?;
+    let report = run(store, Config::default(), shutdown, musce_ref::game()).await?;
     tracing::info!(ticks = report.ticks, saves = report.saves, "stopped");
     Ok(())
 }

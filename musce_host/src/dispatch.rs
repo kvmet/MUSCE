@@ -10,45 +10,48 @@ use musce_action::{Caller, ColdOp, CommandTable, dispatch_command, run_systems};
 use musce_core::World;
 use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
 
-use crate::auth::Accounts;
+use crate::accounts::{AccountOp, AccountOutcome};
 use crate::session::{Sessions, resolve_actor};
 use crate::{Game, TickCtx};
 
+/// A host-level async op a command produced, routed by the sim loop to the task
+/// that owns the resource it touches: a cold read/write to the cold task, or an
+/// account op to the account task.
+pub(crate) enum HostOp {
+    Cold(ColdOp),
+    Account(AccountOp),
+}
+
 pub struct Dispatch {
     /// The always-present account/session floor: `@`-commands, lifecycle, and the
-    /// conn->actor attachments that back the embodiment frame.
+    /// conn->actor attachments that back the embodiment frame. Also holds each
+    /// connection's cached authorization (account, resolved caps, su), which the
+    /// account task fills in on a successful login.
     floor: Sessions,
     /// The injected game: its command table drives bare commands and its
     /// `choose_actor` policy backs the floor's `@play`. The runtime holds no game
     /// content beyond this value.
     game: Game,
-    /// The account authority: resolves a connection's account to the authorization
-    /// verdict a gate (and a game's inline rules) run under. Sim-thread-owned;
-    /// crate-visible so the sim loop's persist beat can check `take_dirty` and
-    /// snapshot it.
-    pub(crate) accounts: Accounts,
 }
 
 impl Dispatch {
-    pub fn new(game: Game, accounts: Accounts) -> Self {
+    pub fn new(game: Game) -> Self {
         Self {
             floor: Sessions::default(),
             game,
-            accounts,
         }
     }
 
     /// Route one inbound command, pushing output through `emit` and returning any
-    /// cold-store requests the handler queued (empty for everything but an in-game
-    /// verb that read or wrote cold content). Lifecycle and the `@`-namespace land
-    /// on the floor; a bare command acts through the connection's attached actor, or
-    /// reports having none.
+    /// host ops the handler queued: a cold-store request, or an account op the floor
+    /// raised. Lifecycle and the `@`-namespace land on the floor; a bare command
+    /// acts through the connection's attached actor, or reports having none.
     pub fn handle(
         &mut self,
         cmd: Command,
         world: &mut World,
         emit: &mut impl FnMut(Outgoing),
-    ) -> Vec<ColdOp> {
+    ) -> Vec<HostOp> {
         let id = cmd.connection;
         match cmd.input {
             Input::Connected { peer, .. } => {
@@ -63,15 +66,33 @@ impl Dispatch {
         }
     }
 
+    /// Apply an account-task outcome against session state: feed its line back, and
+    /// bind the connection (a completed login) or refresh an account's cached caps
+    /// wherever it is online (a completed grant/revoke), as the outcome directs.
+    pub fn apply_account_outcome(
+        &mut self,
+        outcome: AccountOutcome,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        emit(Outgoing::Event(Delivery::new(
+            outcome.conn,
+            EventKind::Feedback,
+            outcome.line,
+        )));
+        if let Some(authz) = outcome.authenticated {
+            self.floor.bind(outcome.conn, authz);
+        }
+        if let Some(authz) = outcome.refreshed {
+            self.floor.refresh(authz);
+        }
+    }
+
     /// Run the game's systems for one tick, in registration order. Each system
     /// mutates the world and emits semantic output into its own buffer; that
     /// output is then audience-resolved to connections through `emit`, exactly as
     /// `dispatch_command` does for a verb. The audience index is built once
     /// (owned, so it does not borrow the world the systems mutate).
     pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
-        // The audience index is built once (owned, so it does not borrow the world
-        // the systems mutate); the shared `run_systems` owns the fact-drain and the
-        // per-system loop.
         let actors = self.floor.audience_index(world);
         run_systems(world, &self.game.systems, &actors, ctx.tick, ctx.now, emit);
     }
@@ -82,46 +103,45 @@ impl Dispatch {
         line: &str,
         world: &mut World,
         emit: &mut impl FnMut(Outgoing),
-    ) -> Vec<ColdOp> {
+    ) -> Vec<HostOp> {
         if !self.floor.is_live(id) || line.is_empty() {
             return Vec::new();
         }
 
-        if let Some(rest) = line.strip_prefix('@') {
-            // The floor owns the lifecycle and account verbs (@quit/@who/@help/@play,
-            // @operator/@quell); any other @-verb is an admin/builder command,
-            // dispatched against the game's admin table with the same actor resolution
-            // the bare frame uses. The floor reports whether it recognized the verb.
-            if self.floor.account_command(
+        // A connection waiting on an authentication result runs nothing else: one
+        // in-flight auth per connection, so a line arriving mid-auth is rejected
+        // rather than queued (it caps the argon2 work a connection can provoke).
+        if self.floor.is_pending(id) {
+            emit(Outgoing::Event(Delivery::new(
                 id,
-                rest,
-                world,
-                &mut self.accounts,
-                self.game.choose_actor,
-                emit,
-            ) {
-                Vec::new()
+                EventKind::Feedback,
+                "Still authenticating; one moment.",
+            )));
+            return Vec::new();
+        }
+
+        if let Some(rest) = line.strip_prefix('@') {
+            // The floor owns the lifecycle and account verbs; any other @-verb is an
+            // admin/builder command, dispatched against the game's admin table with
+            // the same actor resolution the bare frame uses. Recognized account verbs
+            // may raise account ops (an authenticate, a grant); those flow out here.
+            let mut ops = Vec::new();
+            if self
+                .floor
+                .account_command(id, rest, world, self.game.choose_actor, &mut ops, emit)
+            {
+                ops.into_iter().map(HostOp::Account).collect()
             } else {
-                dispatch_through_actor(
-                    &self.floor,
-                    &self.accounts,
-                    &self.game.admin,
-                    id,
-                    rest,
-                    world,
-                    emit,
-                )
+                dispatch_through_actor(&self.floor, &self.game.admin, id, rest, world, emit)
+                    .into_iter()
+                    .map(HostOp::Cold)
+                    .collect()
             }
         } else {
-            dispatch_through_actor(
-                &self.floor,
-                &self.accounts,
-                &self.game.commands,
-                id,
-                line,
-                world,
-                emit,
-            )
+            dispatch_through_actor(&self.floor, &self.game.commands, id, line, world, emit)
+                .into_iter()
+                .map(HostOp::Cold)
+                .collect()
         }
     }
 }
@@ -132,7 +152,6 @@ impl Dispatch {
 /// connection with no character has nothing to act through and is told to `@play`.
 fn dispatch_through_actor(
     floor: &Sessions,
-    accounts: &Accounts,
     table: &CommandTable,
     id: ConnectionId,
     line: &str,
@@ -148,10 +167,10 @@ fn dispatch_through_actor(
         return Vec::new();
     };
     let actor = resolve_actor(world, character);
-    // The verdict keys off the connection's account and quell state, never the
-    // resolved actor, so a possessed or `@play`-selected body cannot borrow
-    // authority. Resolved once here, gating the game table and the admin table alike.
-    let verdict = accounts.verdict_for(floor.account_of(id), floor.is_quelled(id));
+    // The verdict is the connection's cached authorization (account caps + su, quell
+    // applied), never the resolved actor, so a possessed or `@play`-selected body
+    // cannot borrow authority. Gates the game table and the admin table alike.
+    let verdict = floor.verdict_of(id);
     let actors = floor.audience_index(world);
     dispatch_command(
         table,
@@ -170,8 +189,9 @@ fn dispatch_through_actor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{AccountsSnapshot, CapRegistry};
-    use musce_action::{Ctx, Gate};
+    use crate::accounts::Authorization;
+    use musce_action::{CapId, CapRegistry, CapSet, Ctx, Gate};
+    use musce_auth::AccountId;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, EntityId, Id, Locus};
     use musce_proto::Capabilities;
@@ -182,10 +202,10 @@ mod tests {
     /// concept, so the router test defines its own marker to pick an actor by.
     struct Avatar;
 
-    /// An engine-only `Game` so the router can be exercised without depending on
-    /// a real game. Its seed makes one described room with a player avatar in it,
-    /// `choose_actor` selects that avatar, and `look` echoes the avatar's room
-    /// description, so the routing is observable end to end.
+    /// An engine-only `Game` so the router can be exercised without a real game. Its
+    /// seed makes one described room with a player avatar in it, `choose_actor`
+    /// selects that avatar, `look` echoes the room description, and the admin table
+    /// holds a capability-gated `poke`.
     fn test_game() -> Game {
         fn seed(world: &mut World) {
             let room = {
@@ -231,11 +251,8 @@ mod tests {
 
         let mut commands = CommandTable::new();
         commands.register("look", Gate::Open, look);
-        // `poke` is capability-gated, so only su (the operator) or an account holding
-        // the cap runs it. No account is granted the cap in these tests; the operator
-        // passes by su bypass.
         let mut caps = CapRegistry::new();
-        let poke_cap = caps.register_cap("poke");
+        let poke_cap = caps.register("poke");
         let mut admin = CommandTable::new();
         admin.register("poke", Gate::Cap(poke_cap), poke);
         Game {
@@ -246,15 +263,9 @@ mod tests {
             systems: vec![],
             register: |_| {},
             caps: Arc::new(caps),
+            login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
         }
-    }
-
-    /// Build a dispatcher for `game`, booting its account authority (an empty store,
-    /// so one su operator is bootstrapped).
-    fn dispatcher(game: Game) -> Dispatch {
-        let accounts = Accounts::boot(AccountsSnapshot::empty(), game.caps.clone()).unwrap();
-        Dispatch::new(game, accounts)
     }
 
     fn client_caps() -> Capabilities {
@@ -288,11 +299,11 @@ mod tests {
         );
     }
 
-    /// Connect from a loopback peer, so `@operator` elevation is available.
     fn connect(d: &mut Dispatch, world: &mut World, id: ConnectionId) {
         connect_from(d, world, id, loopback());
     }
 
+    /// Drive one line and collect the connection-facing output.
     fn line(d: &mut Dispatch, world: &mut World, id: ConnectionId, s: &str) -> Vec<Outgoing> {
         let mut out = Vec::new();
         d.handle(
@@ -306,10 +317,56 @@ mod tests {
         out
     }
 
+    /// Drive one line and return the host ops it raised (dropping the output).
+    fn ops(d: &mut Dispatch, world: &mut World, id: ConnectionId, s: &str) -> Vec<HostOp> {
+        d.handle(
+            Command {
+                connection: id,
+                input: Input::Line(s.into()),
+            },
+            world,
+            &mut |_| {},
+        )
+    }
+
+    /// Bind a connection to a fresh superuser account, simulating a completed login
+    /// (the account task normally hands this back as an `Authenticated` outcome).
+    fn bind_su(d: &mut Dispatch, id: ConnectionId) {
+        d.floor.bind(
+            id,
+            Authorization {
+                account: AccountId::generate(),
+                caps: CapSet::new(),
+                su: true,
+            },
+        );
+    }
+
+    /// Bind a connection to a fresh plain account holding exactly `cap`.
+    fn bind_capped(d: &mut Dispatch, id: ConnectionId, cap: CapId) {
+        d.floor.bind(
+            id,
+            Authorization {
+                account: AccountId::generate(),
+                caps: [cap].into_iter().collect(),
+                su: false,
+            },
+        );
+    }
+
+    fn conn_texts(out: &[Outgoing]) -> Vec<String> {
+        out.iter()
+            .filter_map(|o| match o {
+                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The `@`-namespace still reaches the floor: connect then `@quit` closes.
     #[test]
     fn at_command_routes_to_floor() {
-        let mut d = dispatcher(test_game());
+        let mut d = Dispatch::new(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -321,36 +378,10 @@ mod tests {
         );
     }
 
-    /// A non-lifecycle `@`-verb routes to the game's admin table and runs, once the
-    /// connection has elevated to the su operator (via the loopback `@operator` stub),
-    /// rather than being swallowed by the floor.
-    #[test]
-    fn at_admin_verb_routes_to_admin_table() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-        let id = ConnectionId(1);
-        connect(&mut d, &mut world, id);
-
-        line(&mut d, &mut world, id, "@operator");
-        line(&mut d, &mut world, id, "@play");
-        let out = line(&mut d, &mut world, id, "@poke");
-
-        let texts: Vec<String> = out
-            .iter()
-            .filter_map(|o| match o {
-                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(texts.iter().any(|t| t.contains("poked")), "got: {texts:?}");
-    }
-
     /// A bare command before `@play` reports having no character.
     #[test]
     fn bare_without_actor_reports_no_character() {
-        let mut d = dispatcher(test_game());
+        let mut d = Dispatch::new(test_game());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -365,41 +396,184 @@ mod tests {
         ));
     }
 
-    /// End to end through the router: @play then a bare command acts through the
-    /// injected game's table against the injected game's seeded world.
+    /// End to end through the router: `@play` then a bare command acts through the
+    /// injected game's table against its seeded world.
     #[test]
     fn play_then_bare_command_acts_through_the_game() {
         let game = test_game();
         let mut world = World::new();
         (game.seed)(&mut world);
-        let mut d = dispatcher(game);
+        let mut d = Dispatch::new(game);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
         line(&mut d, &mut world, id, "@play");
         let out = line(&mut d, &mut world, id, "look");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("a test chamber"))
+        );
+    }
 
-        let rendered: Vec<String> = out
-            .iter()
-            .filter_map(|o| match o {
-                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(rendered.iter().any(|t| t.contains("a test chamber")));
+    /// A superuser session passes a capability-gated admin verb by su bypass.
+    #[test]
+    fn su_session_passes_a_gated_verb() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        bind_su(&mut d, id);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&out).iter().any(|t| t.contains("poked")),
+            "got: {out:?}"
+        );
+    }
+
+    /// A plain account holding the cap passes it, without su.
+    #[test]
+    fn capped_session_passes_its_granted_verb() {
+        let game = test_game();
+        let poke = game.caps.resolve("poke").unwrap();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        bind_capped(&mut d, id, poke);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&out).iter().any(|t| t.contains("poked")),
+            "got: {out:?}"
+        );
+    }
+
+    /// A guest (a connection bound to no account) is refused a gated verb.
+    #[test]
+    fn guest_is_refused_a_gated_verb() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "a guest should be refused, got: {out:?}"
+        );
+    }
+
+    /// `@quell` drops a superuser session to its character: the gated verb is then
+    /// refused, and un-quelling restores it.
+    #[test]
+    fn quell_drops_su_to_the_character() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        bind_su(&mut d, id);
+        line(&mut d, &mut world, id, "@play");
+
+        line(&mut d, &mut world, id, "@quell");
+        let refused = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&refused)
+                .iter()
+                .any(|t| t.contains("aren't allowed")),
+            "quelled su holds nothing, got: {refused:?}"
+        );
+
+        line(&mut d, &mut world, id, "@quell");
+        let allowed = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&allowed).iter().any(|t| t.contains("poked")),
+            "un-quelled, su is back, got: {allowed:?}"
+        );
+    }
+
+    /// `@login` (from loopback) raises an authenticate op and marks the connection
+    /// pending; a line arriving before the result lands is rejected, not run.
+    #[test]
+    fn login_marks_pending_and_rejects_in_flight_lines() {
+        let mut d = Dispatch::new(test_game());
+        let mut world = World::new();
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        let raised = ops(&mut d, &mut world, id, "@login builder");
+        assert!(
+            matches!(
+                raised.as_slice(),
+                [HostOp::Account(AccountOp::Authenticate { .. })]
+            ),
+            "@login raises exactly one authenticate op"
+        );
+
+        let out = line(&mut d, &mut world, id, "look");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("Still authenticating")),
+            "a line mid-auth is rejected, got: {out:?}"
+        );
+    }
+
+    /// Applying an `Authenticated` outcome binds the connection and feeds its line
+    /// back; the bound authority then passes a gated verb.
+    #[test]
+    fn apply_outcome_binds_the_connection() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        let mut out = Vec::new();
+        d.apply_account_outcome(
+            AccountOutcome {
+                conn: id,
+                line: "You are now logged in as operator.".into(),
+                authenticated: Some(Authorization {
+                    account: AccountId::generate(),
+                    caps: CapSet::new(),
+                    su: true,
+                }),
+                refreshed: None,
+            },
+            &mut |o| out.push(o),
+        );
+        assert!(conn_texts(&out).iter().any(|t| t.contains("logged in")));
+
+        line(&mut d, &mut world, id, "@play");
+        let poke = line(&mut d, &mut world, id, "@poke");
+        assert!(
+            conn_texts(&poke).iter().any(|t| t.contains("poked")),
+            "bound su passes"
+        );
     }
 
     /// `Game.systems` is a `Vec`, so the pipeline runs every registered system in
-    /// one tick. Two distinct systems each leave a different mark on the world;
-    /// both marks present proves both ran (not one twice).
+    /// one tick. Two distinct systems each leave a mark; both present proves both ran.
     #[test]
     fn run_systems_runs_every_registered_system() {
         use musce_action::SystemCtx;
         use std::time::SystemTime;
 
-        // Two distinct local marks: each system leaves its own, so both present
-        // proves both systems ran (not one twice). Plain markers, since the engine
-        // has no kinds of its own to borrow.
         struct MarkA;
         struct MarkB;
 
@@ -422,9 +596,10 @@ mod tests {
             systems: vec![add_a, add_b],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),
+            login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
         };
-        let dispatch = dispatcher(game);
+        let dispatch = Dispatch::new(game);
         let mut world = World::new();
         let ctx = TickCtx {
             tick: 1,
@@ -435,178 +610,5 @@ mod tests {
 
         assert_eq!(world.ecs().query::<&MarkA>().iter().count(), 1);
         assert_eq!(world.ecs().query::<&MarkB>().iter().count(), 1);
-    }
-
-    /// The connection-addressed feedback texts in an output batch.
-    fn conn_texts(out: &[Outgoing]) -> Vec<String> {
-        out.iter()
-            .filter_map(|o| match o {
-                Outgoing::Event(Delivery { text, .. }) => Some(text.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// A guest (a connection that never elevated) is refused a capability-gated verb:
-    /// no account means no caps and no su.
-    #[test]
-    fn guest_is_refused_a_capability_gated_verb() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-        let id = ConnectionId(1);
-        connect(&mut d, &mut world, id);
-
-        line(&mut d, &mut world, id, "@play");
-        let out = line(&mut d, &mut world, id, "@poke");
-        assert!(
-            conn_texts(&out)
-                .iter()
-                .any(|t| t.contains("aren't allowed")),
-            "a guest should be refused the gated verb, got: {out:?}"
-        );
-    }
-
-    /// `@quell` drops the operator to its own (empty) caps: su suppressed, the gated
-    /// verb is refused; un-quelling restores su and it passes again.
-    #[test]
-    fn quell_drops_the_operator_to_guest_authority() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-        let id = ConnectionId(1);
-        connect(&mut d, &mut world, id);
-        line(&mut d, &mut world, id, "@operator");
-        line(&mut d, &mut world, id, "@play");
-
-        line(&mut d, &mut world, id, "@quell");
-        let refused = line(&mut d, &mut world, id, "@poke");
-        assert!(
-            conn_texts(&refused)
-                .iter()
-                .any(|t| t.contains("aren't allowed")),
-            "a quelled operator holds no poke cap, got: {refused:?}"
-        );
-
-        line(&mut d, &mut world, id, "@quell");
-        let allowed = line(&mut d, &mut world, id, "@poke");
-        assert!(
-            conn_texts(&allowed).iter().any(|t| t.contains("poked")),
-            "un-quelled, su is restored, got: {allowed:?}"
-        );
-    }
-
-    /// The loopback-only stub refuses a peerless (in-process) connection: a `None`
-    /// peer must read as not-loopback, never default-permit, and the connection stays
-    /// unable to run the gated verb.
-    #[test]
-    fn operator_refused_from_a_non_loopback_peer() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-        let id = ConnectionId(1);
-        connect_from(&mut d, &mut world, id, None);
-
-        let out = line(&mut d, &mut world, id, "@operator");
-        assert!(
-            conn_texts(&out)
-                .iter()
-                .any(|t| t.contains("only available locally")),
-            "a peerless connection must be refused elevation, got: {out:?}"
-        );
-
-        line(&mut d, &mut world, id, "@play");
-        let poke = line(&mut d, &mut world, id, "@poke");
-        assert!(
-            conn_texts(&poke)
-                .iter()
-                .any(|t| t.contains("aren't allowed")),
-            "still a guest, so still refused, got: {poke:?}"
-        );
-    }
-
-    /// Authority is per-account, not per-body. Two connections drive the *same*
-    /// seeded avatar; only the one elevated to the operator account passes the gated
-    /// verb, so no shared body can lend its authority to the other.
-    #[test]
-    fn authority_follows_the_account_not_the_body() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-        let op = ConnectionId(1);
-        let guest = ConnectionId(2);
-        connect(&mut d, &mut world, op);
-        connect(&mut d, &mut world, guest);
-
-        line(&mut d, &mut world, op, "@operator");
-        line(&mut d, &mut world, op, "@play");
-        line(&mut d, &mut world, guest, "@play");
-
-        let op_out = line(&mut d, &mut world, op, "@poke");
-        let guest_out = line(&mut d, &mut world, guest, "@poke");
-        assert!(
-            conn_texts(&op_out).iter().any(|t| t.contains("poked")),
-            "the operator passes, got: {op_out:?}"
-        );
-        assert!(
-            conn_texts(&guest_out)
-                .iter()
-                .any(|t| t.contains("aren't allowed")),
-            "the guest is refused driving the same body, got: {guest_out:?}"
-        );
-    }
-
-    /// The composable model end to end through the router: the operator creates a
-    /// builder account and grants it the (quellable) poke cap; a second connection
-    /// logs in as the builder, passes the gated verb, and loses it under `@quell`.
-    /// The whole point of the account surface: a non-su account holding a real cap,
-    /// reachable by login, with quell dropping the elevated grant.
-    #[test]
-    fn a_granted_builder_runs_a_gated_verb_and_quell_drops_it() {
-        let game = test_game();
-        let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = dispatcher(game);
-
-        // The operator mints a builder account and grants it poke.
-        let op = ConnectionId(1);
-        connect(&mut d, &mut world, op);
-        line(&mut d, &mut world, op, "@operator");
-        line(&mut d, &mut world, op, "@account new builder");
-        line(&mut d, &mut world, op, "@grant builder poke");
-
-        // A second connection logs in as the builder and takes the seeded body.
-        let builder = ConnectionId(2);
-        connect(&mut d, &mut world, builder);
-        line(&mut d, &mut world, builder, "@login builder");
-        line(&mut d, &mut world, builder, "@play");
-
-        let ok = line(&mut d, &mut world, builder, "@poke");
-        assert!(
-            conn_texts(&ok).iter().any(|t| t.contains("poked")),
-            "the granted builder passes the gated verb, got: {ok:?}"
-        );
-
-        // Quell sets aside the quellable poke cap: refused.
-        line(&mut d, &mut world, builder, "@quell");
-        let refused = line(&mut d, &mut world, builder, "@poke");
-        assert!(
-            conn_texts(&refused)
-                .iter()
-                .any(|t| t.contains("aren't allowed")),
-            "a quelled builder loses its elevated cap, got: {refused:?}"
-        );
-
-        // Un-quell restores it.
-        line(&mut d, &mut world, builder, "@quell");
-        let restored = line(&mut d, &mut world, builder, "@poke");
-        assert!(
-            conn_texts(&restored).iter().any(|t| t.contains("poked")),
-            "un-quelled, the cap is back, got: {restored:?}"
-        );
     }
 }

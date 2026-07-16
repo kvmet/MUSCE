@@ -1,12 +1,14 @@
 use std::str::FromStr;
 
+use musce_auth::Account;
 use musce_core::Snapshot;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::{QueryBuilder, Row};
 
 use crate::{
-    Error, KvStore, Loaded, NEXT_ID_KEY, Persistence, Result, SCHEMA_VERSION, SCHEMA_VERSION_KEY,
-    assemble, kv_table_ddl, world_tables_ddl,
+    AccountStore, Error, KvStore, Loaded, NEXT_ID_KEY, Persistence, Result, SCHEMA_VERSION,
+    SCHEMA_VERSION_KEY, accounts_table_ddl, assemble, assemble_account, kv_table_ddl,
+    world_tables_ddl,
 };
 
 /// The most bound parameters allowed in one statement. SQLite's default
@@ -223,4 +225,70 @@ impl KvStore for SqliteStore {
         .await?;
         Ok(())
     }
+}
+
+impl AccountStore for SqliteStore {
+    async fn accounts_init(&self) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(accounts_table_ddl("INTEGER")))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn account_by_username(&self, username: &str) -> Result<Option<Account>> {
+        let row = sqlx::query(
+            "SELECT id, username, credential, caps, su, status, app_data
+             FROM accounts WHERE username = ?",
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(account_from_row).transpose()
+    }
+
+    async fn account_upsert(&self, account: &Account) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO accounts (id, username, credential, caps, su, status, app_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 username   = excluded.username,
+                 credential = excluded.credential,
+                 caps       = excluded.caps,
+                 su         = excluded.su,
+                 status     = excluded.status,
+                 app_data   = excluded.app_data",
+        )
+        .bind(account.id().to_string())
+        .bind(account.username())
+        .bind(account.credential())
+        .bind(serde_json::to_string(account.caps())?)
+        .bind(account.is_su())
+        .bind(account.status().as_str())
+        .bind(serde_json::to_string(account.app_data())?)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn any_superuser(&self) -> Result<bool> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE su = ?)")
+            .bind(true)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(exists)
+    }
+}
+
+/// Reassemble one `SELECT`ed row into an [`Account`] through the shared, backend-free
+/// [`assemble_account`], so both stores enforce the same parse checks.
+fn account_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Account> {
+    assemble_account(
+        row.get("id"),
+        row.get("username"),
+        row.get("credential"),
+        row.get("caps"),
+        row.get("su"),
+        row.get("status"),
+        row.get("app_data"),
+    )
 }

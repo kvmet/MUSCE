@@ -30,12 +30,17 @@ Touch the doc when you touch the code:
 | the structural-fact/reaction channel (`Destroyed`/`Moved`/`LocusChanged`) | `facts.md` |
 | command dispatch, command tables, the `Event` output channel | `command-dispatch.md` |
 | admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
+| accounts, authentication, capabilities, the verdict/gate (`musce_auth`, `AccountStore`, `CapRegistry`) | `authorization.md` |
 | sequences, effects, timers | `sequences.md` |
 | secondary indexes (`musce_index`), the `World` resource store, coordinates | `indexes.md` |
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
 | the engine/game boundary, the injected `Game` | `engine-and-game.md` |
 | zones, locator, entity handoff | `sharding.md` |
 | criterion benches (`*/benches/`) | `benchmarks.md` |
+
+## Comment style
+
+Do not make references to removed code.
 
 ## Status markers
 

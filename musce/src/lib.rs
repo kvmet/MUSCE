@@ -38,7 +38,7 @@ pub mod action {
     pub use musce_action::{Action, ExecError, execute};
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
     pub use musce_action::{Caller, CommandTable, Gate, Handler, dispatch_command};
-    pub use musce_action::{CapId, CapSet, Verdict};
+    pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
 }
 
@@ -55,8 +55,13 @@ pub mod wire {
     pub use musce_proto::{ConnectionId, EventKind};
 }
 
-/// Accounts and capabilities, re-exported wholesale from the auth layer.
-pub use musce_host::auth;
+/// The authentication surface an app supplies to the runtime: the login veto and
+/// the restricted account view it inspects. Capabilities live under `action` (an
+/// authorization concern), and account identity/hashing under `musce_auth`, exposed
+/// here once an app needs to build real credentials.
+pub mod auth {
+    pub use musce_host::{AccountView, LoginVeto};
+}
 
 /// Generic secondary indexes over a component, behind the `musce_index` feature. A
 /// game enables `features = ["musce_index"]` and reaches the index machinery here;
