@@ -119,17 +119,18 @@ fn cycle_delay(steps: &[Step]) -> u64 {
 }
 
 /// Append `inst` to the carrier's `Sequences`, starting the component if absent.
-/// Direct component access, not `execute(SetComponent)`: cursor bookkeeping is
-/// system-internal state, kept out of the action funnel (and out of a future
-/// action journal), the same way the sweep advances it.
+/// Direct component access through `modify`/`insert`, not `execute(SetComponent)`:
+/// cursor bookkeeping is system-internal state, kept out of the action funnel (and
+/// out of a future action journal), the same way the sweep advances it. Both paths
+/// mark the carrier dirty, so the append persists; a raw `ecs().get::<&mut
+/// Sequences>()` write would skip dirty-tracking and be dropped from the next delta
+/// snapshot.
 fn push_instance(world: &mut World, carrier: EntityId, inst: Instance) {
-    let Some(e) = world.index().get(carrier) else {
+    if world.index().get(carrier).is_none() {
         return;
-    };
+    }
     if world.has::<Sequences>(carrier) {
-        if let Ok(mut seqs) = world.ecs().get::<&mut Sequences>(e) {
-            seqs.0.push(inst);
-        }
+        world.modify::<Sequences>(carrier, |seqs| seqs.0.push(inst));
     } else {
         world.insert(carrier, Sequences(vec![inst]));
     }
@@ -418,6 +419,28 @@ mod tests {
         assert!(attach(&mut f.world, f.carrier, prog, true).is_err());
         // The same program as a one-shot is fine.
         assert!(attach(&mut f.world, f.carrier, prog, false).is_ok());
+    }
+
+    #[test]
+    fn appending_to_an_existing_sequence_dirties_the_carrier() {
+        let mut f = fixture();
+        let prog = patrol_program(&mut f.world);
+        // First attach: the carrier now has a `Sequences` component.
+        attach(&mut f.world, f.carrier, prog, true).unwrap();
+
+        // Simulate a prior save so the next delta reflects only the second attach.
+        let _ = f.world.snapshot();
+        assert!(f.world.snapshot().entities.is_empty());
+
+        // Second attach hits `push_instance`'s already-has-`Sequences` branch (the
+        // append), which must dirty the carrier or the added instance is dropped
+        // from the next delta and lost across a restart.
+        attach(&mut f.world, f.carrier, prog, true).unwrap();
+        let delta = f.world.snapshot();
+        assert!(
+            delta.entities.iter().any(|e| e.id == f.carrier),
+            "appending to an existing Sequences must dirty the carrier so it persists"
+        );
     }
 
     #[test]

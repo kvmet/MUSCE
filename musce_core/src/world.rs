@@ -38,6 +38,18 @@ pub struct World {
     /// copies (does not drain) this; it clears only once persistence acks via
     /// `confirm_saved`, so a failed save can't lose a pending delete.
     despawned: Vec<EntityId>,
+    /// Live EntityIds whose persisted state changed since the last snapshot: the
+    /// dirty set a delta snapshot serializes instead of walking the whole world.
+    /// Marked at every mutator chokepoint that touches a persisted component or
+    /// forward relation link; a snapshot *drains* it (unlike `despawned`, which is
+    /// copied), because a live entity re-mutated after the snapshot must re-enter
+    /// the set for the next one, and a failed save restores the drained ids via
+    /// `remark_dirty`. Raw `ecs().get::<&mut _>()` mutation bypasses this, the same
+    /// boundary `ComponentChanged` and `forbid_tracking` already draw: a persisted
+    /// component mutated below the mutator layer is the caller's to route through
+    /// `modify`. `load` does not mark (a loaded world already matches the store);
+    /// only a schema migration re-dirties it, via `mark_all_dirty`.
+    dirty: HashSet<EntityId>,
     /// Structural facts emitted since the last drain: a transient per-tick buffer
     /// the runtime drains via `take_facts` before running systems. Not persisted
     /// (a snapshot serializes only registered components); mirrors `despawned`.
@@ -76,6 +88,7 @@ impl World {
             relations: RelationRegistry::default(),
             components: ComponentRegistry::default(),
             despawned: Vec::new(),
+            dirty: HashSet::new(),
             facts: Vec::new(),
             tracked: HashSet::new(),
             forbid_track: HashSet::new(),
@@ -206,6 +219,7 @@ impl World {
         builder.add(Id(id));
         let e = self.ecs.spawn(builder.build());
         self.index.insert(id, e);
+        self.mark_dirty(id);
         id
     }
 
@@ -250,11 +264,23 @@ impl World {
         if let Some(e) = self.index.remove(id) {
             let _ = self.ecs.despawn(e);
         }
+        // Terminal: the id is dead and carried by `despawned`, so it must not also
+        // linger in the live dirty set (a snapshot would skip it anyway, but a
+        // failed-save `remark_dirty` should never resurrect a dead id).
+        self.dirty.remove(&id);
         self.despawned.push(id);
     }
 
     fn emit_fact(&mut self, fact: Fact) {
         self.facts.push(fact);
+    }
+
+    /// Flag an entity's persisted state as changed since the last snapshot. Called
+    /// from every mutator path that writes a persisted component or forward relation
+    /// link; a delta snapshot serializes exactly this set. Idempotent (a set), so
+    /// marking the same entity twice in a tick costs nothing.
+    fn mark_dirty(&mut self, id: EntityId) {
+        self.dirty.insert(id);
     }
 
     /// Emit `ComponentChanged` for a tag-driven mutation (set/remove/create), gated
@@ -359,6 +385,7 @@ impl World {
         self.guard_tag(tag)?;
         self.components
             .insert_component(&mut self.ecs, e, tag, value)?;
+        self.mark_dirty(id);
         self.note_component_change(id, tag);
         Ok(())
     }
@@ -369,6 +396,7 @@ impl World {
         let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
         self.guard_tag(tag)?;
         self.components.remove_component(&mut self.ecs, e, tag)?;
+        self.mark_dirty(id);
         self.note_component_change(id, tag);
         Ok(())
     }
@@ -384,6 +412,7 @@ impl World {
     pub fn insert<C: hecs::Component>(&mut self, id: EntityId, component: C) {
         if let Some(e) = self.index.get(id) {
             let _ = self.ecs.insert_one(e, component);
+            self.mark_dirty(id);
             self.note_component_change_typed::<C>(id);
         }
     }
@@ -394,6 +423,7 @@ impl World {
     pub fn remove<C: hecs::Component>(&mut self, id: EntityId) {
         if let Some(e) = self.index.get(id) {
             let _ = self.ecs.remove_one::<C>(e);
+            self.mark_dirty(id);
             self.note_component_change_typed::<C>(id);
         }
     }
@@ -414,6 +444,7 @@ impl World {
             };
             f(&mut *c);
         }
+        self.mark_dirty(id);
         self.note_component_change_typed::<C>(id);
         true
     }
@@ -471,6 +502,9 @@ impl World {
         let se = self.index.get(source).unwrap();
         let _ = self.ecs.insert_one(se, RelTarget::<R>::new(target));
         self.add_source::<R>(target, source);
+        // The forward link is a persisted component on the source; the reverse list
+        // on the target is derived (rebuilt on load), so only the source is dirtied.
+        self.mark_dirty(source);
         if R::EMITS_MOVEMENT {
             self.emit_movement(source, from, Some(target), from_locus);
         }
@@ -574,6 +608,11 @@ impl World {
         if let Some(se) = self.index.get(source) {
             let _ = self.ecs.remove_one::<RelTarget<R>>(se);
         }
+        // Only a link that was actually present changed the source's persisted
+        // forward link; clearing an absent link is a no-op and dirties nothing.
+        if from.is_some() {
+            self.mark_dirty(source);
+        }
         // A cleared containment link is a move to root (no container); nothing
         // moved if there was no link to begin with.
         if R::EMITS_MOVEMENT && from.is_some() {
@@ -657,6 +696,37 @@ impl World {
     /// `confirm_saved`.
     pub(crate) fn pending_deletes(&self) -> Vec<EntityId> {
         self.despawned.clone()
+    }
+
+    /// Take the dirty set for a snapshot, clearing it. Drained (not copied like
+    /// `pending_deletes`) because a live entity re-mutated after the snapshot must
+    /// re-enter the set for the *next* one; a failed save restores the drained ids
+    /// via `remark_dirty`. See the `dirty` field.
+    pub(crate) fn drain_dirty(&mut self) -> Vec<EntityId> {
+        std::mem::take(&mut self.dirty).into_iter().collect()
+    }
+
+    /// Return the drained ids of a failed save to the dirty set, so the next
+    /// snapshot re-serializes them at their then-current state. A no-op for ids
+    /// re-mutated (already re-dirtied) or despawned since the snapshot.
+    pub fn remark_dirty(&mut self, ids: &[EntityId]) {
+        for &id in ids {
+            // A despawned id must not be resurrected into the live set; it rides
+            // `despawned` instead and is retried as a delete.
+            if self.index.get(id).is_some() {
+                self.dirty.insert(id);
+            }
+        }
+    }
+
+    /// Mark every live entity dirty. The one place a load re-enters the dirty set:
+    /// after a schema migration, the in-memory world holds the migrated form but the
+    /// store still holds the old rows, so every entity must be re-serialized to
+    /// persist the migration. An ordinary load leaves the set empty (the store
+    /// already matches).
+    pub fn mark_all_dirty(&mut self) {
+        let ids: Vec<EntityId> = self.ecs.query::<&Id>().iter().map(|id| id.0).collect();
+        self.dirty.extend(ids);
     }
 
     /// The zone an entity belongs to, extracted into the snapshot row for future

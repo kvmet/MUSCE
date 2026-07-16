@@ -24,7 +24,8 @@ Touch the doc when you touch the code:
 | Area | Doc |
 |------|------|
 | world, identity, relations, containment | `ecs-and-relations.md` |
-| snapshot and `musce_persistence` | `persistence.md` |
+| world save/load, the delta snapshot, `musce_persistence` | `persistence.md` |
+| the cold content store (`KvStore`), the cold-op path | `cold-storage.md` |
 | sim thread, tick loop, scheduling | `concurrency.md` |
 | actions, the executor | `actions.md` |
 | the structural-fact/reaction channel (`Destroyed`/`Moved`/`LocusChanged`) | `facts.md` |

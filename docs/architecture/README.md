@@ -35,8 +35,11 @@ These hold across every subsystem:
 
 - [ecs-and-relations.md](ecs-and-relations.md): the ECS, identity, the generic
   relation layer, containment, and how queries work.
-- [persistence.md](persistence.md): World-as-truth, the snapshot model, the
+- [persistence.md](persistence.md): World-as-truth, the delta snapshot model, the
   blob schema, and the save/confirm contract.
+- [cold-storage.md](cold-storage.md): the cold content store (`KvStore`), its async
+  off-thread cold-op path, and why dedup and content-addressing are game concerns.
+  *(Built: `KvStore` and the wired book `read`/`inscribe` path.)*
 - [concurrency.md](concurrency.md): the threading model, the tick pipeline, and
   why there is no auto-scheduler. *(Built: the sim thread, the tick loop, and the
   system pipeline carrying `Game.systems`.)*
@@ -69,6 +72,11 @@ These hold across every subsystem:
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
   a seeded patroller and burning torch.)*
+- [agency/](agency/README.md): autonomous agent behavior on a shared affordance
+  layer: drives to goals, an arbiter, a GOAP planner over the world graph filtered
+  by what an agent knows (`Known` relation edges), and execution reusing the
+  sequence sweep. *(Proposed, exploratory; the affordance and precondition sets are
+  the first piece thought through.)*
 - [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
   overlay, the account floor, staff multi-puppet). *(Built: raw TCP, session
@@ -224,4 +232,6 @@ Deferred (with seams in place where noted):
 - Relationship traversal index (the generic secondary index and the spatial
   proximity index over room coordinates are **built**; see indexes.md).
 - Sense propagation (sound/smell/light) as timed exit-graph walks.
-- Command journal for sub-snapshot crash recovery; dirty-tracked snapshots.
+- Command journal for sub-snapshot crash recovery. (Dirty-tracked delta snapshots
+  are **built**: a save serializes only entities changed since the last one, with a
+  drain-and-restore confirm contract; see persistence.md.)

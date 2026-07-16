@@ -13,10 +13,22 @@ never waits on the DB) shapes everything here. See
 
 A `Snapshot` is a point-in-time save payload produced on the sim thread and handed
 to the persistence thread, which does the actual writes, so the sim never blocks on
-the database for the write. Building the snapshot is **not** free, though: it is a
-full serialize of every live entity on the sim thread, O(entities) of allocation
-and JSON work each save, which surfaces as a periodic tick-time spike that grows
-with the world. Dirty-tracked partial snapshots are the fix (see below).
+the database for the write. It is a **delta**: the `World` marks an entity dirty at
+every mutator chokepoint that writes a persisted component or forward relation link,
+and `snapshot()` serializes only that dirty set, so a save costs O(changed), not
+O(world), and carries no periodic tick-time spike. That is what makes a high save
+cadence affordable: the loss window shrinks toward the save interval without a
+whole-world write behind it. A freshly seeded world's first snapshot is still full
+(every spawn dirtied it); a loaded world starts clean (the store already matches),
+so nothing is rewritten until it mutates. The one exception is a schema migration:
+a differing stored version marks every loaded entity dirty (`mark_all_dirty`) so the
+migrated form is re-persisted.
+
+The dirty set rides the same coverage boundary as `ComponentChanged` and the index
+layer: a persisted component mutated below the mutator layer via `ecs().get::<&mut
+_>()` is *not* seen, and is the caller's to route through `World::modify` (the same
+discipline `forbid_tracking` enforces). Raw `&mut` that skips this desyncs a tracked
+index already, so the delta introduces no new hole.
 
 What is and isn't serialized:
 
@@ -26,8 +38,8 @@ What is and isn't serialized:
   a class of "the two sides disagree on disk" bugs.
 - **Not persisted:** `World` resources (`insert_resource`/`resource`/
   `take_resource`), type-keyed transient singletons for derived state such as a
-  secondary index (see indexes.md). `snapshot` enumerates the entity table only, so
-  a resource is never written; it is rebuilt on boot, the same as the reverse lists.
+  secondary index (see indexes.md). `snapshot` serializes entity rows only, so a
+  resource is never written; it is rebuilt on boot, the same as the reverse lists.
 
 Load is order-independent: forward links are `EntityId`s resolved through the
 index, so a target need not exist when its source is spawned. After all entities
@@ -62,107 +74,34 @@ serializes to `null`) is the text `"null"`, never a SQL `NULL`. The `entities` r
 carries entity-level columns (only `zone` today) and anchors existence for load; the
 component rows hang off it.
 
-The split costs more write volume than one blob per entity: a full save rewrites
-`~N x (1 + components)` rows instead of `~N`, all of them every save (snapshots are
-whole-world). Dirty-tracked partial saves (deferred; see the save contract) reclaim
-it, and become *more* precise here, rewriting only the changed component rows.
+The split costs more write volume than one blob per entity: a saved entity rewrites
+`1 + components` rows instead of `1`. A delta save bounds that to the dirty set (see
+the save contract), so only changed entities pay it, each with its whole component
+set replaced. Per-component-row precision (rewriting only the changed rows *within* a
+dirty entity, not its whole set) is a further optimization, deferred until it hurts.
 
 ## Hot and cold data
 
-> Status: the cold content store (`KvStore`) is built (`kv_init`/`kv_get`/`kv_put`)
-> and wired to verbs: the reference game's `read`/`inscribe` fetch and overwrite a
-> book's cold text through the async cold-op path (see below). Game-chosen shared keys
-> (deliberate dedup) work today; automatic content-addressed dedup is deliberately a
-> game/plugin concern, not an engine feature (see "Dedup is a game decision"). Cold
-> *entities* (paging) remain unbuilt.
-
-Everything registered is **hot**: resident in memory and written into the component
-rows every save. That is the only tier that reaches the world, and is right for the
-data an entity reasons about each tick. Some data is different: large, rarely read,
-and wasteful to keep resident (a book's full text, a mail archive, a long audit log).
-The home for it is **cold storage**, and the model already leaves room for it without
-a migration.
-
-- **Cold content, `KvStore`.** The entity stays resident (its name, location, and a
-  small hot component holding a **key**), but the heavy payload lives in a separate
-  content store, `kv (key TEXT PRIMARY KEY, value BLOB)`, fetched on demand (the
-  reference game's `read` verb pulls a book's text by key; `inscribe` overwrites it).
-  The store is a flat, game-owned keyspace, exactly like an object store (S3): the game
-  namespaces by key prefix (`book:<id>`, `notes:<id>`), and a **game-chosen shared key
-  is many-to-one dedup** (every copy of one book points at a single row; see "Dedup is
-  a game decision"). Values are
-  engine-opaque bytes the game encodes and decodes; the engine never interprets cold
-  data, which is why it can stay off-heap. `KvStore` is a **separate trait** from
-  `Persistence` (the whole-world save/load contract) precisely so cold storage can
-  later be backed differently (object storage) without disturbing world save. Core
-  needs no change: a cold payload is simply *not a registered hot component*, so it
-  never enters the component rows. The invariant to preserve: the `ComponentRegistry`
-  stays the single authority for what the component rows contain, so "cold" means
-  exactly "not registered hot," with no competing notion of what is persisted.
-- **The wired path: async, off the sim thread, decode injected by the game.** A verb
-  cannot touch the store (the sim holds none, and `kv_get`/`kv_put` are async), so it
-  records a cold request (`ColdOp`) exactly as it records perception output; the
-  runtime routes these to a cold task that owns the store, and the task's result rides
-  the normal event outbox **straight to the reader's connection** (no round-trip back
-  through the sim, since a read mutates nothing). Decoding a fetched value into
-  deliverable text is **game knowledge** (the game encoded it), so it is an injected
-  `Game.decode_cold` the task calls; the engine still interprets nothing. A read of an
-  absent key delivers a blank-page line, not an error. The task applies same-key ops in
-  issue order (read-your-writes, no lost writes), free today from the single consumer;
-  a future parallel cold path must preserve that *per-key* order (route by `hash(key)`).
-  This is the task's processing order, distinct from the cold-data-first write
-  sequencing below (which concerns only content-derived keys).
-- **No cascade, no cross-store transaction.** A deleted entity does **not** delete
-  `kv` rows: a row may be shared, so its lifetime is not entity-scoped. Orphans (a `kv`
-  row no entity references) are an accepted storage cost; a GC pass (mark-sweep over
-  referenced keys, or a refcount) is a future addition. The reference game's book path
-  keys cold rows to the entity id (`book:<id>`), so the key is fixed at spawn and the
-  referencing component is written *before* any bytes exist: reading an unwritten key
-  reads as blank, not as a dangling reference, so write ordering is moot for it (a
-  failed `kv_put` just leaves the page blank until the next `inscribe`). The stricter
-  **cold-data-first** ordering matters only when a key is *derived from its bytes* (a
-  content hash), where the key changes on every edit. That is deliberately not an
-  engine feature (see the next bullet).
-- **Dedup is a game decision, and that is where the seam ends.** There are two ways to
-  make copies share a `kv` row, and the engine owns neither, on purpose:
-  - **A game-chosen shared key**, used *deliberately*: a game points many entities at
-    one key (`book:<title-version>`) because it means them to be the same, and treats
-    that row as **immutable by convention** (you author a canonical book, you do not
-    `inscribe` it). This needs nothing beyond the primitive: arbitrary string keys
-    already allow it. It is the reference path with a hand-picked key in place of the
-    entity id, and it works today.
-  - **A content-addressed key** (`book:<hash(bytes)>`) makes dedup *automatic* but only
-    stays coherent while the content is immutable: editing one copy changes its hash,
-    so the key must be reallocated and the referencing hot component rewritten
-    (copy-on-write), and orphaned hashes then need GC. That is the mutable-and-shared
-    corner, the most complex place to add automatic collapse and the least often
-    wanted (immutable shared content is already served by the shared-key case above,
-    with no hashing). So the engine stays out of it: a consumer that wants content
-    addressing builds a hash-id scheme *on top of* `KvStore` (a game module today, a
-    plugin crate later); the engine provides the opaque byte store and the async
-    read/write path, and nothing about identity or dedup.
-
-  Not an offline cleanup job, either: the key lives in a **hot** component, so
-  collapsing rows after the fact means rewriting live entities' keys, i.e. mutating
-  world-truth out of band, which fights "the world is authoritative, the DB is
-  derived." Sharing is decided at authoring time or not at all.
-- **Transparency is deferred.** We may later want cold access to feel like an
-  ordinary component (auto-materialized on read, written back on change), or a way
-  to pre-flag a component type as cold. That is a larger abstraction touching the
-  registry and the access path; we are **not** building it yet, and specifically
-  not engine-side. The book case is served by an explicit fetch by key.
-- **Cold entities (paging) is a different feature.** A vast library where most
-  entities are not resident until browsed is not field-laziness; it is paging, and
-  it lands on the `EntityIndex`, which today is binary (an id resolves to a live
-  handle or is absent) and would need a third "exists but not loaded" state. It
-  overlaps sharding's zone-scoped load (the same `zone` column selects a subset),
-  so whenever one is built the other should be looked at with it. Deferred until a
-  concrete need appears.
+Registered components are the **hot** tier: resident in memory and written into the
+per-component rows above when they change. Large, rarely-read payloads (a book's full
+text, a mail archive, a long audit log) are wasteful to keep resident, so they belong
+in **cold storage**: a separate `KvStore` keyspace of engine-opaque bytes, fetched on
+demand off the sim thread, that never enters the component rows. That store, its
+async cold-op path, and the dedup/ordering rules it deliberately leaves to the game
+are their own concern: see [cold-storage.md](cold-storage.md). "Cold" means exactly
+"not a registered hot component," so the `ComponentRegistry` stays the single
+authority for what the world's rows contain.
 
 ## The save / confirm contract
 
-Deletes are the fragile part of save. A despawned entity is already gone from the
-live world, so the pending-delete set is the *only* record of it. Therefore:
+A delta save carries two pending sets with **opposite** confirm rules, because a
+delete and a live change fail differently. A despawned entity is gone from the live
+world, so the pending-delete set is its only record; a dirtied live entity is still
+in the world, but the dirty set is the only record that it is *unsaved*. The
+asymmetry that follows is the crux of the contract:
+
+**Deletes are copied.** A despawned entity is already gone from the live world, so
+the pending-delete set is the *only* record of it. Therefore:
 
 - `snapshot()` **copies** the pending deletes; it does not clear them.
 - The persistence layer's `save()` runs in one transaction. Each upserted entity has
@@ -180,13 +119,29 @@ live world, so the pending-delete set is the *only* record of it. Therefore:
   `World::confirm_saved(&snapshot.deletes)`, which drops exactly those ids from
   the pending set. Deletes that accumulated since the snapshot are preserved.
 
-So a failed save loses nothing: the deletes ride along in the next snapshot. (A
-command journal for sub-snapshot crash recovery is deferred; this contract is the
-minimum that keeps deletes durable across a save failure.)
+**Dirty ids are drained, and restored on failure.** A full snapshot could copy the
+live set too and rely on idempotent re-writes, but a delta cannot: a live entity
+re-mutated *after* the snapshot must re-enter the set for the next one, so the
+snapshot **drains** the dirty set rather than copying it. That makes a save failure
+the fragile case, and it is handled explicitly:
 
-Upserts are idempotent (the whole live world is written each save), so a failed
-save simply re-writes everything next time. Dirty-tracked partial snapshots are
-deferred until full-snapshot size hurts.
+- `snapshot()` **drains** the dirty set into the delta.
+- On a **successful** save, nothing more is needed: the drained entities are durable
+  at their snapshot state, and anything mutated since has already re-dirtied for the
+  next delta.
+- On a **failed** save, the persistence layer hands the delta's entity ids back
+  (`Ack::Failed`), and the sim calls `World::remark_dirty(&ids)` to return them to
+  the dirty set, so the next snapshot re-serializes them at their then-current state.
+  A since-despawned id is dropped here (it rides `deletes` instead), never resurrected
+  into the live set.
+
+So a failed save loses nothing: deletes ride the next snapshot (copied), and the
+live delta is put back (re-dirtied). The two rules are mirror images because a
+delete is monotonic (an id, once dead, never re-dirties, so clear-on-confirm is
+safe) while a live change is not (the same id re-dirties with new state, so
+drain-and-restore is required). A command journal for sub-snapshot crash recovery
+stays deferred; this contract is the minimum that keeps both durable across a save
+failure.
 
 ## ID allocation
 

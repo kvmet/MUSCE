@@ -78,24 +78,17 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
 
     let dmg = u16::from(attacker_strength(ctx.world, ctx.actor).max(1));
 
-    // Spend the damage against the target's Health, in a tight scope so the mutable
-    // component borrow releases before the emits below reborrow the world. The
-    // target has `Health` (checked above) and is live (just resolved), so both
-    // lookups hold.
-    let killed = {
-        let e = ctx
-            .world
-            .index()
-            .get(target)
-            .expect("resolved target is live");
-        let mut hp = ctx
-            .world
-            .ecs()
-            .get::<&mut Health>(e)
-            .expect("a fightable target has Health");
+    // Spend the damage against the target's Health through the mutator, so the write
+    // is marked dirty and persists. A raw `ecs().get::<&mut Health>()` here would
+    // mutate below the mutator layer, skip dirty-tracking, and be silently dropped
+    // from the next delta snapshot (a non-lethal hit lost across a restart). The
+    // target has `Health` (checked above) and is live (just resolved).
+    let mut killed = false;
+    let hit = ctx.world.modify::<Health>(target, |hp| {
         hp.current = hp.current.saturating_sub(dmg);
-        hp.current == 0
-    };
+        killed = hp.current == 0;
+    });
+    debug_assert!(hit, "a fightable target has Health");
 
     let who = display_name(ctx.world, ctx.actor);
     let them = display_name(ctx.world, target);
@@ -169,6 +162,10 @@ mod tests {
     /// One room, a Strength-5 attacker, and a giant rat with 8 HP standing in it.
     fn fixture() -> Fixture {
         let mut world = World::new();
+        // Register the game's component types, as a real world does, so combat
+        // components (`Health`, `Special`) serialize and the persistence test can
+        // reload them.
+        crate::systems::register(&mut world);
 
         let room = spawn(&mut world, |b| {
             b.add(Locus);
@@ -250,6 +247,36 @@ mod tests {
             out.iter()
                 .any(|o| matches!(o.event.to, Audience::Locus(r) if r == f.room)
                     && o.event.text.contains("a fighter hits a giant rat"))
+        );
+    }
+
+    #[test]
+    fn a_non_lethal_hit_persists_across_a_reload() {
+        let mut f = fixture();
+        // Simulate a prior save: draining the snapshot clears the spawn-dirty set, so
+        // the next delta reflects only what the attack changes. Without this the rat
+        // would ride the delta from its spawn and the test could not see the bug.
+        let _ = f.world.snapshot();
+        assert!(
+            f.world.snapshot().entities.is_empty(),
+            "the world is clean after a save"
+        );
+
+        run(&mut f.world, f.actor, |c| attack(c, "rat")); // 8 -> 3, non-lethal
+        assert_eq!(hp(&f.world, f.rat), 3, "the hit landed in memory");
+
+        // The reduced HP must survive a reload: the attack has to mark the target
+        // dirty so it rides the next delta. A raw `ecs().get::<&mut Health>()` write
+        // would leave the delta empty and the rat would reload absent (this `hp`
+        // lookup would then panic), i.e. the damage silently lost across a restart.
+        let delta = f.world.snapshot();
+        let mut reloaded = World::new();
+        crate::systems::register(&mut reloaded);
+        reloaded.load(&delta.entities, delta.next_id).unwrap();
+        assert_eq!(
+            hp(&reloaded, f.rat),
+            3,
+            "the non-lethal hit persisted through the delta snapshot"
         );
     }
 

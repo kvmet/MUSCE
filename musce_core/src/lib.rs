@@ -317,6 +317,67 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_serializes_only_the_dirty_delta() {
+        let mut w = World::new();
+        let a = item(&mut w, "a");
+        let _b = item(&mut w, "b");
+
+        // Both freshly spawned, so the first snapshot is the whole set.
+        assert_eq!(w.snapshot().entities.len(), 2);
+
+        // The dirty set drained: an unchanged world snapshots to nothing.
+        assert!(
+            w.snapshot().entities.is_empty(),
+            "a delta snapshot writes only what changed since the last one"
+        );
+
+        // Mutating one re-includes exactly that one.
+        w.set_component(a, "description", serde_json::json!("changed"))
+            .unwrap();
+        let ids: Vec<_> = w.snapshot().entities.iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![a]);
+    }
+
+    #[test]
+    fn a_loaded_world_starts_clean_and_mark_all_dirty_reincludes_it() {
+        let mut w = World::new();
+        let _ = item(&mut w, "x");
+        let snap = w.snapshot();
+
+        let mut w2 = World::new();
+        w2.load(&snap.entities, snap.next_id).unwrap();
+        // A loaded world already matches the store, so it has no delta to write;
+        // else every boot would rewrite the whole world.
+        assert!(w2.snapshot().entities.is_empty());
+
+        // The migration path re-includes everything.
+        w2.mark_all_dirty();
+        assert_eq!(w2.snapshot().entities.len(), 1);
+    }
+
+    #[test]
+    fn remark_dirty_restores_a_failed_delta_but_never_a_dead_id() {
+        let mut w = World::new();
+        let a = item(&mut w, "a");
+        let snap = w.snapshot(); // drains {a}
+        assert!(w.snapshot().entities.is_empty());
+
+        // The save failed: the host hands the delta's ids back, and the next
+        // snapshot re-serializes them.
+        let ids: Vec<_> = snap.entities.iter().map(|e| e.id).collect();
+        w.remark_dirty(&ids);
+        let retry: Vec<_> = w.snapshot().entities.iter().map(|e| e.id).collect();
+        assert_eq!(retry, vec![a]);
+
+        // A stale delta naming a since-despawned id must not resurrect it into the
+        // live set; it rides `deletes` instead.
+        w.despawn(a);
+        let _ = w.snapshot();
+        w.remark_dirty(&[a]);
+        assert!(w.snapshot().entities.is_empty());
+    }
+
+    #[test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "disagrees with its Id component")]
     fn load_rejects_mismatched_id() {

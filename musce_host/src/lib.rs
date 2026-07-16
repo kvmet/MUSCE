@@ -128,11 +128,14 @@ pub struct TickCtx {
     pub now: SystemTime,
 }
 
-/// Result of a completed save, sent back to the sim thread so it can clear the
-/// pending-delete set only once the write is durable.
+/// Result of a completed save, sent back to the sim thread to reconcile the
+/// snapshot's pending sets once the write's fate is known. `Saved` carries the
+/// deletes to clear from the pending-delete set; `Failed` carries the snapshot's
+/// entity ids to restore to the dirty set (the delta was drained at snapshot time,
+/// so a failed save must re-dirty them or the changes are lost).
 enum Ack {
     Saved(Vec<EntityId>),
-    Failed,
+    Failed(Vec<EntityId>),
 }
 
 /// Boot, run the tick loop until `shutdown` is set, then save and stop. The
@@ -256,8 +259,11 @@ async fn persistence_task(
                 let _ = ack_tx.send(Ack::Saved(snap.deletes));
             }
             Err(e) => {
-                tracing::error!(error = %e, "snapshot save failed; deletes retained");
-                let _ = ack_tx.send(Ack::Failed);
+                // Hand the delta's entity ids back so the sim re-dirties them;
+                // deletes are retained automatically (copied, not drained).
+                tracing::error!(error = %e, "snapshot save failed; delta retained for retry");
+                let dirty = snap.entities.iter().map(|b| b.id).collect();
+                let _ = ack_tx.send(Ack::Failed(dirty));
             }
         }
     }
@@ -358,6 +364,15 @@ fn sim_loop(
         let _ = done_tx.send(Err(msg));
         return;
     }
+    // A load leaves the world clean (the store already matches it), so a delta
+    // snapshot writes nothing until something mutates. The exception is a migration:
+    // if the stored schema differed, the in-memory world holds the migrated form but
+    // the store still holds the old rows, so mark every entity dirty to re-persist
+    // the migration on the next save.
+    if loaded.schema_version != SCHEMA_VERSION {
+        world.mark_all_dirty();
+    }
+
     // First boot against an empty database: lay down the game's starter world so
     // there is ground truth to play. A loaded world is left untouched.
     if entities.is_empty() {
@@ -474,7 +489,10 @@ fn apply_ack(world: &mut World, ack: Ack, pending: &mut u32) {
     *pending = pending.saturating_sub(1);
     match ack {
         Ack::Saved(deletes) => world.confirm_saved(&deletes),
-        Ack::Failed => tracing::warn!("save failed; deletes retained for retry"),
+        Ack::Failed(dirty) => {
+            tracing::warn!("save failed; re-dirtying the delta and retaining deletes for retry");
+            world.remark_dirty(&dirty);
+        }
     }
 }
 
@@ -515,6 +533,33 @@ mod tests {
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
         }
+    }
+
+    /// The delta is drained at snapshot time, so a failed save must re-dirty it or
+    /// the change is lost. `apply_ack(Ack::Failed(..))` restores it: the next
+    /// snapshot re-serializes the entity. The falsifying test for the confirm
+    /// contract's failure half.
+    #[test]
+    fn a_failed_ack_re_dirties_the_delta() {
+        let mut world = World::new();
+        let mut b = EntityBuilder::new();
+        b.add(Description("a thing".into()));
+        let id = world.spawn(b);
+
+        let snap = world.snapshot(); // drains {id}
+        assert!(world.snapshot().entities.is_empty(), "delta drained");
+
+        let dirty: Vec<_> = snap.entities.iter().map(|e| e.id).collect();
+        let mut pending = 1;
+        apply_ack(&mut world, Ack::Failed(dirty), &mut pending);
+        assert_eq!(pending, 0);
+
+        let retry: Vec<_> = world.snapshot().entities.iter().map(|e| e.id).collect();
+        assert_eq!(
+            retry,
+            vec![id],
+            "a failed delta re-enters the next snapshot"
+        );
     }
 
     #[tokio::test]

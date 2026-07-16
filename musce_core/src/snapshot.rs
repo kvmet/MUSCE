@@ -23,21 +23,28 @@ pub struct Snapshot {
 }
 
 impl World {
-    /// Serialize every live entity. Forward relation links are included; reverse
-    /// lists and the index are derived and omitted.
+    /// Serialize the entities changed since the last snapshot (the drained dirty
+    /// set), not the whole world: a delta save costs O(changed), not O(world), so it
+    /// carries no periodic tick-time spike and can run at a high cadence. Forward
+    /// relation links are included; reverse lists and the index are derived and
+    /// omitted. A dirtied id since despawned is skipped here and carried by
+    /// `deletes` instead.
     ///
-    /// TODO(perf): this is a full serialize of the whole world, run synchronously
-    /// on the sim thread, so it costs O(entities) of allocation and JSON work per
-    /// save and surfaces as a periodic tick-time spike that grows with world size.
-    /// Dirty-tracked / incremental snapshots are the fix (deferred; see the README
-    /// roadmap and persistence.md). Fine at the current scale.
+    /// The dirty set is *drained*: a save writes this delta, and anything re-mutated
+    /// after the snapshot re-enters the set for the next one. The confirm contract
+    /// is therefore asymmetric with deletes: a failed save must restore the drained
+    /// ids (`remark_dirty`), whereas deletes are copied and cleared on ack
+    /// (`confirm_saved`). The very first snapshot of a freshly seeded world is a full
+    /// save (every spawn dirtied it); a loaded world starts clean (the store already
+    /// matches).
     pub fn snapshot(&mut self) -> Snapshot {
-        let entities_h: Vec<hecs::Entity> = self.ecs.query::<hecs::Entity>().iter().collect();
+        let ids = self.drain_dirty();
 
-        let mut entities = Vec::with_capacity(entities_h.len());
-        for e in entities_h {
-            let er = self.ecs.entity(e).expect("entity from query still exists");
-            let id = er.get::<&Id>().expect("every entity has Id").0;
+        let mut entities = Vec::with_capacity(ids.len());
+        for id in ids {
+            // A dirtied entity may have been despawned before this snapshot; it is
+            // covered by `deletes`, so it is skipped rather than serialized dead.
+            let Some(er) = self.entity(id) else { continue };
             let data = self.components().serialize_entity(er);
             entities.push(EntityBlob {
                 id,
