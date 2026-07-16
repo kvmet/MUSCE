@@ -239,10 +239,7 @@ mod tests {
         .unwrap();
 
         assert!(w.has::<Locus>(id));
-        assert_eq!(
-            w.entity(id).unwrap().get::<&Description>().unwrap().0,
-            "a torch"
-        );
+        assert_eq!(w.get::<Description>(id).unwrap().0, "a torch");
     }
 
     #[test]
@@ -257,7 +254,7 @@ mod tests {
         let subject = execute(&mut w, Action::Destroy { entity: bag }).unwrap();
 
         assert_eq!(subject, bag);
-        assert!(w.entity(bag).is_none());
+        assert!(!w.contains(bag));
         // The Reparent cascade spills the bag's contents up to the hall.
         assert_eq!(w.container_of(coin), Some(hall));
     }

@@ -244,15 +244,23 @@ Two kinds, and the split drives what machinery exists:
 - **Relational** ("which entity is related to this one?") hecs does not do. We
   answer it with the relation components as indexes plus the `EntityId` index.
 
-Queries reach the hecs world through the **read-only `World::ecs()`** accessor
-(archetypal `query` and component `get`, including `get::<&mut C>` via hecs's
-interior borrow). Structural mutation, in contrast, never touches the raw handle:
-spawn/despawn, relation links, and component set-membership go through `World`
-(`spawn`/`despawn`, `move_entity`/`relate`, the typed `insert`/`remove`) so the
-`EntityId` index, the despawn cascade, and the reverse lists cannot be bypassed. A
-raw `ecs.despawn` would skip the cascade and resurrect the entity on the next load;
-a raw `ecs.spawn` would make an `Id`-less entity invisible to every lookup. The
-field is not public precisely to make that boundary structural, not conventional.
+Reads go through `World`'s own addressed-by-id surface, never a raw hecs handle:
+`world.query::<Q>()` for archetypal iteration, `world.get::<C>(id)` for one
+component, `world.has::<C>(id)`, `world.contains(id)`. The raw `hecs::World` and
+`EntityRef` are **not reachable outside the crate**: there is no `ecs()` accessor,
+and `entity_ref` (the raw `EntityRef`) is `pub(crate)` for trusted internal use only
+(snapshot serialization). This is deliberate and load-bearing for correctness, not
+just tidiness. hecs does *runtime* borrow checking, so a shared `&hecs::World` can
+still hand out `&mut C` (interior borrow); exposing it would let any reader mutate a
+component below the mutator layer, silently skipping the `EntityId` index, the
+despawn cascade, the reverse lists, and the persistence dirty set. So `query` is
+bounded by [`ReadQuery`](../../musce_core/src/world.rs) (shared borrows only, never
+`&mut`), and `get` returns a shared `Ref`. The **only** way to change a persisted
+component is through `World`'s mutators (`set_component`/`insert`/`remove`/`modify`,
+`move_entity`/`relate`), which keep all of that consistent; a raw `ecs.despawn`
+would skip the cascade, a raw `ecs.spawn` would make an `Id`-less entity, and a raw
+`get::<&mut C>` would drop a change from the next delta snapshot. Making the raw
+handle unreachable turns that boundary from a convention into a compile error.
 
 The recursive contents walk (`descendants`) is a predicate-driven, visitor-based
 tree walk: the engine is the mechanism, the caller supplies the descent policy

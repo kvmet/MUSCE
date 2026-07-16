@@ -567,7 +567,7 @@ pub fn nearby(ctx: &mut Ctx, args: &str) {
 
 fn parse_ref(world: &World, token: &str) -> Option<EntityId> {
     let id = EntityId(token.strip_prefix('#')?.parse().ok()?);
-    world.entity(id).is_some().then_some(id)
+    world.contains(id).then_some(id)
 }
 
 fn bad_ref() -> &'static str {

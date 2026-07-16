@@ -81,9 +81,7 @@ pub(crate) fn maintain(ctx: &mut SystemCtx) {
 
 /// An entity's coordinates, if it has any.
 pub fn coords(world: &World, entity: EntityId) -> Option<Xyz> {
-    world
-        .entity(entity)
-        .and_then(|er| er.get::<&Xyz>().map(|c| *c))
+    world.get::<Xyz>(entity).map(|c| *c)
 }
 
 /// Rooms whose cell falls within `radius` of `center`, in arbitrary order. A pure

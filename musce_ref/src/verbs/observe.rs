@@ -123,10 +123,7 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
 }
 
 fn description(world: &World, entity: EntityId) -> Option<String> {
-    world
-        .entity(entity)?
-        .get::<&Description>()
-        .map(|d| d.0.clone())
+    world.get::<Description>(entity).map(|d| d.0.clone())
 }
 
 fn description_or(world: &World, entity: EntityId, fallback: &str) -> String {

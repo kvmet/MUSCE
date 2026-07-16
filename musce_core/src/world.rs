@@ -17,6 +17,28 @@ type RebuildHandler = fn(&mut World);
 type RelateFn = fn(&mut World, EntityId, EntityId) -> Result<(), RelationError>;
 type UnrelateFn = fn(&mut World, EntityId);
 
+/// The queries [`World::query`] accepts: read-only ones. Implemented for a shared
+/// component borrow `&T` and for tuples of read-only queries, and deliberately *not*
+/// for `&mut T`. This is the bound that lets `World` expose archetypal iteration
+/// without also handing out a write path that bypasses the mutator layer (and so the
+/// dirty set, the index, and the reverse lists). A game names the components in a
+/// query (`world.query::<(&Id, &Foo)>()`); it never names this trait.
+pub trait ReadQuery: hecs::Query {}
+
+impl<T: hecs::Component> ReadQuery for &T {}
+
+macro_rules! read_query_tuple {
+    ($($name:ident),+) => {
+        impl<$($name: ReadQuery),+> ReadQuery for ($($name,)+) {}
+    };
+}
+read_query_tuple!(A);
+read_query_tuple!(A, B);
+read_query_tuple!(A, B, C);
+read_query_tuple!(A, B, C, D);
+read_query_tuple!(A, B, C, D, E);
+read_query_tuple!(A, B, C, D, E, F);
+
 /// Type-erased per-relation cleanup hooks, populated by `register_relation`.
 #[derive(Default, Clone)]
 struct RelationRegistry {
@@ -44,10 +66,11 @@ pub struct World {
     /// forward relation link; a snapshot *drains* it (unlike `despawned`, which is
     /// copied), because a live entity re-mutated after the snapshot must re-enter
     /// the set for the next one, and a failed save restores the drained ids via
-    /// `remark_dirty`. Raw `ecs().get::<&mut _>()` mutation bypasses this, the same
-    /// boundary `ComponentChanged` and `forbid_tracking` already draw: a persisted
-    /// component mutated below the mutator layer is the caller's to route through
-    /// `modify`. `load` does not mark (a loaded world already matches the store);
+    /// `remark_dirty`. A raw in-crate `&mut` component write (via `entity_ref` or the
+    /// `ecs` field) bypasses this, the same boundary `ComponentChanged` and
+    /// `forbid_tracking` already draw; the public API has no such path, so outside the
+    /// core the only way to change a persisted component is through `modify` and the
+    /// other mutators. `load` does not mark (a loaded world already matches the store);
     /// only a schema migration re-dirties it, via `mark_all_dirty`.
     dirty: HashSet<EntityId>,
     /// Structural facts emitted since the last drain: a transient per-tick buffer
@@ -59,8 +82,8 @@ pub struct World {
     /// stream bounded to components someone actually maintains an index over.
     tracked: HashSet<&'static str>,
     /// Component types a game declared unsafe to track (via `forbid_tracking`)
-    /// because it mutates them in place through `ecs().get::<&mut _>()`, below the
-    /// mutator layer where no fact can fire. `track_component` refuses these, so a
+    /// because it mutates them in place through a raw `&mut` component borrow, below
+    /// the mutator layer where no fact can fire. `track_component` refuses these, so a
     /// tracked index can never silently desync; `modify` is the supported path.
     forbid_track: HashSet<TypeId>,
     /// Transient singleton state a game hangs off the world without persisting it:
@@ -134,9 +157,9 @@ impl World {
         self.tracked.insert(C::TAG);
     }
 
-    /// Declare a component unsafe to track: game code mutates it in place via
-    /// `ecs().get::<&mut _>()`, which cannot emit `ComponentChanged`, so a tracked
-    /// index over it would silently desync. A later `track_component` of the same
+    /// Declare a component unsafe to track: it is mutated in place below the mutator
+    /// layer (a raw in-crate `&mut` borrow), which cannot emit `ComponentChanged`, so
+    /// a tracked index over it would silently desync. A later `track_component` of the same
     /// type is then a hard error. Lift the restriction by routing those writes
     /// through `World::modify` and dropping this call.
     pub fn forbid_tracking<C: hecs::Component>(&mut self) {
@@ -251,10 +274,9 @@ impl World {
         // that carries only prose (a quick-create thing), mirroring how the game
         // displays it; `None` if it has neither.
         let last_locus = self.enclosing_locus(id);
-        let name = self.name_of(id).or_else(|| {
-            self.entity(id)
-                .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-        });
+        let name = self
+            .name_of(id)
+            .or_else(|| self.get::<Description>(id).map(|d| d.0.clone()));
         self.emit_fact(Fact::Destroyed {
             entity: id,
             last_locus,
@@ -315,32 +337,48 @@ impl World {
     /// An entity's name token, if it has one. Reads the general `Name` component;
     /// the despawn snapshot above is one user, game name resolution is another.
     pub fn name_of(&self, entity: EntityId) -> Option<String> {
-        self.entity(entity)?.get::<&Name>().map(|n| n.0.clone())
+        self.get::<Name>(entity).map(|n| n.0.clone())
+    }
+
+    /// Whether an entity is live in this world.
+    pub fn contains(&self, id: EntityId) -> bool {
+        self.index.get(id).is_some()
     }
 
     pub fn has<C: hecs::Component>(&self, id: EntityId) -> bool {
-        self.index
-            .get(id)
-            .and_then(|e| self.ecs.entity(e).ok())
-            .map(|er| er.has::<C>())
-            .unwrap_or(false)
+        self.entity_ref(id).map(|er| er.has::<C>()).unwrap_or(false)
     }
 
-    pub fn entity(&self, id: EntityId) -> Option<hecs::EntityRef<'_>> {
+    /// Read one component of a live entity by id, as a shared guard (deref to `&C`).
+    /// The addressed-by-id read: there is deliberately no by-value entity handle to
+    /// hold, and no `&mut` variant, so the only way to *change* a persisted component
+    /// is through the mutator methods (`set_component`/`insert`/`modify`/…), which
+    /// keep the dirty set, the index, and the reverse lists consistent. See the
+    /// note on `entity_ref`.
+    pub fn get<C: hecs::Component>(&self, id: EntityId) -> Option<hecs::Ref<'_, C>> {
+        self.ecs.get::<&C>(self.index.get(id)?).ok()
+    }
+
+    /// Run a read-only archetypal query. The [`ReadQuery`] bound admits only shared
+    /// borrows (`&T` and tuples of them), so a query cannot hand out `&mut C` and
+    /// bypass the mutator layer. Structural mutation (spawn/despawn, relation links,
+    /// component membership) and component writes go through `World`, so the identity
+    /// index, the despawn cascade, the reverse lists, and the persistence dirty set
+    /// stay consistent. Making the raw `hecs::World` unreachable is what enforces
+    /// that: a raw `ecs.despawn` would bypass the cascade, a raw `ecs.spawn` would
+    /// create an `Id`-less entity, and a raw `get::<&mut C>` would drop a persisted
+    /// change from the next delta snapshot.
+    pub fn query<Q: ReadQuery>(&self) -> hecs::QueryBorrow<'_, Q> {
+        self.ecs.query::<Q>()
+    }
+
+    /// The raw `hecs::EntityRef` for an entity, for **trusted in-crate** use only
+    /// (snapshot serialization, internal reads). It is `pub(crate)` precisely because
+    /// `EntityRef::get::<&mut C>` reaches below the mutator layer; keeping it off the
+    /// public surface is what makes the unmediated mutation the earlier methods forbid
+    /// literally unwritable outside the engine core.
+    pub(crate) fn entity_ref(&self, id: EntityId) -> Option<hecs::EntityRef<'_>> {
         self.ecs.entity(self.index.get(id)?).ok()
-    }
-
-    /// Read-only access to the underlying hecs world, for archetypal queries and
-    /// component reads (`query`, `get`, including `get::<&mut C>` via hecs's
-    /// interior borrow tracking). Structural mutation (spawn/despawn, relation
-    /// links, component set membership) goes through `World` so the identity index,
-    /// the cascade, and the reverse lists stay consistent, which is why this hands
-    /// out `&self` and the field itself is not public: a raw `ecs.despawn` would
-    /// bypass the cascade and resurrect the entity on the next load, and a raw
-    /// `ecs.spawn` would create an entity with no `Id`, invisible to every lookup
-    /// and a panic at the next snapshot.
-    pub fn ecs(&self) -> &hecs::World {
-        &self.ecs
     }
 
     // --- type-erased component mutation (the reflection layer) -----------
@@ -428,12 +466,14 @@ impl World {
         }
     }
 
-    /// Mutate a component in place and emit `ComponentChanged`. The supported
-    /// alternative to `ecs().get::<&mut C>()`, which mutates below the mutator layer
-    /// and cannot signal the change: a tracked index over such a raw write silently
-    /// desyncs (see `forbid_tracking`). Returns `false` (emitting nothing) if the
-    /// entity or the component is absent, so no trigger claims a change that did not
-    /// happen. Typed and JSON-free, for the hot path.
+    /// Mutate a component in place: mark the entity dirty and emit `ComponentChanged`.
+    /// The sanctioned in-place write, and the only one available outside the core
+    /// (there is no public `&mut` component borrow); a raw in-crate `&mut` write would
+    /// mutate below the mutator layer, drop the change from the next delta snapshot,
+    /// and silently desync a tracked index (see `forbid_tracking`). Returns `false`
+    /// (touching nothing) if the entity or the component is absent, so no trigger or
+    /// dirty mark claims a change that did not happen. Typed and JSON-free, for the
+    /// hot path.
     pub fn modify<C: hecs::Component>(&mut self, id: EntityId, f: impl FnOnce(&mut C)) -> bool {
         let Some(e) = self.index.get(id) else {
             return false;
@@ -452,7 +492,7 @@ impl World {
     /// Serialize just one named component back to JSON; `None` if absent. The read
     /// half of merge-patch; the engine implements neither the merge nor the verb.
     pub fn component_value(&self, id: EntityId, tag: &str) -> Option<Value> {
-        let er = self.entity(id)?;
+        let er = self.entity_ref(id)?;
         self.components.component_value(er, tag).ok().flatten()
     }
 

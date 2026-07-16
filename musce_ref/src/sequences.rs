@@ -143,7 +143,6 @@ fn push_instance(world: &mut World, carrier: EntityId, inst: Instance) {
 pub fn sequence_sweep(ctx: &mut SystemCtx) {
     let carriers: Vec<(EntityId, Sequences)> = ctx
         .world
-        .ecs()
         .query::<(&Id, &Sequences)>()
         .iter()
         .map(|(id, seqs)| (id.0, seqs.clone()))
@@ -287,9 +286,7 @@ fn write_back(world: &mut World, carrier: EntityId, retained: Vec<Instance>) {
 /// A program's steps, cloned out so the sweep can index them while it mutates the
 /// world. `None` if the program entity is gone or carries no `Steps`.
 fn program_steps(world: &World, program: EntityId) -> Option<Vec<Step>> {
-    world
-        .entity(program)
-        .and_then(|er| er.get::<&Steps>().map(|s| s.0.clone()))
+    world.get::<Steps>(program).map(|s| s.0.clone())
 }
 
 #[cfg(test)]
@@ -391,9 +388,8 @@ mod tests {
 
     fn instance(world: &World, carrier: EntityId) -> Option<Instance> {
         world
-            .entity(carrier)
-            .and_then(|er| er.get::<&Sequences>().map(|s| s.0.first().cloned()))
-            .flatten()
+            .get::<Sequences>(carrier)
+            .and_then(|s| s.0.first().cloned())
     }
 
     fn room_narration(out: &[Outbound]) -> Vec<String> {
@@ -517,7 +513,7 @@ mod tests {
 
         sweep(&mut f.world, STEP as u64);
 
-        assert!(f.world.entity(f.carrier).is_none()); // gone, no panic
+        assert!(!f.world.contains(f.carrier)); // gone, no panic
         // The despawn emitted a structural fact for a reaction (e.g. death_cry).
         assert!(!f.world.take_facts().is_empty());
     }
@@ -541,7 +537,7 @@ mod tests {
         attach(&mut f.world, torch, prog, false).unwrap();
 
         sweep(&mut f.world, STEP as u64);
-        assert!(f.world.entity(torch).is_none());
+        assert!(!f.world.contains(torch));
     }
 
     #[test]

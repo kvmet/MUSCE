@@ -137,10 +137,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
 /// The attacker's Strength, or 0 for a thing with no stat block (the caller floors
 /// damage at 1, so a statless attacker still lands a blow).
 fn attacker_strength(world: &World, actor: musce::world::EntityId) -> u8 {
-    world
-        .entity(actor)
-        .and_then(|er| er.get::<&Special>().map(|s| s.strength))
-        .unwrap_or(0)
+    world.get::<Special>(actor).map(|s| s.strength).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -211,8 +208,8 @@ mod tests {
 
     fn hp(world: &World, e: EntityId) -> u16 {
         world
-            .entity(e)
-            .and_then(|er| er.get::<&Health>().map(|h| h.current))
+            .get::<Health>(e)
+            .map(|h| h.current)
             .expect("has Health")
     }
 
@@ -230,7 +227,7 @@ mod tests {
 
         // Strength 5 off 8 HP leaves the rat alive at 3.
         assert_eq!(hp(&f.world, f.rat), 3);
-        assert!(f.world.entity(f.rat).is_some());
+        assert!(f.world.contains(f.rat));
 
         // Actor feedback, a line directed at the target, and a room line.
         assert!(
@@ -288,7 +285,7 @@ mod tests {
 
         // The rat is gone, and a Destroyed fact for it is on the channel for the
         // death_cry reaction to narrate.
-        assert!(f.world.entity(f.rat).is_none());
+        assert!(!f.world.contains(f.rat));
         let facts = f.world.take_facts();
         assert!(
             facts.iter().any(|fact| matches!(
@@ -316,7 +313,7 @@ mod tests {
                 .any(|t| t.contains("can't attack that"))
         );
         // Nothing was destroyed.
-        assert!(f.world.entity(key).is_some());
+        assert!(f.world.contains(key));
         assert!(f.world.take_facts().is_empty());
     }
 

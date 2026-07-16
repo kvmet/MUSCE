@@ -293,7 +293,7 @@ fn destroy_removes_the_entity_and_reparents_its_contents() {
 
     run(&mut w, builder, |c| destroy(c, &re(box_)));
 
-    assert!(w.entity(box_).is_none());
+    assert!(!w.contains(box_));
     assert_eq!(w.container_of(coin), Some(hall)); // spilled up to the hall
 }
 
@@ -306,7 +306,7 @@ fn destroy_refuses_yourself() {
             .iter()
             .any(|t| t.contains("destroy yourself"))
     );
-    assert!(w.entity(builder).is_some());
+    assert!(w.contains(builder));
 }
 
 #[test]
@@ -331,8 +331,8 @@ fn purge_removes_the_entity_and_its_contents() {
 
     run(&mut w, builder, |c| purge(c, &re(box_)));
 
-    assert!(w.entity(box_).is_none());
-    assert!(w.entity(coin).is_none()); // went with the box, not spilled
+    assert!(!w.contains(box_));
+    assert!(!w.contains(coin)); // went with the box, not spilled
 }
 
 #[test]
@@ -346,8 +346,8 @@ fn purge_refuses_a_container_you_are_inside() {
             .iter()
             .any(|t| t.contains("something you're inside"))
     );
-    assert!(w.entity(hall).is_some());
-    assert!(w.entity(builder).is_some());
+    assert!(w.contains(hall));
+    assert!(w.contains(builder));
 }
 
 #[test]

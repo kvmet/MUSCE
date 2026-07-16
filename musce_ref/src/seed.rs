@@ -198,7 +198,6 @@ pub fn choose_actor(world: &World) -> Option<EntityId> {
 /// account's chosen character.
 fn find_player(world: &World) -> Option<EntityId> {
     world
-        .ecs()
         .query::<(&musce::world::Id, &Player)>()
         .iter()
         .next()
@@ -330,8 +329,8 @@ mod tests {
         assert!(!burn[0].repeat, "the torch is a one-shot");
 
         fn sequences_of(w: &World, e: EntityId) -> Vec<crate::sequences::Instance> {
-            w.entity(e)
-                .and_then(|er| er.get::<&Sequences>().map(|s| s.0.clone()))
+            w.get::<Sequences>(e)
+                .map(|s| s.0.clone())
                 .expect("entity carries Sequences")
         }
     }
@@ -339,8 +338,7 @@ mod tests {
     /// First entity whose `Name` contains `needle`, for finding seeded content by
     /// its handle in tests.
     fn find_described(w: &World, needle: &str) -> Option<EntityId> {
-        w.ecs()
-            .query::<(&musce::world::Id, &Name)>()
+        w.query::<(&musce::world::Id, &Name)>()
             .iter()
             .find(|(_, n)| n.0.contains(needle))
             .map(|(id, _)| id.0)

@@ -190,14 +190,10 @@ impl IndexRegistry {
             !self.by_name.contains_key(name),
             "duplicate index name {name:?}"
         );
-        let read_key: ReadKey<K> = Box::new(move |world, entity| {
-            world
-                .entity(entity)
-                .and_then(|er| er.get::<&C>().map(|c| key(&c)))
-        });
+        let read_key: ReadKey<K> =
+            Box::new(move |world, entity| world.get::<C>(entity).map(|c| key(&c)));
         let enumerate: Enumerate = Box::new(|world| {
             world
-                .ecs()
                 .query::<(&Id, &C)>()
                 .iter()
                 .map(|(id, _)| id.0)

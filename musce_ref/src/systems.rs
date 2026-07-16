@@ -59,7 +59,6 @@ pub fn wander(ctx: &mut SystemCtx) {
     // otherwise be iterating.
     let wanderers: Vec<EntityId> = ctx
         .world
-        .ecs()
         .query::<(&Id, &Wander)>()
         .iter()
         .map(|(id, _)| id.0)

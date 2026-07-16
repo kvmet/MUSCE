@@ -190,7 +190,7 @@ mod tests {
         w.despawn(character);
 
         // The robot outlives its controller, now controlled by no one (Detach).
-        assert!(w.entity(robot).is_some());
+        assert!(w.contains(robot));
         assert_eq!(w.target_of::<Controls>(robot), None);
     }
 
@@ -206,7 +206,7 @@ mod tests {
         w.despawn(robot);
 
         // The Focus Detach cascade cleared the cursor; the controller is intact.
-        assert!(w.entity(character).is_some());
+        assert!(w.contains(character));
         assert_eq!(w.focus_of(character), None);
     }
 }

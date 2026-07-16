@@ -175,12 +175,15 @@ ends empty for a gone entity. A maintainer must still consume `Destroyed` (both
 leaves a stale index entry.
 
 **The raw `&mut` bypass.** `ComponentChanged` fires only for writes that pass through
-the `World` mutator. A write through the raw handle, `world.ecs().get::<&mut C>()`,
-mutates in place *below* that layer and emits nothing, so a tracked index over such a
-component silently desyncs. Two guardrails: `World::modify<C>(id, f)` is the supported
-in-place path (mutate then emit), and `World::forbid_tracking::<C>()` lets a game
-declare a raw-mutated type, after which `track_component` of it is a hard panic rather
-than a silent desync. Neither is a debug-only reconciliation (the "`except -> pass`"
+the `World` mutator. A raw `&mut C` component borrow mutates in place *below* that
+layer and emits nothing, so a tracked index over such a component silently desyncs.
+The public API no longer exposes such a borrow at all (there is no raw hecs handle;
+see ecs-and-relations.md), so this is reachable only from in-crate code through the
+`pub(crate)` raw path. Two guardrails remain for that: `World::modify<C>(id, f)` is
+the supported in-place path (mutate, then mark dirty and emit), and
+`World::forbid_tracking::<C>()` lets code declare a raw-mutated type, after which
+`track_component` of it is a hard panic rather than a silent desync. Neither is a
+debug-only reconciliation (the "`except -> pass`"
 pattern the repo forbids on the critical path); they fail loud at startup.
 
 ## Created, Related, and Unrelated get no fact

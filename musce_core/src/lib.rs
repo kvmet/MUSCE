@@ -114,7 +114,7 @@ mod tests {
         // bag's contents spill up to the hall; bag is gone.
         assert_eq!(w.container_of(coin), Some(hall));
         assert_eq!(w.enclosing_locus(coin), Some(hall));
-        assert!(w.entity(bag).is_none());
+        assert!(!w.contains(bag));
         let mut contents = w.contents(hall);
         contents.sort();
         assert_eq!(contents, vec![coin]);
@@ -406,9 +406,8 @@ mod tests {
         // The components landed, a fresh Id was assigned, and the index grew.
         assert!(w.has::<Locus>(id));
         assert_eq!(w.index().len(), before + 1);
-        let er = w.entity(id).unwrap();
-        assert_eq!(er.get::<&Description>().unwrap().0, "a brass lamp");
-        assert_eq!(er.get::<&Id>().unwrap().0, id);
+        assert_eq!(w.get::<Description>(id).unwrap().0, "a brass lamp");
+        assert_eq!(w.get::<Id>(id).unwrap().0, id);
         // Location-less: create never places it.
         assert_eq!(w.container_of(id), None);
     }
@@ -535,10 +534,7 @@ mod tests {
         assert_eq!(w2.contents(bag), vec![coin]);
         // A marker and a newtype both round-trip through the snapshot.
         assert!(w2.has::<Locus>(hall));
-        assert_eq!(
-            w2.entity(coin).unwrap().get::<&Description>().unwrap().0,
-            "coin"
-        );
+        assert_eq!(w2.get::<Description>(coin).unwrap().0, "coin");
         assert_eq!(w2.next_id(), snap.next_id);
     }
 
@@ -560,7 +556,7 @@ mod tests {
         let mut w2 = World::new();
         w2.load(&snap.entities, snap.next_id).unwrap();
         assert!(w2.resource::<Counter>().is_none());
-        assert!(w2.entity(coin).is_some());
+        assert!(w2.contains(coin));
 
         // take_resource hands the value out and clears it.
         assert_eq!(w.take_resource::<Counter>(), Some(Counter(2)));
@@ -665,8 +661,10 @@ mod tests {
         let _ = w.take_facts();
 
         {
+            // The in-crate raw path (the `ecs` field) is the only remaining way to
+            // reach a `&mut` component borrow; the public API exposes none.
             let e = w.index().get(it).unwrap();
-            let mut d = w.ecs().get::<&mut Description>(e).unwrap();
+            let mut d = w.ecs.get::<&mut Description>(e).unwrap();
             d.0 = "silently changed".into();
         }
         assert!(

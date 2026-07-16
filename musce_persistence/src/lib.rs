@@ -637,14 +637,8 @@ mod tests {
         assert_eq!(w2.enclosing_locus(coin), Some(hall));
         assert_eq!(w2.contents(bag), vec![coin]);
         assert!(w2.has::<Locus>(hall));
-        assert_eq!(
-            w2.entity(bag).unwrap().get::<&Description>().unwrap().0,
-            "bag"
-        );
-        assert_eq!(
-            w2.entity(coin).unwrap().get::<&Description>().unwrap().0,
-            "coin"
-        );
+        assert_eq!(w2.get::<Description>(bag).unwrap().0, "bag");
+        assert_eq!(w2.get::<Description>(coin).unwrap().0, "coin");
     }
 
     #[tokio::test]
@@ -670,13 +664,10 @@ mod tests {
         w2.load(&loaded.entities, loaded.next_id).unwrap();
 
         assert!(
-            w2.entity(sign).unwrap().get::<&Name>().is_none(),
+            !w2.has::<Name>(sign),
             "the removed Name should not survive the reload"
         );
-        assert_eq!(
-            w2.entity(sign).unwrap().get::<&Description>().unwrap().0,
-            "a sign"
-        );
+        assert_eq!(w2.get::<Description>(sign).unwrap().0, "a sign");
     }
 
     #[tokio::test]

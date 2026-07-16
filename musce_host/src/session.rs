@@ -52,7 +52,7 @@ struct Session {
 /// ordinary play. We log it rather than hand a verb a dead actor.
 pub(crate) fn resolve_actor(world: &World, character: EntityId) -> EntityId {
     match world.focus_of(character) {
-        Some(focus) if world.entity(focus).is_some() => focus,
+        Some(focus) if world.contains(focus) => focus,
         Some(dangling) => {
             tracing::warn!(
                 ?character,
@@ -458,7 +458,6 @@ mod tests {
 
     fn first_player_choose(world: &World) -> Option<EntityId> {
         world
-            .ecs()
             .query::<(&Id, &Avatar)>()
             .iter()
             .next()
@@ -801,7 +800,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(world.focus_of(character), Some(ghost));
-        assert!(world.entity(ghost).is_none());
+        assert!(!world.contains(ghost));
         assert_eq!(resolve_actor(&world, character), character);
     }
 

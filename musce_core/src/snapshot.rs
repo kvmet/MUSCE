@@ -44,7 +44,9 @@ impl World {
         for id in ids {
             // A dirtied entity may have been despawned before this snapshot; it is
             // covered by `deletes`, so it is skipped rather than serialized dead.
-            let Some(er) = self.entity(id) else { continue };
+            let Some(er) = self.entity_ref(id) else {
+                continue;
+            };
             let data = self.components().serialize_entity(er);
             entities.push(EntityBlob {
                 id,
@@ -71,8 +73,7 @@ impl World {
             // The DB primary key and the entity's own Id component must agree;
             // a mismatch means a corrupt or wrongly-keyed blob.
             debug_assert_eq!(
-                self.entity(blob.id)
-                    .and_then(|er| er.get::<&Id>().map(|i| i.0)),
+                self.get::<Id>(blob.id).map(|i| i.0),
                 Some(blob.id),
                 "blob.id {:?} disagrees with its Id component",
                 blob.id,

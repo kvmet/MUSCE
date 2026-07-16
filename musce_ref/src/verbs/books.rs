@@ -76,10 +76,7 @@ pub fn inscribe(ctx: &mut Ctx, args: &str) {
 
 /// A readable's cold-store key, if the entity carries one.
 fn key_of(ctx: &Ctx, entity: EntityId) -> Option<String> {
-    ctx.world
-        .entity(entity)?
-        .get::<&Readable>()
-        .map(|r| r.key.clone())
+    ctx.world.get::<Readable>(entity).map(|r| r.key.clone())
 }
 
 #[cfg(test)]

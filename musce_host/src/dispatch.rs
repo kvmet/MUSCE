@@ -230,7 +230,6 @@ mod tests {
 
         fn choose_actor(world: &World) -> Option<EntityId> {
             world
-                .ecs()
                 .query::<(&Id, &Avatar)>()
                 .iter()
                 .next()
@@ -241,11 +240,7 @@ mod tests {
             let text = ctx
                 .world
                 .enclosing_locus(ctx.actor)
-                .and_then(|r| {
-                    ctx.world
-                        .entity(r)
-                        .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-                })
+                .and_then(|r| ctx.world.get::<Description>(r).map(|d| d.0.clone()))
                 .unwrap_or_else(|| "nowhere".into());
             ctx.emit_self(EventKind::Narration, text);
         }
@@ -645,7 +640,7 @@ mod tests {
 
         dispatch.run_systems(&mut world, &ctx, &mut |_| {});
 
-        assert_eq!(world.ecs().query::<&MarkA>().iter().count(), 1);
-        assert_eq!(world.ecs().query::<&MarkB>().iter().count(), 1);
+        assert_eq!(world.query::<&MarkA>().iter().count(), 1);
+        assert_eq!(world.query::<&MarkB>().iter().count(), 1);
     }
 }

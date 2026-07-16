@@ -60,8 +60,10 @@ so a builder can chain commands, and a future `@find` will resolve names to ids.
 Components are freely mutable. The whole-component behavior is a property of the
 generic admin path, not the data.
 
-- **Typed code mutates fields in place**: `world.get::<&mut Stats>(e)?.str += 1`.
-  Fully granular, the normal gameplay path.
+- **Typed code mutates fields in place**: `world.modify::<Stats>(e, |s| s.str += 1)`.
+  Fully granular, the normal gameplay path; `modify` is the sanctioned in-place write
+  (there is no raw `&mut` component borrow on the public API), so the change is marked
+  dirty and signalled like any other.
 - **`SetComponent` is type-erased**, so it works at whole-component granularity:
   it receives a tag plus a JSON value, with no compile-time knowledge of fields,
   and deserializes-and-overwrites the whole component via the `ComponentRegistry`

@@ -41,6 +41,6 @@ pub use registry::CapRegistry;
 /// policy and lives in `musce_ref`.
 pub fn actor_name(world: &World, actor: EntityId) -> Option<String> {
     world
-        .entity(actor)
-        .and_then(|er| er.get::<&musce_core::Description>().map(|d| d.0.clone()))
+        .get::<musce_core::Description>(actor)
+        .map(|d| d.0.clone())
 }

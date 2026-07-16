@@ -129,9 +129,9 @@ mod tests {
 
         // The outgoing exit (LeadsFrom hall) and the incoming exit (LeadsTo hall)
         // are both gone; the surviving room has no dangling exits left.
-        assert!(w.entity(out).is_none());
-        assert!(w.entity(back).is_none());
-        assert!(w.entity(garden).is_some());
+        assert!(!w.contains(out));
+        assert!(!w.contains(back));
+        assert!(w.contains(garden));
         assert_eq!(w.exits_of(garden), Vec::<EntityId>::new());
     }
 

@@ -24,11 +24,14 @@ so nothing is rewritten until it mutates. The one exception is a schema migratio
 a differing stored version marks every loaded entity dirty (`mark_all_dirty`) so the
 migrated form is re-persisted.
 
-The dirty set rides the same coverage boundary as `ComponentChanged` and the index
-layer: a persisted component mutated below the mutator layer via `ecs().get::<&mut
-_>()` is *not* seen, and is the caller's to route through `World::modify` (the same
-discipline `forbid_tracking` enforces). Raw `&mut` that skips this desyncs a tracked
-index already, so the delta introduces no new hole.
+The dirty set is marked at the `World` mutator layer, so its coverage is exactly the
+coverage of that layer: a persisted component changed *through* `World`
+(`set_component`/`insert`/`remove`/`modify`, `move_entity`/`relate`) is always seen.
+The only way to change one *without* being seen is a raw `&mut` component borrow
+below the mutator layer, and that is no longer reachable outside the engine core:
+there is no public raw hecs handle (see ecs-and-relations.md), so game and app code
+cannot open this hole at all. In-crate code that reaches through the `pub(crate)`
+raw path owns the same discipline `forbid_tracking` already names.
 
 What is and isn't serialized:
 

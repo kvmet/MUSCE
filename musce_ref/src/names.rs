@@ -92,17 +92,11 @@ struct Card {
 
 fn card(world: &World, e: EntityId) -> Card {
     let name = world.name_of(e).map(|n| n.to_lowercase());
-    let (aliases, desc) = world
-        .entity(e)
-        .map(|er| {
-            let aliases = er
-                .get::<&Aliases>()
-                .map(|a| a.0.iter().map(|s| s.to_lowercase()).collect())
-                .unwrap_or_default();
-            let desc = er.get::<&Description>().map(|d| d.0.to_lowercase());
-            (aliases, desc)
-        })
+    let aliases = world
+        .get::<Aliases>(e)
+        .map(|a| a.0.iter().map(|s| s.to_lowercase()).collect())
         .unwrap_or_default();
+    let desc = world.get::<Description>(e).map(|d| d.0.to_lowercase());
     Card {
         id: e,
         name,
@@ -156,11 +150,9 @@ fn match_query(
 /// system, and reaction layers all narrate through, so a thing reads the same
 /// whoever mentions it.
 pub(crate) fn short_name(world: &World, entity: EntityId) -> Option<String> {
-    world.name_of(entity).or_else(|| {
-        world
-            .entity(entity)
-            .and_then(|er| er.get::<&Description>().map(|d| d.0.clone()))
-    })
+    world
+        .name_of(entity)
+        .or_else(|| world.get::<Description>(entity).map(|d| d.0.clone()))
 }
 
 /// A name for narration: [`short_name`], falling back to a neutral noun for a
