@@ -74,6 +74,11 @@ impl Dispatch {
         outcome: AccountOutcome,
         emit: &mut impl FnMut(Outgoing),
     ) {
+        // Any authentication outcome, admit or refuse, ends the pending state; a
+        // refused login must not wedge the connection. Safe to clear unconditionally:
+        // only an authenticate op sets pending, and a pending connection can issue
+        // nothing else, so no other op's outcome reaches a pending connection.
+        self.floor.clear_pending(outcome.conn);
         emit(Outgoing::Event(Delivery::new(
             outcome.conn,
             EventKind::Feedback,
@@ -514,7 +519,7 @@ mod tests {
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
-        let raised = ops(&mut d, &mut world, id, "@login builder");
+        let raised = ops(&mut d, &mut world, id, "@login builder secret");
         assert!(
             matches!(
                 raised.as_slice(),
@@ -564,6 +569,38 @@ mod tests {
         assert!(
             conn_texts(&poke).iter().any(|t| t.contains("poked")),
             "bound su passes"
+        );
+    }
+
+    /// A refused authentication (no binding) still clears the pending flag, or the
+    /// connection would be wedged, rejecting every retry.
+    #[test]
+    fn refused_auth_outcome_clears_pending() {
+        let mut d = Dispatch::new(test_game());
+        let mut world = World::new();
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        // Enter pending via a login, then apply a refusal (authenticated: None).
+        ops(&mut d, &mut world, id, "@login builder secret");
+        d.apply_account_outcome(
+            AccountOutcome {
+                conn: id,
+                line: "Incorrect password.".into(),
+                authenticated: None,
+                refreshed: None,
+            },
+            &mut |_| {},
+        );
+
+        // The next line runs (reporting no character) rather than being rejected as
+        // still-authenticating.
+        let out = line(&mut d, &mut world, id, "look");
+        assert!(
+            !conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("Still authenticating")),
+            "pending cleared after a refusal, got: {out:?}"
         );
     }
 

@@ -64,15 +64,25 @@ async fn send(writer: &mut OwnedWriteHalf, line: &str) {
 /// or EOF. The server renders one event as one write that may carry embedded
 /// newlines (a multi-line room look), so we accumulate raw bytes rather than
 /// parse lines.
+///
+/// The *first* byte gets a generous wait: an auth response waits on the account
+/// task, whose argon2 hash/verify is deliberately slow (and slower still in an
+/// unoptimized test build). Once bytes are flowing, a short inter-byte gap marks the
+/// burst's end, so non-auth commands stay snappy.
 async fn read_burst(reader: &mut OwnedReadHalf) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 2048];
     loop {
-        match tokio::time::timeout(Duration::from_millis(300), reader.read(&mut chunk)).await {
+        let gap = if buf.is_empty() {
+            Duration::from_millis(2000)
+        } else {
+            Duration::from_millis(300)
+        };
+        match tokio::time::timeout(gap, reader.read(&mut chunk)).await {
             Ok(Ok(0)) => break, // EOF
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
             Ok(Err(_)) => break,
-            Err(_) => break, // gap: burst over
+            Err(_) => break, // gap: burst over (or nothing came at all)
         }
     }
     String::from_utf8_lossy(&buf).into_owned()
@@ -804,7 +814,7 @@ async fn a_granted_builder_creates_until_quelled() {
     // As the operator, mint a builder account and grant it the build cap.
     send(&mut writer, "@operator").await;
     let _ = read_burst(&mut reader).await;
-    send(&mut writer, "@account new builder").await;
+    send(&mut writer, "@account new builder hunter2").await;
     let acct = read_burst(&mut reader).await;
     assert!(
         acct.contains("Created account \"builder\""),
@@ -818,7 +828,7 @@ async fn a_granted_builder_creates_until_quelled() {
     );
 
     // Log in as the builder (non-su) and take a body.
-    send(&mut writer, "@login builder").await;
+    send(&mut writer, "@login builder hunter2").await;
     let logged = read_burst(&mut reader).await;
     assert!(
         logged.contains("logged in as builder"),
@@ -894,7 +904,7 @@ async fn accounts_survive_a_restart() {
     let _welcome = read_burst(&mut reader).await;
     send(&mut writer, "@operator").await;
     let _ = read_burst(&mut reader).await;
-    send(&mut writer, "@account new builder").await;
+    send(&mut writer, "@account new builder hunter2").await;
     let _ = read_burst(&mut reader).await;
     send(&mut writer, "@grant builder build").await;
     let granted = read_burst(&mut reader).await;
@@ -918,7 +928,7 @@ async fn accounts_survive_a_restart() {
 
     let (mut reader, mut writer) = connect(addr).await;
     let _welcome = read_burst(&mut reader).await;
-    send(&mut writer, "@login builder").await;
+    send(&mut writer, "@login builder hunter2").await;
     let logged = read_burst(&mut reader).await;
     assert!(
         logged.contains("logged in as builder"),
@@ -932,6 +942,58 @@ async fn accounts_survive_a_restart() {
     assert!(
         built.contains("Created"),
         "the grant survived the restart, got: {built:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
+/// Real credential verification over the wire: the operator mints a password
+/// account, then a fresh connection is refused with the wrong password and admitted
+/// with the right one. The falsifying test for the argon2 verify path.
+#[tokio::test]
+async fn login_rejects_a_wrong_password() {
+    let addr = free_port().await;
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    // The operator mints a password account.
+    let (mut reader, mut writer) = connect(addr).await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@account new mage abracadabra").await;
+    let created = read_burst(&mut reader).await;
+    assert!(
+        created.contains("Created account \"mage\""),
+        "account created, got: {created:?}"
+    );
+
+    // A second connection: the wrong password is refused, the right one admitted.
+    let (mut reader2, mut writer2) = connect(addr).await;
+    let _ = read_burst(&mut reader2).await;
+    send(&mut writer2, "@login mage wrong").await;
+    let refused = read_burst(&mut reader2).await;
+    assert!(
+        refused.contains("Incorrect password"),
+        "the wrong password is refused, got: {refused:?}"
+    );
+    send(&mut writer2, "@login mage abracadabra").await;
+    let ok = read_burst(&mut reader2).await;
+    assert!(
+        ok.contains("logged in as mage"),
+        "the right password admits, got: {ok:?}"
     );
 
     shutdown.store(true, Ordering::Relaxed);

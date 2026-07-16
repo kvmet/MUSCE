@@ -1,9 +1,10 @@
 //! The session floor: the always-present bottom of the input stack. Once a
 //! connection is authenticated it has an account bound here, and `@`-namespaced
 //! account commands route to it no matter what is overlaid on top. Authentication
-//! is asynchronous: the loopback `@operator`/`@login` stubs raise an authenticate
-//! op the account task resolves off-thread, and the resulting authorization
-//! (account, resolved caps, su) is cached on the session when the outcome lands.
+//! is asynchronous: the loopback `@operator` bootstrap and the password-checked
+//! `@login` raise an authenticate op the account task resolves off-thread, and the
+//! resulting authorization (account, resolved caps, su) is cached on the session
+//! when the outcome lands.
 //!
 //! The floor also includes `@play`, which binds the connection to a character so
 //! bare commands have something to act through. Which character is game policy,
@@ -120,6 +121,14 @@ impl Sessions {
         self.map.get(&id).is_some_and(|s| s.pending_auth)
     }
 
+    /// Clear the pending-auth flag, whatever the authentication outcome. A refused
+    /// login must lift it too, or the connection would be wedged, unable to retry.
+    pub fn clear_pending(&mut self, id: ConnectionId) {
+        if let Some(s) = self.map.get_mut(&id) {
+            s.pending_auth = false;
+        }
+    }
+
     /// The authorization verdict this connection runs under, from its cached account
     /// caps and su with quell applied. A connection with no session, or none bound to
     /// an account, resolves to the guest verdict.
@@ -210,11 +219,16 @@ impl Sessions {
             }
             "play" => self.play(id, world, choose_actor, emit),
             "operator" => self.operator(id, ops, emit),
-            "login" => self.login(id, parts.next().unwrap_or(""), ops, emit),
+            "login" => {
+                let username = parts.next().unwrap_or("");
+                let password = parts.next();
+                self.login(id, username, password, ops, emit);
+            }
             "account" => {
                 let sub = parts.next().unwrap_or("");
                 let username = parts.next().unwrap_or("");
-                self.account_admin(id, sub, username, ops, emit);
+                let password = parts.next();
+                self.account_admin(id, sub, username, password, ops, emit);
             }
             "grant" => {
                 let username = parts.next().unwrap_or("");
@@ -232,19 +246,29 @@ impl Sessions {
         true
     }
 
-    /// Mark the connection pending and raise an authenticate op. This slice is
-    /// passwordless; the loopback gate on the stub verbs stands in for a credential.
-    fn begin_auth(&mut self, id: ConnectionId, username: String, ops: &mut Vec<AccountOp>) {
+    /// Mark the connection pending and raise an authenticate op. `password` is `None`
+    /// only for the loopback `@operator` bootstrap; `@login` always carries one.
+    fn begin_auth(
+        &mut self,
+        id: ConnectionId,
+        username: String,
+        password: Option<String>,
+        ops: &mut Vec<AccountOp>,
+    ) {
         if let Some(s) = self.map.get_mut(&id) {
             s.pending_auth = true;
         }
-        ops.push(AccountOp::Authenticate { conn: id, username });
+        ops.push(AccountOp::Authenticate {
+            conn: id,
+            username,
+            password,
+        });
     }
 
-    /// `@operator`: loopback-only elevation to the bootstrap superuser. Raises an
-    /// authenticate op for the seeded `operator` account; a remote or in-process
-    /// connection is refused, so unauthenticated god-mode is never reachable over a
-    /// bound port.
+    /// `@operator`: loopback-only elevation to the bootstrap superuser. Raises a
+    /// passwordless authenticate op for the seeded `operator` account; a remote or
+    /// in-process connection is refused, so unauthenticated god-mode is never
+    /// reachable over a bound port.
     fn operator(
         &mut self,
         id: ConnectionId,
@@ -255,37 +279,35 @@ impl Sessions {
             feedback(id, "Operator elevation is only available locally.", emit);
             return;
         }
-        self.begin_auth(id, OPERATOR_USERNAME.to_string(), ops);
+        self.begin_auth(id, OPERATOR_USERNAME.to_string(), None, ops);
     }
 
-    /// `@login <username>`: loopback-only authentication as `username` (passwordless
-    /// this slice). The credential check that lets this run remotely is the next
-    /// slice; it resolves the same username to the same account, no shape change.
+    /// `@login <username> <password>`: authenticate as `username`, verified against
+    /// the stored credential by the account task. Unlike `@operator` this is not
+    /// loopback-gated: a real password is the credential, so it works from anywhere.
     fn login(
         &mut self,
         id: ConnectionId,
         username: &str,
+        password: Option<&str>,
         ops: &mut Vec<AccountOp>,
         emit: &mut impl FnMut(Outgoing),
     ) {
-        if !self.map.get(&id).is_some_and(|s| s.loopback) {
-            feedback(id, "Login is only available locally.", emit);
+        if username.is_empty() || password.is_none() {
+            feedback(id, "Log in: @login <username> <password>.", emit);
             return;
         }
-        if username.is_empty() {
-            feedback(id, "Log in as whom? (@login <username>)", emit);
-            return;
-        }
-        self.begin_auth(id, username.to_string(), ops);
+        self.begin_auth(id, username.to_string(), password.map(str::to_string), ops);
     }
 
-    /// `@account new <username>`: create a plain account. Operator-only, raising a
-    /// create op for the account task.
+    /// `@account new <username> <password>`: create an account with a password
+    /// (hashed by the account task). Operator-only.
     fn account_admin(
         &mut self,
         id: ConnectionId,
         sub: &str,
         username: &str,
+        password: Option<&str>,
         ops: &mut Vec<AccountOp>,
         emit: &mut impl FnMut(Outgoing),
     ) {
@@ -293,17 +315,14 @@ impl Sessions {
             feedback(id, "Only the operator may administer accounts.", emit);
             return;
         }
-        if sub != "new" {
-            feedback(id, "Usage: @account new <username>.", emit);
-            return;
-        }
-        if username.is_empty() {
-            feedback(id, "Name the new account: @account new <username>.", emit);
+        if sub != "new" || username.is_empty() || password.is_none() {
+            feedback(id, "Usage: @account new <username> <password>.", emit);
             return;
         }
         ops.push(AccountOp::Create {
             conn: id,
             username: username.to_string(),
+            password: password.unwrap().to_string(),
         });
     }
 
@@ -518,7 +537,8 @@ mod tests {
         let (_, ops) = cmd(&mut s, &world, local, "operator");
         assert!(matches!(
             ops.as_slice(),
-            [AccountOp::Authenticate { conn, username }] if *conn == local && username == OPERATOR_USERNAME
+            [AccountOp::Authenticate { conn, username, password: None }]
+                if *conn == local && username == OPERATOR_USERNAME
         ));
         assert!(s.is_pending(local));
 
@@ -535,28 +555,43 @@ mod tests {
     }
 
     #[test]
-    fn login_raises_an_auth_op_by_username() {
+    fn login_raises_an_auth_op_with_username_and_password() {
         let mut s = Sessions::default();
         let world = World::new();
         let id = ConnectionId(1);
         s.connect(id, loopback(), &mut |_| {});
-        let (_, ops) = cmd(&mut s, &world, id, "login builder");
+        let (_, ops) = cmd(&mut s, &world, id, "login builder secret");
         assert!(matches!(
             ops.as_slice(),
-            [AccountOp::Authenticate { username, .. }] if username == "builder"
+            [AccountOp::Authenticate { username, password: Some(pw), .. }]
+                if username == "builder" && pw == "secret"
         ));
         assert!(s.is_pending(id));
     }
 
     #[test]
-    fn login_refused_from_a_non_loopback_peer() {
+    fn login_requires_a_password_but_is_not_loopback_gated() {
         let mut s = Sessions::default();
         let world = World::new();
-        let id = ConnectionId(1);
-        s.connect(id, None, &mut |_| {});
-        let (_, ops) = cmd(&mut s, &world, id, "login builder");
-        assert!(ops.is_empty(), "a peerless connection cannot log in");
-        assert!(!s.is_pending(id));
+
+        // No password: refused with usage, no op, regardless of peer.
+        let bare = ConnectionId(1);
+        s.connect(bare, loopback(), &mut |_| {});
+        let (out, ops) = cmd(&mut s, &world, bare, "login builder");
+        assert!(ops.is_empty() && !s.is_pending(bare));
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("@login <username> <password>"))
+        );
+
+        // With a password, a peerless (non-loopback) connection still logs in:
+        // password auth is not loopback-gated the way `@operator` is.
+        let remote = ConnectionId(2);
+        s.connect(remote, None, &mut |_| {});
+        let (_, ops) = cmd(&mut s, &world, remote, "login builder secret");
+        assert!(matches!(ops.as_slice(), [AccountOp::Authenticate { .. }]));
+        assert!(s.is_pending(remote));
     }
 
     #[test]
@@ -567,17 +602,17 @@ mod tests {
         s.connect(id, loopback(), &mut |_| {});
 
         // A guest (never bound to su) raises no op.
-        let (_, ops) = cmd(&mut s, &world, id, "account new builder");
+        let (_, ops) = cmd(&mut s, &world, id, "account new builder pw");
         assert!(ops.is_empty(), "a guest cannot create accounts");
         let (_, ops) = cmd(&mut s, &world, id, "grant builder build");
         assert!(ops.is_empty(), "a guest cannot grant");
 
         // Bound to su, the ops flow.
         s.bind(id, su_authz());
-        let (_, ops) = cmd(&mut s, &world, id, "account new builder");
+        let (_, ops) = cmd(&mut s, &world, id, "account new builder pw");
         assert!(matches!(
             ops.as_slice(),
-            [AccountOp::Create { username, .. }] if username == "builder"
+            [AccountOp::Create { username, password, .. }] if username == "builder" && password == "pw"
         ));
         let (_, ops) = cmd(&mut s, &world, id, "grant builder build");
         assert!(matches!(

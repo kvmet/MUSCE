@@ -1,8 +1,9 @@
 //! The off-thread account task and the ops it serves.
 //!
 //! Anything that touches the account store runs here, never on the sim thread: the
-//! store is async, and credential verification (a later slice) is CPU-heavy enough
-//! that it must not stall the tick. The sim hands this task an [`AccountOp`] and gets
+//! store is async, and credential hashing and verification are CPU-heavy enough
+//! (argon2, on a blocking pool) that they must not stall the tick. The sim hands
+//! this task an [`AccountOp`] and gets
 //! an [`AccountOutcome`] back, which it applies against session state and feeds to
 //! the connection. This is the account analogue of the cold-content task. See
 //! `docs/architecture/authorization.md`.
@@ -39,16 +40,19 @@ pub type LoginVeto = fn(&AccountView) -> Result<(), String>;
 /// An account operation the sim hands to the off-thread task. Each carries the
 /// originating connection so the outcome routes back to it.
 pub(crate) enum AccountOp {
-    /// Authenticate `conn` as `username`. This slice is passwordless: the floor has
-    /// already loopback-gated the `@operator`/`@login` stubs that issue it.
+    /// Authenticate `conn` as `username`. `password` is `None` only for the
+    /// passwordless `@operator` bootstrap, which the floor has loopback-gated;
+    /// `@login` always supplies a password, verified against the stored credential.
     Authenticate {
         conn: ConnectionId,
         username: String,
+        password: Option<String>,
     },
-    /// Create a new plain account.
+    /// Create a new account with the given password (hashed off-thread here).
     Create {
         conn: ConnectionId,
         username: String,
+        password: String,
     },
     /// Add or remove a capability on an account.
     Grant {
@@ -104,10 +108,16 @@ pub(crate) async fn account_task(
 ) {
     while let Some(op) = ops.recv().await {
         let outcome = match op {
-            AccountOp::Authenticate { conn, username } => {
-                authenticate(&store, &caps, veto, conn, username).await
-            }
-            AccountOp::Create { conn, username } => create(&store, conn, username).await,
+            AccountOp::Authenticate {
+                conn,
+                username,
+                password,
+            } => authenticate(&store, &caps, veto, conn, username, password).await,
+            AccountOp::Create {
+                conn,
+                username,
+                password,
+            } => create(&store, conn, username, password).await,
             AccountOp::Grant {
                 conn,
                 target,
@@ -141,6 +151,7 @@ async fn authenticate(
     veto: LoginVeto,
     conn: ConnectionId,
     username: String,
+    password: Option<String>,
 ) -> AccountOutcome {
     let account = match store.account_by_username(&username).await {
         Ok(Some(a)) => a,
@@ -155,6 +166,37 @@ async fn authenticate(
     // policy, and the app veto below cannot lift it.
     if account.status() == AccountStatus::Disabled {
         return AccountOutcome::line(conn, "That account is disabled.");
+    }
+
+    // Credential check. A `None` password is the passwordless `@operator` bootstrap
+    // (loopback-gated at the floor) and is valid only against a credential-less
+    // account; every other combination is a real password verified off-thread, so
+    // argon2 never runs on the async runtime's core threads.
+    match (password, account.credential().map(str::to_owned)) {
+        (None, None) => {}
+        (None, Some(_)) => {
+            return AccountOutcome::line(conn, "That account requires a password.");
+        }
+        (Some(_), None) => {
+            return AccountOutcome::line(conn, "That account has no password set.");
+        }
+        (Some(pw), Some(hash)) => {
+            match tokio::task::spawn_blocking(move || musce_auth::verify_password(&pw, &hash)).await
+            {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => return AccountOutcome::line(conn, "Incorrect password."),
+                Ok(Err(e)) => {
+                    // A stored hash that will not parse: corrupt data, never a wrong
+                    // password, so it is logged and refused, not counted as a miss.
+                    tracing::error!(error = %e, username, "stored credential is malformed");
+                    return AccountOutcome::line(conn, "Authentication failed.");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, username, "verify task failed");
+                    return AccountOutcome::line(conn, "Authentication failed.");
+                }
+            }
+        }
     }
 
     // App soft veto: may further restrict an otherwise-admitted account.
@@ -180,7 +222,12 @@ async fn authenticate(
     }
 }
 
-async fn create(store: &WorldStore, conn: ConnectionId, username: String) -> AccountOutcome {
+async fn create(
+    store: &WorldStore,
+    conn: ConnectionId,
+    username: String,
+    password: String,
+) -> AccountOutcome {
     match store.account_by_username(&username).await {
         Ok(Some(_)) => {
             return AccountOutcome::line(
@@ -194,7 +241,21 @@ async fn create(store: &WorldStore, conn: ConnectionId, username: String) -> Acc
             return AccountOutcome::line(conn, "Could not create the account.");
         }
     }
-    let account = Account::new(&username);
+    // Hash off-thread, like verification: argon2 is deliberately slow.
+    let hash = match tokio::task::spawn_blocking(move || musce_auth::hash_password(&password)).await
+    {
+        Ok(Ok(h)) => h,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, username, "password hashing failed");
+            return AccountOutcome::line(conn, "Could not create the account.");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, username, "hash task failed");
+            return AccountOutcome::line(conn, "Could not create the account.");
+        }
+    };
+    let mut account = Account::new(&username);
+    account.set_credential(Some(hash));
     if let Err(e) = store.account_upsert(&account).await {
         tracing::error!(error = %e, username, "account create failed");
         return AccountOutcome::line(conn, "Could not create the account.");
@@ -285,11 +346,89 @@ mod tests {
         acc.grant("build");
         store.account_upsert(&acc).await.unwrap();
 
-        let out = authenticate(&store, &caps(), admit, ConnectionId(1), "builder".into()).await;
+        // A passwordless account authenticates via the `None` (operator/stub) path.
+        let out = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "builder".into(),
+            None,
+        )
+        .await;
         let authz = out.authenticated.expect("a known account authenticates");
         assert_eq!(authz.account, acc.id());
         assert!(!authz.su);
         assert_eq!(authz.caps.len(), 1, "the build grant resolved");
+    }
+
+    #[tokio::test]
+    async fn create_hashes_a_password_and_login_verifies_it() {
+        let store = store().await;
+        create(&store, ConnectionId(1), "alice".into(), "hunter2".into()).await;
+
+        // The correct password binds.
+        let ok = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            Some("hunter2".into()),
+        )
+        .await;
+        assert!(
+            ok.authenticated.is_some(),
+            "the right password authenticates"
+        );
+
+        // The wrong password is a clean refusal, not an error.
+        let bad = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            Some("nope".into()),
+        )
+        .await;
+        assert!(bad.authenticated.is_none());
+        assert!(bad.line.contains("Incorrect password"));
+    }
+
+    #[tokio::test]
+    async fn password_login_refused_when_no_credential_is_set() {
+        let store = store().await;
+        store.account_upsert(&Account::new("noword")).await.unwrap();
+        let out = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "noword".into(),
+            Some("x".into()),
+        )
+        .await;
+        assert!(out.authenticated.is_none());
+        assert!(out.line.contains("no password set"));
+    }
+
+    #[tokio::test]
+    async fn passwordless_stub_refused_against_a_password_account() {
+        let store = store().await;
+        create(&store, ConnectionId(1), "alice".into(), "hunter2".into()).await;
+        // The `@operator` stub path (no password) cannot claim a password account.
+        let out = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            None,
+        )
+        .await;
+        assert!(out.authenticated.is_none());
+        assert!(out.line.contains("requires a password"));
     }
 
     #[tokio::test]
@@ -300,6 +439,7 @@ mod tests {
             admit,
             ConnectionId(1),
             "ghost".into(),
+            None,
         )
         .await;
         assert!(out.authenticated.is_none());
@@ -314,7 +454,15 @@ mod tests {
         store.account_upsert(&acc).await.unwrap();
 
         // A veto that would admit anything still never runs: the hard gate is first.
-        let out = authenticate(&store, &caps(), admit, ConnectionId(1), "banned".into()).await;
+        let out = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "banned".into(),
+            None,
+        )
+        .await;
         assert!(out.authenticated.is_none());
         assert!(out.line.contains("disabled"));
     }
@@ -327,7 +475,15 @@ mod tests {
         let store = store().await;
         store.account_upsert(&Account::new("newbie")).await.unwrap();
 
-        let out = authenticate(&store, &caps(), deny, ConnectionId(1), "newbie".into()).await;
+        let out = authenticate(
+            &store,
+            &caps(),
+            deny,
+            ConnectionId(1),
+            "newbie".into(),
+            None,
+        )
+        .await;
         assert!(out.authenticated.is_none());
         assert!(out.line.contains("pending approval"));
     }

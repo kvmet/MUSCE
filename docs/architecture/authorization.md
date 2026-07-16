@@ -1,14 +1,13 @@
 # Authorization
 
-> Status: built, through the loopback-stub authentication slice. The primitives
-> (password hashing, the `Account` record, the columnar account store, the
-> capability interner and verdict) and the runtime that ties them together (the
-> off-thread account task, the async auth round-trip with pending-auth rejection,
-> the app login veto, operator bootstrap, and the host command wiring for
-> `@operator`/`@login`/`@account`/`@grant`/`@revoke`/`@quell`) are implemented and
-> tested. What is *not* yet built is real credential verification: the
-> `@operator`/`@login` stubs are still passwordless and loopback-gated. Wiring
-> argon2 into the login flow and adding a set-password path is the next slice.
+> Status: built. Password login is real: `@login <username> <password>` verifies
+> against a stored argon2 credential off-thread, `@account new <username> <password>`
+> hashes on creation, and `@operator` remains the passwordless loopback bootstrap.
+> The primitives, the off-thread account task, the async auth round-trip with
+> pending-auth rejection, the app login veto, operator bootstrap, and the host
+> command wiring are all implemented and tested. Still deferred: self-service
+> password change (`@passwd`), and non-password auth (OAuth). The line-mode transport
+> carries passwords in the clear until a secure transport lands.
 
 Two things are kept apart. **Authentication** proves which account a connection is:
 a credential check that yields an `AccountId`. **Authorization** decides what that
@@ -151,11 +150,12 @@ the sim, which issues an auth op to an off-thread auth task and marks the connec
 *pending-auth*; further lines from a pending connection are **rejected**, not queued,
 so one connection cannot spam parallel argon2 work. The auth task looks the account
 up by username, applies the **engine hard gate** (`Disabled` is refused,
-unconditionally), verifies the credential (this slice is passwordless; argon2
-verification on a blocking pool is the next slice), then runs the **app login veto**:
-an injected hook given the account's status and `app_data` that may refuse an
-`Active` account (approval workflows, region locks). The veto can only *further
-restrict*; it cannot lift `Disabled`. On success the task hands the sim
+unconditionally), verifies the password against the stored argon2 hash on a blocking
+pool (a `None` password is the passwordless `@operator` bootstrap, valid only against
+a credential-less account), then runs the **app login veto**: an injected hook given
+the account's status and `app_data` that may refuse an `Active` account (approval
+workflows, region locks). The veto can only *further restrict*; it cannot lift
+`Disabled`. On success the task hands the sim
 `{ conn, AccountId, CapSet, su }`, and the sim caches the resolved caps and su in the
 connection's session.
 
@@ -196,12 +196,16 @@ Built and tested:
 - The off-thread account task and its ops (authenticate, create, grant/revoke), the
   async round-trip with pending-auth rejection, the app login veto, operator
   bootstrap seeding, and the host command wiring, with session-cached authorization.
+- Real credential verification: `@account new <username> <password>` hashes on
+  creation and `@login <username> <password>` verifies against the stored argon2
+  hash, both off-thread; `@operator` stays the passwordless loopback bootstrap.
 
 Deferred:
 
-- Real credential verification: the `@operator`/`@login` stubs are passwordless and
-  loopback-gated. Wiring argon2 into the login flow and a set-password path is the
-  next slice.
+- Self-service password change (`@passwd`) and operator-set passwords for an existing
+  account (needs `account_by_id` on the store).
+- Password confidentiality in transit: the line-mode transport is cleartext until a
+  secure transport lands.
 - Resumable sessions (the token store).
 - Cross-connection auth rate limiting (per-connection one-in-flight is the current
   floor).

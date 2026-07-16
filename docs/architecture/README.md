@@ -58,9 +58,9 @@ These hold across every subsystem:
   `SetComponent` granularity, the generic mutators and guards). *(Built.)*
 - [authorization.md](authorization.md): authentication vs authorization, the
   account record and its columnar store, capabilities and the verdict (with the
-  quell rule), and the async auth flow. *(Built through the loopback-stub slice:
-  the account model and store, the interner and verdict, the off-thread account
-  task, and the host wiring. Real credential verification is the next slice.)*
+  quell rule), and the async auth flow. *(Built: the account model and store, the
+  interner and verdict, the off-thread account task, the host wiring, and real
+  password login with argon2 verify/hash off-thread. `@passwd` and OAuth deferred.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
@@ -203,15 +203,15 @@ Deferred (with seams in place where noted):
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the capability-gated admin
   frame.
-- Networking: WebSocket/SSH transports, real authentication (the loopback-only
-  `@operator`/`@login` stubs stand in for now, resolving to real accounts), the
+- Networking: WebSocket/SSH transports, a secure (encrypted) transport so passwords
+  are not sent in the clear, OAuth as an additional auth method, the
   gameplay possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays
   (designed in networking-and-sessions.md). Raw TCP, the session floor, the session
   attachment that `@play` sets, durable `Controls`/`Focus` embodiment, and the
   `@possess`/`@unpossess` admin verbs are built. The account/authorization layer is
-  built through the loopback-stub slice (the account model and store, the interner
-  and verdict, the off-thread account task, and the host wiring); real credential
-  verification is the next slice (see authorization.md).
+  built, including real password login (argon2 verify on `@login`, hash on `@account
+  new`, both off-thread), with `@operator` the passwordless loopback bootstrap;
+  `@passwd` and OAuth are deferred (see authorization.md).
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit
   aliases. Designed in ecs-and-relations.md. A minimal `Locked` exit marker now
