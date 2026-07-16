@@ -186,6 +186,13 @@ the supported in-place path (mutate, then mark dirty and emit), and
 debug-only reconciliation (the "`except -> pass`"
 pattern the repo forbids on the critical path); they fail loud at startup.
 
+A hygiene check (`bb/guards.clj`, run by `bb/hygiene.clj`) closes the remaining
+in-crate gap: every raw `&mut` component borrow in `musce_core` must carry an
+explicit `hygiene:allow-raw-mut` waiver, so a new unwaived one fails the gate rather
+than silently dropping writes from the delta. The handful of legitimate sites
+(`modify` itself, the derived `RelSources` reverse-index maintenance) are waived and
+greppable in one search.
+
 ## Created, Related, and Unrelated get no fact
 
 By the test above, `Related` and `Unrelated` earn **no** fact: their result is fully

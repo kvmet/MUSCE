@@ -664,7 +664,7 @@ mod tests {
             // The in-crate raw path (the `ecs` field) is the only remaining way to
             // reach a `&mut` component borrow; the public API exposes none.
             let e = w.index().get(it).unwrap();
-            let mut d = w.ecs.get::<&mut Description>(e).unwrap();
+            let mut d = w.ecs.get::<&mut Description>(e).unwrap(); // hygiene:allow-raw-mut
             d.0 = "silently changed".into();
         }
         assert!(

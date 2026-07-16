@@ -101,7 +101,7 @@ pub enum Fact {
     /// Emitted only for components a consumer opted into via
     /// `World::track_component`, and only from the `World` mutator layer (set/remove
     /// by tag, typed insert/remove, `create`, and `modify`), never from a raw
-    /// `ecs().get::<&mut _>()` write, which bypasses the mutator entirely (see
+    /// in-crate `&mut` component write, which bypasses the mutator entirely (see
     /// `World::modify` and the tracking guard). Duplicate triggers in a tick are
     /// safe: reread is idempotent, and order against a same-entity `Destroyed` is
     /// irrelevant because reread converges either way.

@@ -11,7 +11,8 @@
 
 (ns hygiene
   (:require [babashka.fs :as fs]
-            [length]))
+            [length]
+            [guards]))
 
 ;; Directories and files to skip entirely.
 ;; A name here ignores the file, or everything nested inside the directory.
@@ -59,10 +60,15 @@
                         (length/check-file f warn fail)))
                     files)
       fails   (filter #(= :fail (:status %)) results)
-      warns   (filter #(= :warn (:status %)) results)]
+      warns   (filter #(= :warn (:status %)) results)
+      ;; The raw-mutation guard targets the one crate that holds the raw hecs
+      ;; handle, regardless of the roots the length gate was pointed at.
+      guard-viols (guards/check-root guards/default-root)]
 
   (run! length/report results)
-  (println (str "\n" (count fails) " over budget, " (count warns) " warning(s)"))
+  (run! guards/report guard-viols)
+  (println (str "\n" (count fails) " over budget, " (count warns) " warning(s), "
+                (count guard-viols) " unwaived raw borrow(s)"))
 
-  (when (seq fails)
+  (when (or (seq fails) (seq guard-viols))
     (System/exit 1)))

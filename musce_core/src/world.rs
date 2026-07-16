@@ -479,7 +479,10 @@ impl World {
             return false;
         };
         {
+            // This method IS the sanctioned in-place mutator: it marks dirty and
+            // emits the trigger below, so the raw borrow is warranted.
             let Ok(mut c) = self.ecs.get::<&mut C>(e) else {
+                // hygiene:allow-raw-mut
                 return false;
             };
             f(&mut *c);
@@ -701,7 +704,10 @@ impl World {
         let Some(te) = self.index.get(target) else {
             return;
         };
+        // RelSources is the derived reverse index: rebuilt on load and omitted from
+        // the snapshot, so raw-mutating it carries no persistence hazard.
         if let Ok(mut s) = self.ecs.get::<&mut RelSources<R>>(te) {
+            // hygiene:allow-raw-mut
             if !s.0.contains(&source) {
                 s.0.push(source);
             }
@@ -719,8 +725,10 @@ impl World {
     }
 
     fn remove_source<R: Relation>(&mut self, target: EntityId, source: EntityId) {
+        // RelSources reverse-index maintenance: derived, not persisted (see add_source).
         if let Some(te) = self.index.get(target)
             && let Ok(mut s) = self.ecs.get::<&mut RelSources<R>>(te)
+        // hygiene:allow-raw-mut
         {
             s.0.retain(|&x| x != source);
         }
