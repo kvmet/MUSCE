@@ -61,6 +61,14 @@ pub(crate) enum AccountOp {
         cap: String,
         add: bool,
     },
+    /// Change the password on `account` (the connection's own, self-service). The old
+    /// password is verified before the new one is hashed and stored.
+    SetPassword {
+        conn: ConnectionId,
+        account: AccountId,
+        old: String,
+        new: String,
+    },
 }
 
 /// The resolved authorization to cache in a session: an account's id, its resolved
@@ -124,6 +132,12 @@ pub(crate) async fn account_task(
                 cap,
                 add,
             } => mutate(&store, &caps, conn, target, cap, add).await,
+            AccountOp::SetPassword {
+                conn,
+                account,
+                old,
+                new,
+            } => set_password(&store, conn, account, old, new).await,
         };
         if outcomes.send(outcome).is_err() {
             break; // the sim is gone; nothing more to serve
@@ -261,6 +275,71 @@ async fn create(
         return AccountOutcome::line(conn, "Could not create the account.");
     }
     AccountOutcome::line(conn, format!("Created account \"{username}\"."))
+}
+
+async fn set_password(
+    store: &WorldStore,
+    conn: ConnectionId,
+    account_id: AccountId,
+    old: String,
+    new: String,
+) -> AccountOutcome {
+    let mut account = match store.account_by_id(&account_id).await {
+        Ok(Some(a)) => a,
+        // The session holds an authenticated id no account matches: stale or corrupt
+        // state, never an ordinary path. Log and refuse rather than expose it.
+        Ok(None) => {
+            tracing::error!(%account_id, "password change for an account that no longer exists");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, %account_id, "account lookup failed");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+    };
+
+    // Self-service *changes* an existing password. Setting a first password on a
+    // passwordless account (the operator, future external-auth accounts) is a
+    // different, out-of-scope operation.
+    let Some(hash) = account.credential().map(str::to_owned) else {
+        return AccountOutcome::line(conn, "This account has no password to change.");
+    };
+
+    // Verify the current password off-thread, exactly as login does; a corrupt stored
+    // hash is a fault, never a wrong password.
+    match tokio::task::spawn_blocking(move || musce_auth::verify_password(&old, &hash)).await {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => return AccountOutcome::line(conn, "Incorrect password."),
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, %account_id, "stored credential is malformed");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, %account_id, "verify task failed");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+    }
+
+    // Hash the new password off-thread and persist it. Authorization is unchanged, so
+    // no session refresh: existing live sessions keep running under their cached caps.
+    let new_hash = match tokio::task::spawn_blocking(move || musce_auth::hash_password(&new)).await
+    {
+        Ok(Ok(h)) => h,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, %account_id, "password hashing failed");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, %account_id, "hash task failed");
+            return AccountOutcome::line(conn, "Could not change your password.");
+        }
+    };
+    account.set_credential(Some(new_hash));
+    if let Err(e) = store.account_upsert(&account).await {
+        tracing::error!(error = %e, %account_id, "password change failed");
+        return AccountOutcome::line(conn, "Could not change your password.");
+    }
+    AccountOutcome::line(conn, "Password changed.")
 }
 
 async fn mutate(
@@ -486,6 +565,95 @@ mod tests {
         .await;
         assert!(out.authenticated.is_none());
         assert!(out.line.contains("pending approval"));
+    }
+
+    #[tokio::test]
+    async fn set_password_changes_the_credential_when_the_old_one_matches() {
+        let store = store().await;
+        create(&store, ConnectionId(1), "alice".into(), "old-pw".into()).await;
+        let id = store
+            .account_by_username("alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .id();
+
+        let out = set_password(
+            &store,
+            ConnectionId(1),
+            id,
+            "old-pw".into(),
+            "new-pw".into(),
+        )
+        .await;
+        assert!(out.line.contains("Password changed"));
+
+        // The new password now authenticates and the old one no longer does.
+        let with_new = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            Some("new-pw".into()),
+        )
+        .await;
+        assert!(with_new.authenticated.is_some(), "the new password works");
+
+        let with_old = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            Some("old-pw".into()),
+        )
+        .await;
+        assert!(with_old.authenticated.is_none(), "the old password is dead");
+    }
+
+    #[tokio::test]
+    async fn set_password_refuses_a_wrong_old_password() {
+        let store = store().await;
+        create(&store, ConnectionId(1), "alice".into(), "old-pw".into()).await;
+        let id = store
+            .account_by_username("alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .id();
+
+        let out = set_password(&store, ConnectionId(1), id, "wrong".into(), "new-pw".into()).await;
+        assert!(out.line.contains("Incorrect password"));
+
+        // The password is unchanged: the original still authenticates.
+        let still = authenticate(
+            &store,
+            &caps(),
+            admit,
+            ConnectionId(1),
+            "alice".into(),
+            Some("old-pw".into()),
+        )
+        .await;
+        assert!(still.authenticated.is_some(), "a failed change is a no-op");
+    }
+
+    #[tokio::test]
+    async fn set_password_refuses_a_passwordless_account() {
+        let store = store().await;
+        let acc = Account::new("noword");
+        store.account_upsert(&acc).await.unwrap();
+
+        let out = set_password(
+            &store,
+            ConnectionId(1),
+            acc.id(),
+            "anything".into(),
+            "new-pw".into(),
+        )
+        .await;
+        assert!(out.line.contains("no password to change"));
     }
 
     #[tokio::test]

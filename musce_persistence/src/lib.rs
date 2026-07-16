@@ -108,6 +108,14 @@ pub trait AccountStore {
         &self,
         username: &str,
     ) -> impl std::future::Future<Output = Result<Option<Account>>> + Send;
+    /// The account with this id, or `None` if there is none. The by-id counterpart of
+    /// [`account_by_username`](Self::account_by_username), for a caller that already
+    /// holds an authenticated [`AccountId`] (self-service password change), where the
+    /// stable id, not a typed username, identifies the account to touch.
+    fn account_by_id(
+        &self,
+        id: &AccountId,
+    ) -> impl std::future::Future<Output = Result<Option<Account>>> + Send;
     /// Insert the account, or replace the existing row with the same id.
     fn account_upsert(
         &self,
@@ -367,6 +375,13 @@ impl AccountStore for WorldStore {
         }
     }
 
+    async fn account_by_id(&self, id: &AccountId) -> Result<Option<Account>> {
+        match self {
+            WorldStore::Sqlite(s) => s.account_by_id(id).await,
+            WorldStore::Postgres(p) => p.account_by_id(id).await,
+        }
+    }
+
     async fn account_upsert(&self, account: &Account) -> Result<()> {
         match self {
             WorldStore::Sqlite(s) => s.account_upsert(account).await,
@@ -446,6 +461,27 @@ mod tests {
         let store = test_world_store().await;
         store.accounts_init().await.unwrap();
         assert!(store.account_by_username("nobody").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn account_by_id_fetches_the_same_row_as_by_username() {
+        let store = test_world_store().await;
+        store.accounts_init().await.unwrap();
+
+        let mut acc = Account::new("dave");
+        acc.set_credential(Some("$argon2id$v=19$m=19456,t=2,p=1$stub".into()));
+        store.account_upsert(&acc).await.unwrap();
+
+        let back = store.account_by_id(&acc.id()).await.unwrap().unwrap();
+        assert_eq!(back, acc, "by-id returns the full record");
+        assert!(
+            store
+                .account_by_id(&AccountId::generate())
+                .await
+                .unwrap()
+                .is_none(),
+            "an unknown id is None"
+        );
     }
 
     #[tokio::test]

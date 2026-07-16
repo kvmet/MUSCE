@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use musce_auth::Account;
+use musce_auth::{Account, AccountId};
 use musce_core::Snapshot;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::{QueryBuilder, Row};
@@ -220,6 +220,17 @@ impl AccountStore for PostgresStore {
              FROM accounts WHERE username = $1",
         )
         .bind(username)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(account_from_row).transpose()
+    }
+
+    async fn account_by_id(&self, id: &AccountId) -> Result<Option<Account>> {
+        let row = sqlx::query(
+            "SELECT id, username, credential, caps, su, status, app_data
+             FROM accounts WHERE id = $1",
+        )
+        .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await?;
         row.map(account_from_row).transpose()

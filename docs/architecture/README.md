@@ -60,7 +60,8 @@ These hold across every subsystem:
   account record and its columnar store, capabilities and the verdict (with the
   quell rule), and the async auth flow. *(Built: the account model and store, the
   interner and verdict, the off-thread account task, the host wiring, and real
-  password login with argon2 verify/hash off-thread. `@passwd` and OAuth deferred.)*
+  password login and self-service `@password` change, argon2 verify/hash off-thread.
+  Operator-set passwords and OAuth deferred.)*
 - [engine-and-game.md](engine-and-game.md): the boundary between the engine
   substrate and a game built on it, the `Game` the runtime is parameterized over,
   and the in-repo reference game `musce_ref`. *(Built.)*
@@ -210,8 +211,9 @@ Deferred (with seams in place where noted):
   attachment that `@play` sets, durable `Controls`/`Focus` embodiment, and the
   `@possess`/`@unpossess` admin verbs are built. The account/authorization layer is
   built, including real password login (argon2 verify on `@login`, hash on `@account
-  new`, both off-thread), with `@operator` the passwordless loopback bootstrap;
-  `@passwd` and OAuth are deferred (see authorization.md).
+  new`, both off-thread) and self-service password change (`@password`/`@pw`), with
+  `@operator` the passwordless loopback bootstrap; operator-set passwords and OAuth
+  are deferred (see authorization.md).
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a
   two-sided lockable door reading identically from both rooms), and explicit exit
   aliases. Designed in ecs-and-relations.md. A minimal `Locked` exit marker now

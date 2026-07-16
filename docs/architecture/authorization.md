@@ -2,12 +2,13 @@
 
 > Status: built. Password login is real: `@login <username> <password>` verifies
 > against a stored argon2 credential off-thread, `@account new <username> <password>`
-> hashes on creation, and `@operator` remains the passwordless loopback bootstrap.
-> The primitives, the off-thread account task, the async auth round-trip with
+> hashes on creation, `@password <old> <new>` (alias `@pw`) changes an account's own
+> password, and `@operator` remains the passwordless loopback bootstrap. The
+> primitives, the off-thread account task, the async auth round-trip with
 > pending-auth rejection, the app login veto, operator bootstrap, and the host
-> command wiring are all implemented and tested. Still deferred: self-service
-> password change (`@passwd`), and non-password auth (OAuth). The line-mode transport
-> carries passwords in the clear until a secure transport lands.
+> command wiring are all implemented and tested. Still deferred: operator-set
+> passwords for another account, and non-password auth (OAuth). The line-mode
+> transport carries passwords in the clear until a secure transport lands.
 
 Two things are kept apart. **Authentication** proves which account a connection is:
 a credential check that yields an `AccountId`. **Authorization** decides what that
@@ -133,11 +134,13 @@ text). Columnar over a JSON blob so the row is legible and `username`/`su` are r
 indexed columns rather than fields buried in a document.
 
 `AccountStore` is a trait beside `Persistence` and `KvStore`, implemented on both
-backends and forwarded through `WorldStore`, with four methods: `accounts_init`,
-`account_by_username` (login and admin lookup), `account_upsert` (create / grant /
-revoke / status change), and `any_superuser` (the bootstrap gate). No full load, no
-whole-set snapshot: the sim holds no global account map, so the store is read by
-username on demand and written per row on mutation.
+backends and forwarded through `WorldStore`, with five methods: `accounts_init`,
+`account_by_username` (login and admin lookup), `account_by_id` (self-service, where
+a connection holds its authenticated `AccountId`, not a typed username),
+`account_upsert` (create / grant / revoke / status / password change), and
+`any_superuser` (the bootstrap gate). No full load, no whole-set snapshot: the sim
+holds no global account map, so the store is read by username or id on demand and
+written per row on mutation.
 
 ## The runtime flow
 
@@ -166,6 +169,16 @@ connection's session.
 username, mutate, and upsert per-row; if the target is online, its cached caps are
 refreshed too.
 
+**Self-service password change.** `@password <old> <new>` (alias `@pw`) is not
+su-gated: an account changes its own password. It loads the account by the session's
+authenticated `AccountId` (never a typed username, so one connection cannot aim the
+change at another account), verifies `old` against the stored hash on the blocking
+pool, hashes `new` there too, and upserts. It changes only a credential, not
+authorization, so it refreshes no session: live sessions keep running under their
+cached caps. A passwordless account (the operator, a future external-auth account)
+has no password to change and is refused; setting a *first* password is a separate,
+still-deferred operation.
+
 ## Sessions and resumption
 
 A session is in-memory and connection-scoped: the floor maps a `ConnectionId` to the
@@ -191,7 +204,8 @@ Built and tested:
 - The `Account` record and its `AccountId` / `AccountStatus`, with the columnar
   reconstruction API (`from_stored`, `AccountId: Display + FromStr`,
   `AccountStatus::as_str`).
-- The `accounts` table and `AccountStore` on SQLite and Postgres.
+- The `accounts` table and `AccountStore` (including `account_by_id`) on SQLite and
+  Postgres.
 - The `CapRegistry` interner and `Verdict::resolved` (the quell rule).
 - The off-thread account task and its ops (authenticate, create, grant/revoke), the
   async round-trip with pending-auth rejection, the app login veto, operator
@@ -199,11 +213,14 @@ Built and tested:
 - Real credential verification: `@account new <username> <password>` hashes on
   creation and `@login <username> <password>` verifies against the stored argon2
   hash, both off-thread; `@operator` stays the passwordless loopback bootstrap.
+- Self-service password change: `@password <old> <new>` (alias `@pw`) verifies the
+  old password and stores a new hash, keyed off the session's `AccountId` via
+  `account_by_id`, both hashing steps off-thread.
 
 Deferred:
 
-- Self-service password change (`@passwd`) and operator-set passwords for an existing
-  account (needs `account_by_id` on the store).
+- Operator-set passwords for another account (resetting a forgotten password), still
+  unbuilt; the `account_by_id` primitive it needs now exists.
 - Password confidentiality in transit: the line-mode transport is cleartext until a
   secure transport lands.
 - Resumable sessions (the token store).

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use musce_auth::Account;
+use musce_auth::{Account, AccountId};
 use musce_core::Snapshot;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::{QueryBuilder, Row};
@@ -241,6 +241,17 @@ impl AccountStore for SqliteStore {
              FROM accounts WHERE username = ?",
         )
         .bind(username)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(account_from_row).transpose()
+    }
+
+    async fn account_by_id(&self, id: &AccountId) -> Result<Option<Account>> {
+        let row = sqlx::query(
+            "SELECT id, username, credential, caps, su, status, app_data
+             FROM accounts WHERE id = ?",
+        )
+        .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await?;
         row.map(account_from_row).transpose()

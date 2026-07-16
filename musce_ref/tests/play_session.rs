@@ -999,3 +999,63 @@ async fn login_rejects_a_wrong_password() {
     shutdown.store(true, Ordering::Relaxed);
     let _ = handle.await.unwrap();
 }
+
+/// Self-service password change end to end: an account logs in, changes its own
+/// password with `@password`, and a fresh connection then admits the new password
+/// and rejects the old. The falsifying test for the change path: verify the old,
+/// hash the new, persist it.
+#[tokio::test]
+async fn password_change_takes_effect_for_the_next_login() {
+    let addr = free_port().await;
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    // The operator mints an account, which then logs in and changes its password.
+    let (mut reader, mut writer) = connect(addr).await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _ = read_burst(&mut reader).await;
+    send(&mut writer, "@account new sam first-pw").await;
+    let _ = read_burst(&mut reader).await;
+
+    let (mut sam_reader, mut sam_writer) = connect(addr).await;
+    let _ = read_burst(&mut sam_reader).await;
+    send(&mut sam_writer, "@login sam first-pw").await;
+    let _ = read_burst(&mut sam_reader).await;
+    send(&mut sam_writer, "@password first-pw second-pw").await;
+    let changed = read_burst(&mut sam_reader).await;
+    assert!(
+        changed.contains("Password changed"),
+        "the change is confirmed, got: {changed:?}"
+    );
+
+    // A fresh connection: the old password is dead, the new one admits.
+    let (mut reader3, mut writer3) = connect(addr).await;
+    let _ = read_burst(&mut reader3).await;
+    send(&mut writer3, "@login sam first-pw").await;
+    let stale = read_burst(&mut reader3).await;
+    assert!(
+        stale.contains("Incorrect password"),
+        "the old password no longer works, got: {stale:?}"
+    );
+    send(&mut writer3, "@login sam second-pw").await;
+    let fresh = read_burst(&mut reader3).await;
+    assert!(
+        fresh.contains("logged in as sam"),
+        "the new password admits, got: {fresh:?}"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}

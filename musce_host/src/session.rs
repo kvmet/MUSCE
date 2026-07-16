@@ -212,8 +212,8 @@ impl Sessions {
             "help" => {
                 feedback(
                     id,
-                    "Commands: @play, @operator, @login, @account, @grant, @revoke, \
-                     @quell, @quit, @who, @help.",
+                    "Commands: @play, @operator, @login, @password, @account, @grant, \
+                     @revoke, @quell, @quit, @who, @help.",
                     emit,
                 );
             }
@@ -223,6 +223,11 @@ impl Sessions {
                 let username = parts.next().unwrap_or("");
                 let password = parts.next();
                 self.login(id, username, password, ops, emit);
+            }
+            "password" | "pw" => {
+                let old = parts.next();
+                let new = parts.next();
+                self.change_password(id, old, new, ops, emit);
             }
             "account" => {
                 let sub = parts.next().unwrap_or("");
@@ -298,6 +303,34 @@ impl Sessions {
             return;
         }
         self.begin_auth(id, username.to_string(), password.map(str::to_string), ops);
+    }
+
+    /// `@password <old> <new>` (alias `@pw`): change the password on this connection's
+    /// own account. Requires an authenticated connection; the account task verifies
+    /// `old` against the stored credential before hashing and storing `new`. Not
+    /// operator-gated: an account changes its own password.
+    fn change_password(
+        &self,
+        id: ConnectionId,
+        old: Option<&str>,
+        new: Option<&str>,
+        ops: &mut Vec<AccountOp>,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        let (Some(old), Some(new)) = (old, new) else {
+            feedback(id, "Change your password: @password <old> <new>.", emit);
+            return;
+        };
+        let Some(account) = self.map.get(&id).and_then(|s| s.account) else {
+            feedback(id, "Log in before changing your password.", emit);
+            return;
+        };
+        ops.push(AccountOp::SetPassword {
+            conn: id,
+            account,
+            old: old.to_string(),
+            new: new.to_string(),
+        });
     }
 
     /// `@account new <username> <password>`: create an account with a password
@@ -619,6 +652,51 @@ mod tests {
             ops.as_slice(),
             [AccountOp::Grant { target, cap, add: true, .. }] if target == "builder" && cap == "build"
         ));
+    }
+
+    #[test]
+    fn password_change_raises_a_set_password_op_for_the_bound_account() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let id = ConnectionId(1);
+        s.connect(id, None, &mut |_| {});
+
+        // Unauthenticated: refused, no op.
+        let (out, ops) = cmd(&mut s, &world, id, "password old new");
+        assert!(ops.is_empty() && !out.is_empty());
+        assert!(conn_texts(&out).iter().any(|t| t.contains("Log in")));
+
+        // Bound to an account: the op carries that account and both passwords.
+        let authz = su_authz();
+        let account = authz.account;
+        s.bind(id, authz);
+        let (_, ops) = cmd(&mut s, &world, id, "password old new");
+        assert!(matches!(
+            ops.as_slice(),
+            [AccountOp::SetPassword { account: a, old, new, .. }]
+                if *a == account && old == "old" && new == "new"
+        ));
+
+        // `@pw` is the same handler.
+        let (_, ops) = cmd(&mut s, &world, id, "pw old new");
+        assert!(matches!(ops.as_slice(), [AccountOp::SetPassword { .. }]));
+    }
+
+    #[test]
+    fn password_change_without_both_arguments_shows_usage() {
+        let mut s = Sessions::default();
+        let world = World::new();
+        let id = ConnectionId(1);
+        s.connect(id, None, &mut |_| {});
+        s.bind(id, su_authz());
+
+        let (out, ops) = cmd(&mut s, &world, id, "password only-old");
+        assert!(ops.is_empty(), "a missing new password raises no op");
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|t| t.contains("@password <old> <new>"))
+        );
     }
 
     #[test]
