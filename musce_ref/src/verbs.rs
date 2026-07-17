@@ -37,6 +37,9 @@ pub use social::{say, tell, wave};
 // Shared with the tick-loop movers (`wander`, sequences), which route through the
 // one rule-checked move path; the `Locked` marker is registered for persistence.
 pub(crate) use movement::{Locked, MoveOutcome, do_move};
+// The grounded `take`, shared with the agency layer's plan execution so a planned
+// pickup is vetoed by the same takeable rule a player's `take` runs.
+pub(crate) use manipulate::{TakeOutcome, do_take};
 // The combat stat components: read by `attack`, seeded on the avatar and its foes,
 // and registered for persistence in `systems::register`.
 pub(crate) use combat::{Health, Special};

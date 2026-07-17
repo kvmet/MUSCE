@@ -126,6 +126,110 @@ fn take_moves_item_and_narrates() {
     );
 }
 
+/// Build step 2: a verb's affordance is real game content, and its declared
+/// effect must match what the verb actually does. Running the real `take`
+/// handler and then reading the affordance's ground effect through
+/// `RefWorldModel` ties the declared `contained_by` predicate to the containment
+/// edge the verb commits: a wrong relation kind, a flipped direction, an empty
+/// effect, or the wrong role would leave the check below false and fail. The
+/// reversed-edge assertion proves the oracle discriminates rather than returning
+/// true for everything.
+#[test]
+fn take_affordance_effect_matches_the_verb() {
+    use crate::agency::{RefWorldModel, take as take_affordance};
+    use musce::agency::{Frame, Predicate, Term, WorldModel};
+
+    let mut f = fixture();
+    f.world.move_entity(f.actor, f.garden).unwrap(); // be where the key is
+
+    run(&mut f.world, f.actor, |c| take(c, "key"));
+
+    // The frame the parser would have bound for `take key`.
+    let frame = Frame {
+        actor: f.actor,
+        object: Some(f.key),
+        target: None,
+        kind: None,
+    };
+    let effect = take_affordance().effect.bind(&frame);
+    let model = RefWorldModel;
+
+    assert!(!effect.0.is_empty(), "take must declare an effect");
+    assert!(
+        effect.0.iter().all(|p| model.holds(p, &f.world)),
+        "take's declared effect does not hold after the verb ran"
+    );
+
+    // The reversed edge (actor contained_by object) is not true, so the oracle
+    // is not vacuously satisfied: a flipped-direction affordance would fail above.
+    let reversed = Predicate::Related {
+        a: Term::Const(f.actor),
+        b: Term::Const(f.key),
+        kind: "contained_by".into(),
+    };
+    assert!(!model.holds(&reversed, &f.world));
+}
+
+/// Build step 3: a hand-authored plan, run end to end without the parser. The
+/// fungible object is bound by enumeration over what the actor knows (co-located
+/// here), then the bound affordance executes through the game's grounded action.
+/// Exercises the two step-3 primitives together: `bind_var` (the candidate
+/// enumeration the planner reuses) and execution through the same veto a player
+/// hits, proving a planned pickup is filtered and vetoed exactly as a typed one.
+#[test]
+fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
+    use crate::agency::{RefWorldModel, known_here, perform, take as take_affordance};
+    use musce::agency::{Clause, Frame, Predicate, Term, Var, bind_var};
+
+    let mut f = fixture();
+    // The `tag(x, "item")` predicate resolves the component tag through the
+    // registry, so the game's kind components must be registered (the parser-driven
+    // verb tests never touch tag lookup, so the shared fixture does not register).
+    crate::systems::register(&mut f.world);
+    f.world.move_entity(f.actor, f.garden).unwrap(); // co-located with the key
+    // A creature shares the room: a known entity that is *not* an item, so the
+    // constraint must reject it, and the veto must refuse a take of it.
+    let rat = spawn(&mut f.world, |b| {
+        b.add(Creature);
+        b.add(Description("a sewer rat".into()));
+    });
+    f.world.move_entity(rat, f.garden).unwrap();
+
+    // The plan step: "take some x that is an item." The object role is left free
+    // and constrained; enumeration fills it from what the actor knows.
+    let x = Var("x".into());
+    let constraint = Clause(vec![Predicate::Tag {
+        e: Term::Var(x.clone()),
+        comp: "item".into(),
+    }]);
+    let candidates = known_here(&f.world, f.actor);
+    let bound = bind_var(&x, &constraint, &candidates, &f.world, &RefWorldModel);
+
+    // Only the item satisfies the constraint; the rat is filtered out.
+    assert_eq!(bound, vec![f.key]);
+
+    // Execute the bound affordance through the grounded action: the key is taken.
+    let frame = Frame {
+        actor: f.actor,
+        object: Some(bound[0]),
+        target: None,
+        kind: None,
+    };
+    assert!(perform(&mut f.world, &take_affordance(), &frame));
+    assert_eq!(f.world.container_of(f.key), Some(f.actor));
+
+    // The same veto a player hits refuses a planned take of the creature: the
+    // plan cannot do what a typed `take rat` cannot.
+    let rat_frame = Frame {
+        actor: f.actor,
+        object: Some(rat),
+        target: None,
+        kind: None,
+    };
+    assert!(!perform(&mut f.world, &take_affordance(), &rat_frame));
+    assert_eq!(f.world.container_of(rat), Some(f.garden)); // unmoved
+}
+
 #[test]
 fn take_out_of_reach_rejects() {
     let mut f = fixture();

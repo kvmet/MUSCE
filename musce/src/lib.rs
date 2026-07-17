@@ -71,6 +71,15 @@ pub mod index {
     pub use musce_index::*;
 }
 
+/// The generic agent-behavior mechanism (the affordance vocabulary now; the
+/// planner and arbiter later), behind the `musce_agency` feature. A game enables
+/// `features = ["musce_agency"]` and reaches it here. See
+/// `docs/architecture/agency/`.
+#[cfg(feature = "musce_agency")]
+pub mod agency {
+    pub use musce_agency::*;
+}
+
 // The composition-root API: what a game's `main` wires up and hands to `run`.
 pub use musce_host::{
     ChooseActor, Config, Game, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed, TICK_INTERVAL,

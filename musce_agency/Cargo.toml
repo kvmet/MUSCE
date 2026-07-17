@@ -1,0 +1,7 @@
+[package]
+name = "musce_agency"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+musce_core = { workspace = true }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["musce","musce_action", "musce_auth","musce_core", "musce_host", "musce_index", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
+members = ["musce","musce_action", "musce_agency", "musce_auth", "musce_core", "musce_host", "musce_index", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.15"
@@ -18,6 +18,7 @@ uuid = { version = "1.24.0", features = ["v7", "serde"] }
 # internal
 musce = { path = "musce" }
 musce_action = { path = "musce_action" }
+musce_agency = { path = "musce_agency" }
 musce_auth = { path = "musce_auth" }
 musce_core = { path = "musce_core" }
 musce_host = { path = "musce_host" }

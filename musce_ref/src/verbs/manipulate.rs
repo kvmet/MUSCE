@@ -9,6 +9,40 @@ use musce::world::{EntityId, World};
 use crate::commit_or_log;
 use crate::names::{self, Scope, display_name};
 
+/// The outcome of the grounded `take`: the item was picked up, or the rule
+/// refused it (with the reason a player should hear). Mirrors [`MoveOutcome`]:
+/// the veto is structural game policy, decided here once, so the player verb and
+/// a planned agent action share it.
+///
+/// [`MoveOutcome`]: super::movement::MoveOutcome
+pub(crate) enum TakeOutcome {
+    Took,
+    Refused(&'static str),
+}
+
+/// Pick `item` up into `actor`'s hands, subject to the takeable rule. The
+/// grounded action a player's `take` verb and an agent's plan both resolve to,
+/// so a scripted actor is vetoed exactly as a player is. `Ctx`-free and silent;
+/// the caller narrates.
+pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> TakeOutcome {
+    if !is_takeable(world, item) {
+        return TakeOutcome::Refused("You can't take that.");
+    }
+    // The one structural way this fails is taking a container the actor stands
+    // inside (a containment cycle); the executor rejects it and "you can't take
+    // that" is the right thing for the player to hear.
+    match execute(
+        world,
+        Action::Move {
+            entity: item,
+            into: actor,
+        },
+    ) {
+        Ok(_) => TakeOutcome::Took,
+        Err(_) => TakeOutcome::Refused("You can't take that."),
+    }
+}
+
 /// `take <item>`: pick a reachable thing up off the floor into the actor's hands.
 pub fn take(ctx: &mut Ctx, args: &str) {
     if args.trim().is_empty() {
@@ -19,34 +53,23 @@ pub fn take(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
-    if !is_takeable(ctx.world, target) {
-        ctx.emit_self(EventKind::Feedback, "You can't take that.");
-        return;
-    }
 
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, ctx.actor);
     let room = ctx.world.enclosing_locus(ctx.actor);
 
-    // The one structural way this fails is taking a container the actor stands
-    // inside (a containment cycle); the executor rejects it and "you can't take
-    // that" is the right thing for the player to hear.
-    if execute(
-        ctx.world,
-        Action::Move {
-            entity: target,
-            into: ctx.actor,
-        },
-    )
-    .is_err()
-    {
-        ctx.emit_self(EventKind::Feedback, "You can't take that.");
-        return;
-    }
-
-    ctx.emit_self(EventKind::Feedback, format!("You take {name}."));
-    if let Some(room) = room {
-        ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} takes {name}."));
+    match do_take(ctx.world, ctx.actor, target) {
+        TakeOutcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+        TakeOutcome::Took => {
+            ctx.emit_self(EventKind::Feedback, format!("You take {name}."));
+            if let Some(room) = room {
+                ctx.emit_locus_except_self(
+                    room,
+                    EventKind::Narration,
+                    format!("{who} takes {name}."),
+                );
+            }
+        }
     }
 }
 

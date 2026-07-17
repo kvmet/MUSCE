@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-musce = { workspace = true, features = ["musce_index"] }
+musce = { workspace = true, features = ["musce_index","musce_agency"] }
 serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -1,0 +1,246 @@
+# Agency
+
+> Status: **proposed; vocabulary, binding, and manual plan execution built.**
+> `musce_agency` carries the affordance vocabulary (`Term`, `Predicate`, `Clause`,
+> `Affordance`), the `CostModel` and `WorldModel` seams, the case `Frame` with
+> clause binding, and the `bind_var` enumeration primitive (build steps 1 and 3).
+> `musce_ref` grounds the `take` verb (`do_take`) and carries the `take`
+> affordance, `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
+> grounded-action dispatch a plan step lowers to). Tests run a hand-authored plan
+> end to end: a candidate is bound by enumeration and executed through the same
+> veto a player hits (a wrong kind, flipped direction, or bypassed veto all fail).
+> The planner (regression), arbiter, and drives remain proposed. The `> Status:`
+> markers on each doc say how settled each piece is.
+
+"Agent" here is any entity that acts on its own: an NPC is the obvious case, but
+the same machinery drives a possessed puppet running on autopilot, a summoned
+familiar, or a piece of the world that pursues goals. Nothing below assumes the
+actor is a named NPC.
+
+The goal is one mechanism by which a thing gets done, reachable two ways: a
+player types a verb, or an agent's planner selects an action. Both resolve to the
+same rule-checked, world-mutating unit, so a scripted actor is vetoed exactly as
+a player is. The engine already has the load-bearing half of this: `do_move` is a
+grounded action shared by the `go` verb, the `wander` system, and sequences (see
+[../actions.md](../actions.md) and [../sequences.md](../sequences.md)). This
+folder is about generalizing that seam and building the autonomy on top of it.
+
+## The stack
+
+Four subsystems, top to bottom. Only the bottom one exists today.
+
+1. **Drives** turn the NPC's internal need-state into goals with an urgency.
+   `eat-when-hungry` is a standing drive whose urgency is a function of the
+   `Hunger` component; a prescribed order like `greet(playerX)` is an imperative
+   goal injected from outside. Both emit `Goal { predicate, urgency }`. Drives
+   read the NPC's *own* components, never the world or its beliefs.
+2. **The arbiter** picks the highest-urgency unsatisfied goal and hands its
+   predicate to the planner. Its real work is not selection but *commitment*:
+   not thrashing between two near-equal goals every tick.
+3. **The planner** regresses backward from the goal over the world graph filtered
+   to what the agent **knows** (`Known` relation edges), chaining affordances by
+   precondition until it reaches the current state, and emits a bound action
+   sequence. This is the GOAP core.
+4. **Execution** is the existing sequence sweep: a synthesized plan is a `Steps`
+   list, run beat by beat through the same rule helpers a player hits, replanned
+   when a beat is vetoed or beliefs change.
+
+Under the planner sits the **affordance table** (the set of grounded actions,
+shared with player verbs). There is no separate belief store: what an agent knows
+is `Known` relation edges in the world graph, added by epistemic actions like
+`search`, so knowledge is ordinary persisted world state the planner reads
+filtered through. True stale / false belief (a cached view that diverges from
+truth) is a deliberately deferred richer layer.
+
+Two deliberate bypass seams: an imperative goal injects straight at the arbiter,
+and a hand-authored sequence injects straight at the sweep, skipping planning
+entirely. Not every behavior should pay for a planner run; a fixed greeting is
+cheaper and more predictable as a script.
+
+## Build order
+
+The stack above is the runtime layering, top to bottom. The *build* order is not
+that numbering: it follows falsifiability and reversibility, which put the
+conceptual top layer (drives) last and the bottom of the planner first.
+
+1. **The affordance and predicate/term types.** The affordance struct,
+   `Term = Const | Var`, the `related`/`tag` clause form, the `PredicateRegistry`,
+   and the `cost` *representation* (the planner obtains cost by calling a
+   game-supplied function through the `Game` seam, never by reading a bare
+   `affordance.cost` field, so a flat scalar, a bind-time computation, and the
+   per-actor learned bias of step 6 are all the same seam and richer cost stays an
+   addition rather than a signature change; see the affordances open question) are
+   the wide-signature shapes the rest of the stack is written against, so their
+   cardinality and encoding go first. What this step *is not*, on reflection: a
+   serialized-shape decision. The earlier worry that a bound affordance would
+   embed in a serialized `Step`/`Intent` (migration-class) is dissolved by the
+   lowering resolution in the crate section: a synthesized plan lowers to the
+   structural `Action` set the executor already runs, so no agency type is
+   persisted and none embeds in `Intent`. As built, nothing in `musce_agency`
+   derives `Serialize`, and the `String` encoding of kinds is a pure internal
+   swap, not a migration (see affordances "Predicate representation"). So step 1
+   goes first for the wide-signature reason, not an irreversible-serialization
+   one; everything else in the stack is a cheap additive retrofit.
+2. **Express an existing verb as a real affordance, oracle-validated.** A verb
+   cannot yet *dispatch through* an affordance: there is no affordance executor
+   until step 3's lowering, so "resolve through" would overclaim. What step 2
+   honestly delivers is the affordance as **real game content** (`musce_ref`'s
+   `agency::take`), not a test-only artifact, plus the `WorldModel` seam
+   (`RefWorldModel`) that reads a ground predicate against this game's world, the
+   read-side twin of `CostModel`. Ground truth is an executable oracle: run the
+   real verb, bind the affordance's effect against the frame the parser would
+   have built, and assert every predicate `holds` in the world afterward. This
+   validates the **grounded (`Const`) path and effect projection** against real
+   rules and makes divergence a test failure (wrong kind, flipped direction,
+   empty effect), closing the falsifiability gap a hand-authored effect would
+   leave. It does not exercise the `Var` / candidate-enumeration path the planner
+   needs, nor free-variable evaluation; those get their own rung at step 3. Only
+   `take` is carried for now: `go`'s effect names the exit's *destination*, which
+   is not a frame role, so binding it is a step-3 modeling decision, not a
+   freebie.
+3. **Manual plan execution, before the planner.** *Built.* A hand-authored plan
+   runs end to end without the parser, exercising the two step-3 primitives
+   together: `bind_var` (candidate enumeration, the **shared primitive** the
+   planner reuses) fills a plan step's fungible slot from what the actor knows,
+   and the bound affordance executes through the game's grounded action.
+   Correcting the earlier framing: a plan is **not** a persisted `Steps` list and
+   there is **no affordance-carrying `Intent` variant**. The lowering resolution
+   (crate section) is why: a synthesized plan is transient runtime output, and a
+   plan step lowers by dispatching to the game's grounded action (`perform` →
+   `do_take` / `do_move`), where the veto already lives, so a planned pickup is
+   filtered and refused exactly as a typed `take` is (the tests prove the veto
+   rejects the planned path, not just the typed one). Nothing agency-owned
+   serializes; the persisted `Sequences` / `Intent` scripts stay a *separate*
+   bypass seam (a hand-authored script injects at the sweep, per the two bypass
+   seams above). `Known` is seeded the trivial way ("co-located ⇒ known",
+   `known_here`); perception / sense-propagation is a deferred layer, deliberately
+   not coupled in. What is absent is **regression** (chaining affordances by
+   precondition): that is the planner proper, step 4.
+4. **The planner.** Regression over the affordance table on top of the step-3
+   binding primitive, now falsifiable by the same executable oracle step 3 uses:
+   run the planner's *own* output through the sweep and assert the goal predicate
+   became true. That is an independent check against world state, not a comparison
+   to a hand-authored plan (many chains satisfy a goal; the planner may pick a
+   different correct one), and it covers goals no hand-plan was written for. Cost
+   *value* and heuristic start trivial (unit cost, no heuristic) and sharpen
+   later; both are additions (the cost *representation*, by contrast, was pinned
+   in step 1).
+5. **Drives, then the arbiter.** These are policy over a working planner and
+   are the textbook deferral: an imperative goal is a one-line injection at the
+   arbiter, so the planner is fully testable with hand-injected goals long before
+   drives exist. The arbiter's commitment / hysteresis only becomes observable
+   once something is selecting goals, so it follows a real planner rather than
+   preceding it.
+6. **Per-actor cost learning.** An agent keeps a running success statistic per
+   affordance (an exponential moving average or a win / loss tally, not a trained
+   model), and the game's cost function returns `base + learned_bias(actor,
+   affordance)`, so an actor's costs drift toward what it actually succeeds at with
+   no manual tuning. The mechanism is small but has hard entry gates it cannot
+   precede. Its signal is the **beat outcome** the execution sweep already produces
+   (a vetoed beat is a clean per-affordance failure, a committed beat a success;
+   goal-level outcome is the wrong, badly-attributed signal), so it needs the
+   planner and execution of steps 3 and 4. It has *nothing to learn* until at least
+   one action carries a **variable outcome** (a skill roll, combat, a contested
+   action), because a deterministic precondition-gated action always succeeds once
+   selected. And by the falsifiability rule it must not ship until the static-cost
+   planner of step 4 stands as a baseline and a metric exists for "is this actor
+   succeeding more over time," or a drifting weight silently degrades the agent with
+   no way to separate learner from planner. The learned component (a
+   `map<affordance, stat>` on the actor, persisted per-actor like `Hunger`) and its
+   update system are `musce_ref` content; `musce_agency` only exposes cost as a
+   game-supplied function and never learns the weights exist. It is independent of
+   step 5 (hand-injected goals drive enough actions to learn from), so it may land
+   before or after drives, but only after the planner.
+
+## Documents
+
+- [affordances.md](affordances.md): the affordance and precondition *sets*:
+  primitives are the structural action shapes and verbs are instances, the
+  predicate vocabulary (`related`/`tag` plus content filters) as a view over the
+  relation graph, effects as the committed mutation projected, and how the veto
+  lives once in the handler rather than duplicated into the planner.
+
+## Deferred / not yet written
+
+The arbiter (commitment and hysteresis), perception and the `Known` relation (how
+edges are acquired and whether they persist or decay, and the deferred false-belief
+layer), the planner (regression, argument binding against known entities, the cost
+model and heuristic, and the per-actor learning rule of build step 6: the stat
+shape, the update rate, and whether weights decay), and drives (the urgency curves
+and how imperative goals are injected and retired) each want their own doc once the
+affordance shape settles.
+This is the list of subsystems still to design; the order they get *built* in
+(and why it inverts the stack numbering) is the Build order section above.
+
+One cross-cutting dependency is noted but not owned here, and it is a standing
+invariant rather than a planned migration: **plannable ∩ gated = ∅.** Every action
+a planner reaches is ungated (gameplay verbs); every capability-gated action is
+admin-only and parser-only. So the `Gate`/`Verdict` check stays connection-scoped
+at `dispatch_command`, above the planner's reach, and agents never encounter it.
+This holds by design; if it ever breaks, the capability requirement becomes an
+affordance property checked in the executor's validate (where the gameplay vetoes
+already live), which folds it into the single veto point without moving authority
+onto the body. See [affordances.md](affordances.md) and
+[../authorization.md](../authorization.md).
+
+## Crate boundary and the world-index question
+
+**The generic mechanism is its own crate, `musce_agency`.** It is carved up front,
+with `musce_ref` as its first consumer, the way `musce_index` was: the generic
+crate and its reference consumer landed together in one change, not prototyped in
+the game and extracted later. The reason to draw the boundary early is that in Rust
+the boundary *is* the enforcement of the one property this design most needs. The
+**generic mechanism** (the planner's regression and unification, the arbiter's
+commitment logic, the term/clause machinery, the affordance table with its by-name
+and by-effect indexes, the `PredicateRegistry`) must stay separable from the **game
+content** in `musce_ref` (the concrete affordances, the predicate parameters like
+`Known`/`Locked`/`Food`, drives, goals, costs, rules). A crate boundary makes a
+weld between them a *compile error*: `musce_agency` cannot name `Locked` or `Food`
+because that would be an upward dependency on `musce_ref`. Module privacy inside a
+single crate gives none of that, and deferring the crate would defer the guardrail
+to exactly the moment welding has already set in. So the split resembles
+`musce_index` (generic game-side mechanism a game consumes), not `sequences`
+(welded to a serialized `Intent`), *because the boundary is what keeps it there.*
+
+The one shape that could still weld agency to `sequences` is the plan step, and it
+is resolved by keeping a synthesized plan **transient** and lowering it through
+game code, not by a new serialized variant. A plan step lowers by dispatching to
+the game's **grounded action** for that affordance (`perform` → `do_take` /
+`do_move`), the same handler-level unit a player's verb runs, which validates its
+veto and *then* commits the structural `Action`. The veto is why lowering is not a
+generic effect→`Action` translation: an affordance's declared effect is the
+*symbolic* mutation the planner chains on and that the step-2 oracle checks against
+the world, but the committing path must run the game's rule (`is_takeable`,
+`can_traverse`), so the game supplies the dispatch (see
+[affordances.md](affordances.md) and [../actions.md](../actions.md)). Two things
+keep the crate acyclic. The grounded actions live in `musce_ref`, which already
+depends on `musce_agency`, so affordance types flow *downward* into `perform` with
+no upward edge; and a plan is runtime output that never persists, so no
+agency-owned type embeds in the serialized `Intent`. Routing plans through a new
+`Intent` variant is the path that would force `Intent` (lower) to name an
+affordance instance (higher) and create the cycle; transient lowering avoids it.
+The executor's `Action` set still sits *below* agency in `musce_action`, reached
+through the grounded action, so the structural mutation path is shared without
+agency owning it.
+
+**The planner needs no world index, by design.** A GOAP search looks like it would
+query the world heavily to find candidates, but knowledge-gating bounds it: binding
+a variable (`holds(self, x) ∧ tag(x, Food)`) enumerates the agent's `Known` edges,
+a small per-agent set, and filters by tag, never scanning the world. So there is
+nothing for `musce_index` (which indexes *world* components for *world-wide*
+retrieval; see [../indexes.md](../indexes.md)) to accelerate in the planner, and a
+planner that *did* consult a world index ("where is any food") would reintroduce
+the omniscience the `Known` filter exists to prevent. The planner's own indexes
+(by-name, by-effect) are over the small static affordance table, not over entities,
+so they are not `musce_index` either.
+
+Where `musce_index` legitimately meets agency is one layer over, in **perception**,
+the thing that *creates* `Known` edges. Co-located perception is a cheap
+locus-contents read with no index; sensing at range (deferred sense-propagation) is
+the only place the spatial index could serve, and that is perception logic, outside
+the planner. The governing principle: **ignorance is gameplay, not a query.** An
+agent that does not know where food is should behave like it, wander, head where
+food is usually found, ask someone, all app logic, rather than consult a global
+lookup. A game may keep authored search priors (a kind-to-locations table) if it
+wants data-driven wandering, and that is the one spot a *game* might index; the
+planner never does.

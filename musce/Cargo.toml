@@ -8,6 +8,7 @@ musce_index = ["dep:musce_index"]
 
 [dependencies]
 musce_action = { workspace = true }
+musce_agency = { workspace = true, optional = true }
 musce_core = { workspace = true }
 musce_host = { workspace = true }
 musce_index = { workspace = true, optional = true }
