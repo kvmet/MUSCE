@@ -66,7 +66,9 @@ fn take_guards_predict_the_gameplay_veto() {
             target: None,
             kind: None,
         };
-        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        let veto = take_affordance()
+            .veto(&frame, &f.world, &RefWorldModel)
+            .map(|g| g.reason);
         run(&mut f.world, f.actor, |c| take(c, "key"));
         let committed = f.world.container_of(f.key) == Some(f.actor);
         assert!(
@@ -89,7 +91,9 @@ fn take_guards_predict_the_gameplay_veto() {
             target: None,
             kind: None,
         };
-        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        let veto = take_affordance()
+            .veto(&frame, &f.world, &RefWorldModel)
+            .map(|g| g.reason);
         assert_eq!(veto, Some("You can't take that."));
         assert_eq!(f.world.container_of(rat), Some(f.garden)); // unmoved
     }
@@ -102,7 +106,9 @@ fn take_guards_predict_the_gameplay_veto() {
             target: None,
             kind: None,
         };
-        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        let veto = take_affordance()
+            .veto(&frame, &f.world, &RefWorldModel)
+            .map(|g| g.reason);
         assert_eq!(veto, Some("You can't take that."));
     }
     // A held container the actor stands inside: the guard permits (a container is
@@ -122,7 +128,9 @@ fn take_guards_predict_the_gameplay_veto() {
             target: None,
             kind: None,
         };
-        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        let veto = take_affordance()
+            .veto(&frame, &f.world, &RefWorldModel)
+            .map(|g| g.reason);
         assert!(veto.is_none(), "a container is takeable by the guard");
         // The grounded action still refuses: the move would cycle.
         assert!(matches!(
@@ -414,12 +422,16 @@ fn go_guard_predicts_the_locked_veto() {
     };
 
     // Unlocked: no veto, and the actor traverses.
-    let veto_open = go_aff().veto(&frame, &f.world, &RefWorldModel);
+    let veto_open = go_aff()
+        .veto(&frame, &f.world, &RefWorldModel)
+        .map(|g| g.reason);
     assert!(veto_open.is_none());
 
     // Locked: the negated guard fires with exactly the message the handler shows.
     f.world.insert(north, Locked);
-    let veto_locked = go_aff().veto(&frame, &f.world, &RefWorldModel);
+    let veto_locked = go_aff()
+        .veto(&frame, &f.world, &RefWorldModel)
+        .map(|g| g.reason);
     assert_eq!(veto_locked, Some("It's locked."));
 
     let out = run(&mut f.world, f.actor, |c| go(c, "north"));

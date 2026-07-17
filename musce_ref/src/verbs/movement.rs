@@ -152,7 +152,7 @@ fn can_traverse(world: &World, mover: EntityId, exit: EntityId) -> Result<(), &'
         kind: None,
     };
     match crate::agency::go().veto(&frame, world, &crate::agency::RefWorldModel) {
-        Some(reason) => Err(reason),
+        Some(guard) => Err(guard.reason),
         None => Ok(()),
     }
 }

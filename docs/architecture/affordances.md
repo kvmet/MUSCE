@@ -102,6 +102,12 @@ first failing `clause` refuses with its `reason`. The planner reads the same
 `clause`s and ignores the prose. The bool is an *ingredient* of the guard, not the
 whole veto.
 
+`Affordance::veto` returns the whole failing `Guard`, not just its `reason`, so the
+caller decides how to use it: today every caller reads `reason` for the player, but
+a second audience (an observer, a log) or a later rendering rework can read the
+`clause` instead without changing the seam. That keeps the presentation choice with
+the caller rather than baking it into the veto's return type.
+
 **What guards do not replace.** The handler still owns the effect (mutation), the
 narration, the structural invariants the executor re-checks at commit, stochastic
 resolution, and any veto the current vocabulary cannot express. Those stay an

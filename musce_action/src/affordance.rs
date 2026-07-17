@@ -278,22 +278,18 @@ impl Affordance {
         self.gate.permits(verdict)
     }
 
-    /// The reason this action is vetoed for `frame` in `world`, or `None` if every
-    /// guard holds. Grounds each guard's clause against the frame and reads it
-    /// through the game-supplied `model`, returning the first failing guard's
-    /// prose: the player-facing half of the veto. A handler calls this where its
-    /// hand-written precondition check used to sit; the planner instead reads the
-    /// same guard clauses for applicability, so the two cannot drift.
-    pub fn veto(
-        &self,
-        frame: &Frame,
-        world: &World,
-        model: &dyn WorldModel,
-    ) -> Option<&'static str> {
+    /// The first guard that vetoes this action for `frame` in `world`, or `None` if
+    /// every guard holds. Grounds each guard's clause against the frame and reads it
+    /// through the game-supplied `model`, returning the whole failing [`Guard`] so
+    /// the caller chooses how to use it: today handlers read its `reason` for the
+    /// player-facing prose, but a richer renderer (a second audience, a log) can
+    /// read its `clause` instead. A handler calls this where its hand-written
+    /// precondition check used to sit; the planner instead reads the same guard
+    /// clauses for applicability, so the two cannot drift.
+    pub fn veto(&self, frame: &Frame, world: &World, model: &dyn WorldModel) -> Option<&Guard> {
         self.guards
             .iter()
             .find(|g| !g.clause.bind(frame).0.iter().all(|l| l.holds(world, model)))
-            .map(|g| g.reason)
     }
 }
 

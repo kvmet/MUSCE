@@ -33,8 +33,8 @@ pub(crate) fn do_put(
         target: Some(container),
         kind: None,
     };
-    if let Some(reason) = crate::agency::put().veto(&frame, world, &RefWorldModel) {
-        return Outcome::Refused(reason);
+    if let Some(guard) = crate::agency::put().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(guard.reason);
     }
     // Putting a held container into itself would cycle; the executor rejects it,
     // and "you can't put that there" is the right thing for the player to hear.
@@ -414,7 +414,9 @@ mod tests {
                 target: Some(f.chest),
                 kind: None,
             };
-            let veto = put_aff().veto(&frame, &f.world, &RefWorldModel);
+            let veto = put_aff()
+                .veto(&frame, &f.world, &RefWorldModel)
+                .map(|g| g.reason);
             run(&mut f.world, f.actor, |c| put(c, "coin in chest"));
             let committed = f.world.container_of(f.coin) == Some(f.chest);
             assert!(
@@ -432,7 +434,9 @@ mod tests {
                 target: Some(f.rat),
                 kind: None,
             };
-            let veto = put_aff().veto(&frame, &f.world, &RefWorldModel);
+            let veto = put_aff()
+                .veto(&frame, &f.world, &RefWorldModel)
+                .map(|g| g.reason);
             let out = run(&mut f.world, f.actor, |c| put(c, "coin in rat"));
             let committed = f.world.container_of(f.coin) == Some(f.rat);
             assert_eq!(veto, Some("You can't put things in that."));
@@ -452,7 +456,9 @@ mod tests {
                 target: Some(f.chest),
                 kind: None,
             };
-            let veto = put_aff().veto(&frame, &f.world, &RefWorldModel);
+            let veto = put_aff()
+                .veto(&frame, &f.world, &RefWorldModel)
+                .map(|g| g.reason);
             assert_eq!(veto, Some("You aren't carrying that."));
         }
     }
@@ -479,7 +485,9 @@ mod tests {
             target: Some(bag),
             kind: None,
         };
-        let veto = put_aff().veto(&frame, &f.world, &RefWorldModel);
+        let veto = put_aff()
+            .veto(&frame, &f.world, &RefWorldModel)
+            .map(|g| g.reason);
         run(&mut f.world, f.actor, |c| put(c, "bag in bag"));
         let committed = f.world.container_of(bag) == Some(bag);
 
@@ -507,7 +515,9 @@ mod tests {
                 target: Some(f.room),
                 kind: None,
             };
-            let veto = drop_aff().veto(&frame, &f.world, &RefWorldModel);
+            let veto = drop_aff()
+                .veto(&frame, &f.world, &RefWorldModel)
+                .map(|g| g.reason);
             run(&mut f.world, f.actor, |c| drop(c, "coin"));
             let committed = f.world.container_of(f.coin) == Some(f.room);
             assert!(
@@ -524,7 +534,9 @@ mod tests {
                 target: Some(f.room),
                 kind: None,
             };
-            let veto = drop_aff().veto(&frame, &f.world, &RefWorldModel);
+            let veto = drop_aff()
+                .veto(&frame, &f.world, &RefWorldModel)
+                .map(|g| g.reason);
             assert_eq!(veto, Some("You aren't carrying that."));
         }
     }

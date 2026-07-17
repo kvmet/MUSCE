@@ -24,8 +24,8 @@ pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> Out
         target: None,
         kind: None,
     };
-    if let Some(reason) = crate::agency::take().veto(&frame, world, &RefWorldModel) {
-        return Outcome::Refused(reason);
+    if let Some(guard) = crate::agency::take().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(guard.reason);
     }
     // The one structural way this fails is taking a container the actor stands
     // inside (a containment cycle); the executor rejects it and "you can't take
@@ -60,8 +60,8 @@ pub(crate) fn do_drop(world: &mut World, actor: EntityId, item: EntityId) -> Out
         target: Some(room),
         kind: None,
     };
-    if let Some(reason) = crate::agency::drop().veto(&frame, world, &RefWorldModel) {
-        return Outcome::Refused(reason);
+    if let Some(guard) = crate::agency::drop().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(guard.reason);
     }
     // Dropping a held item into its enclosing room cannot cycle, so this commits;
     // a structural error here would be a bug, surfaced as a refusal to the player.
