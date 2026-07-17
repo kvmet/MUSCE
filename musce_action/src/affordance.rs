@@ -18,6 +18,9 @@
 
 use musce_core::{EntityId, World};
 
+use crate::caps::Verdict;
+use crate::dispatch::Gate;
+
 /// A predicate argument: a bound entity, or a variable the planner binds by
 /// enumeration. `Const` vs `Var` is the fungibility axis: a non-fungible want
 /// ("greet *this* king") pins a `Const`; a fungible one ("any food") is a `Var`
@@ -250,6 +253,14 @@ pub struct Affordance {
     /// truth and re-checks at execution (the structural invariants the executor
     /// owns are deliberately *not* expressed here; see the affordances doc).
     pub guards: Vec<Guard>,
+    /// The authority required to perform this act. `Open` for an act any actor may
+    /// attempt; `Cap` gates it on a capability the performer's [`Verdict`] must
+    /// admit. This is the *act's* requirement, separate from the gameplay `guards`:
+    /// enforced on the automation entry (`perform` checks it against the actor's
+    /// verdict, guest by default), while a player verb's command still carries its
+    /// own `CommandTable` gate, so both entries express the same requirement at
+    /// their own boundary. See the affordances doc.
+    pub gate: Gate,
     /// The predicates the action makes true, so the planner can chain backward
     /// toward a goal. Declared explicitly rather than projected off the
     /// committed `Action`, keeping the executor's internals out of the
@@ -259,6 +270,14 @@ pub struct Affordance {
 }
 
 impl Affordance {
+    /// Whether `verdict` may perform this act: `Open` admits everyone, `Cap` admits
+    /// a verdict that holds the capability (or su). The authority half of
+    /// performing, separate from the gameplay [`Affordance::veto`]. An automation
+    /// entry checks this against the acting principal's verdict before it commits.
+    pub fn permits(&self, verdict: &Verdict) -> bool {
+        self.gate.permits(verdict)
+    }
+
     /// The reason this action is vetoed for `frame` in `world`, or `None` if every
     /// guard holds. Grounds each guard's clause against the frame and reads it
     /// through the game-supplied `model`, returning the first failing guard's
@@ -389,6 +408,7 @@ mod tests {
         let take = Affordance {
             name: "take".into(),
             guards: Vec::new(),
+            gate: Gate::Open,
             effect: Clause(vec![
                 Predicate::Related {
                     a: var("actor"),

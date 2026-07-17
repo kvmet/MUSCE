@@ -9,7 +9,9 @@
 > (`do_take` / `do_drop` / `do_put` / `do_move`) that fold in their own veto, so a
 > player verb and `perform` share one rule per verb; `perform` dispatches every one
 > and returns a uniform committed/refused `Outcome` (movement's richer
-> `MoveOutcome` is collapsed to it). The affordance *table* and its two indexes,
+> `MoveOutcome` is collapsed to it). The engine `Affordance` also carries an
+> authority `gate`, which `perform` enforces against the acting verdict (guest by
+> default) before committing. The affordance *table* and its two indexes,
 > the rest of the verb catalog as `musce_ref` instances, and the planner
 > (regression) remain proposed. This doc covers what a grounded action carries and how the
 > reference verbs collapse onto a handful of structural shapes; the symbolic
@@ -37,6 +39,15 @@ an NPC planner resolve to. It carries four things:
   execution. See [../affordances.md](../affordances.md).
 - **An effect set:** the predicates the action makes true or false, so the
   planner can chain backward toward a goal.
+- **An authority gate (`gate: Gate`):** the capability the act requires, distinct
+  from the gameplay guards. Guards are about the *body* (world state, read for any
+  actor); the gate is about the *principal's* authority (a `Verdict`, meaningless
+  for a body with no account). It is enforced on the automation entry: `perform`
+  checks `Affordance::permits` against the actor's verdict (guest by default) before
+  it commits, so a cap-gated act is unavailable to plain automation until a game
+  hands it authority. A player verb's command keeps its own `CommandTable` gate, so
+  both entries express the same requirement at their own boundary. See
+  [../affordances.md](../affordances.md).
 - **A cost:** the edge weight A\* minimizes. Where personality lives.
 
 A **verb** is `affordance + text parser`. A **GOAP action** is `affordance +

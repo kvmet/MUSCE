@@ -12,7 +12,7 @@
 use musce_core::{EntityId, World};
 
 pub use musce_action::{
-    Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
+    Affordance, Clause, Frame, Gate, Guard, Literal, Predicate, Term, Var, WorldModel,
 };
 
 /// A plan cost the planner minimizes. Integer for MVP; widening to a fractional
@@ -79,6 +79,7 @@ mod tests {
         let take = Affordance {
             name: "take".into(),
             guards: Vec::new(),
+            gate: Gate::Open,
             effect: Clause::default(),
         };
         assert_eq!(UnitCost.cost(EntityId(1), &take, &World::new()), 1);

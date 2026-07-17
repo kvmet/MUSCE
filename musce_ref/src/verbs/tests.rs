@@ -304,7 +304,7 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
         kind: None,
     };
     assert!(matches!(
-        perform(&mut f.world, &take_affordance(), &frame),
+        perform(&mut f.world, &take_affordance(), &frame, &Verdict::guest()),
         Outcome::Committed
     ));
     assert_eq!(f.world.container_of(f.key), Some(f.actor));
@@ -318,7 +318,12 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
         kind: None,
     };
     assert!(matches!(
-        perform(&mut f.world, &take_affordance(), &rat_frame),
+        perform(
+            &mut f.world,
+            &take_affordance(),
+            &rat_frame,
+            &Verdict::guest()
+        ),
         Outcome::Refused(_)
     ));
     assert_eq!(f.world.container_of(rat), Some(f.garden)); // unmoved
@@ -362,14 +367,24 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
             kind: None,
         };
         assert!(matches!(
-            perform(&mut f.world, &put_aff(), &framed(coin, chest)),
+            perform(
+                &mut f.world,
+                &put_aff(),
+                &framed(coin, chest),
+                &Verdict::guest()
+            ),
             Outcome::Committed
         ));
         assert_eq!(f.world.container_of(coin), Some(chest));
 
         f.world.move_entity(coin, f.actor).unwrap(); // back to hand for a clean try
         assert!(matches!(
-            perform(&mut f.world, &put_aff(), &framed(coin, rat)),
+            perform(
+                &mut f.world,
+                &put_aff(),
+                &framed(coin, rat),
+                &Verdict::guest()
+            ),
             Outcome::Refused(_)
         ));
         assert_eq!(f.world.container_of(coin), Some(f.actor)); // unmoved
@@ -391,7 +406,7 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
             kind: None,
         };
         assert!(matches!(
-            perform(&mut f.world, &drop_aff(), &held),
+            perform(&mut f.world, &drop_aff(), &held, &Verdict::guest()),
             Outcome::Committed
         ));
         assert_eq!(f.world.container_of(coin), Some(f.hall));
@@ -403,7 +418,7 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
             kind: None,
         };
         assert!(matches!(
-            perform(&mut f.world, &drop_aff(), &unheld),
+            perform(&mut f.world, &drop_aff(), &unheld, &Verdict::guest()),
             Outcome::Refused(_)
         ));
         assert_eq!(f.world.container_of(f.key), Some(f.garden)); // unmoved
@@ -420,7 +435,7 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
             kind: None,
         };
         assert!(matches!(
-            perform(&mut f.world, &go_aff(), &framed),
+            perform(&mut f.world, &go_aff(), &framed, &Verdict::guest()),
             Outcome::Committed
         ));
         assert_eq!(f.world.enclosing_locus(f.actor), Some(f.garden));
@@ -436,10 +451,74 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
             kind: None,
         };
         assert!(matches!(
-            perform(&mut f.world, &go_aff(), &framed),
+            perform(&mut f.world, &go_aff(), &framed, &Verdict::guest()),
             Outcome::Refused(_)
         ));
         assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // unmoved
+    }
+}
+
+/// The affordance gate is enforced on the automation entry: `perform` refuses a
+/// cap-gated act under a verdict lacking the capability, runs it under one that
+/// holds it, and lets su bypass, exactly as a `Gate::Cap` command does at
+/// dispatch. A synthetic cap-gated `take` isolates the gate: the takeable guard
+/// permits the key, so the gate alone decides. This is the automation-authority
+/// half of the (ii) model; a player verb keeps its `CommandTable` gate instead.
+#[test]
+fn perform_enforces_the_affordance_gate() {
+    use crate::agency::perform;
+    use musce::action::{CapId, CapSet, Gate};
+    use musce::agency::{Affordance, Clause, Frame};
+
+    let cap = CapId(0);
+    let gated_take = || Affordance {
+        name: "take".into(),
+        gate: Gate::Cap(cap),
+        guards: Vec::new(),
+        effect: Clause::default(),
+    };
+    let frame = |actor, item| Frame {
+        actor,
+        object: Some(item),
+        target: None,
+        kind: None,
+    };
+
+    // Guest verdict lacks the cap: the gate refuses before do_take runs.
+    {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap();
+        let out = perform(
+            &mut f.world,
+            &gated_take(),
+            &frame(f.actor, f.key),
+            &Verdict::guest(),
+        );
+        assert!(matches!(out, Outcome::Refused(_)));
+        assert_eq!(f.world.container_of(f.key), Some(f.garden)); // unmoved
+    }
+    // A verdict holding the cap: the gate admits, the takeable key is taken.
+    {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap();
+        let granted = Verdict::new([cap].into_iter().collect(), false);
+        let out = perform(
+            &mut f.world,
+            &gated_take(),
+            &frame(f.actor, f.key),
+            &granted,
+        );
+        assert!(matches!(out, Outcome::Committed));
+        assert_eq!(f.world.container_of(f.key), Some(f.actor));
+    }
+    // su bypasses the gate with no grant at all.
+    {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap();
+        let su = Verdict::new(CapSet::new(), true);
+        let out = perform(&mut f.world, &gated_take(), &frame(f.actor, f.key), &su);
+        assert!(matches!(out, Outcome::Committed));
+        assert_eq!(f.world.container_of(f.key), Some(f.actor));
     }
 }
 

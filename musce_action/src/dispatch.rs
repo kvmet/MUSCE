@@ -32,7 +32,7 @@ pub enum Gate {
 }
 
 impl Gate {
-    fn permits(self, verdict: &Verdict) -> bool {
+    pub(crate) fn permits(self, verdict: &Verdict) -> bool {
         match self {
             Gate::Open => true,
             Gate::Cap(cap) => verdict.permits(cap),

@@ -37,7 +37,10 @@ be: a drive/goal planner on top.
 
 - **Engine, non-optional (`musce_action`):** `Term` / `Predicate` / `Literal` /
   `Clause` / `Affordance` / `Frame`, the `WorldModel` evaluation seam, `Guard {
-  clause, reason }`, and the `Affordance::veto` evaluator. This crate already owns the
+  clause, reason }`, the `Affordance::veto` evaluator, and the affordance's
+  authority `gate` (`Affordance::permits`), the act's capability requirement that
+  an automation entry checks against the acting verdict, distinct from the gameplay
+  guards (see "The gate" below). This crate already owns the
   `Action` set the predicates mirror and the command dispatch a handler runs
   under, so the types land where the handlers that call `veto` are. (The
   alternative, a new low crate between core and action, was weighed and set aside
@@ -105,6 +108,33 @@ resolution, and any veto the current vocabulary cannot express. Those stay an
 imperative tail. A guard covers the declarative, game-state portion of the veto,
 which the [expressibility experiment](agency/affordances.md) showed is a large
 share of the common verbs but never all of them.
+
+## The gate: authority, distinct from the guards
+
+An affordance carries an authority `gate: Gate` (`Open`, or `Cap(id)`) alongside
+its guards. The two look alike but answer different questions, and the difference
+is why they are separate fields rather than one predicate set:
+
+| | guard | gate |
+|---|---|---|
+| about whom | the acting *body* (actor + objects) | the *principal's* account authority |
+| source of truth | world state, via `WorldModel` | the `Verdict`, deliberately not in the world |
+| applies to an NPC? | yes, same body, same rule | no, an NPC has no account |
+| the planner reads it? | yes, for applicability | no |
+
+Folding the gate into a guard clause would force `WorldModel::holds` to see the
+`Verdict` and let a game conflate "is true in the world" with "is authorized", and
+would make the planner reason about authority an NPC does not have. So the gate is
+its own field, evaluated outside `WorldModel` by whoever performs the act.
+
+The gate lives on the affordance (not only on the command table) so the *act*
+carries its requirement to every entry: `perform` checks `Affordance::permits`
+against the acting verdict (non-connection automation defaults to `Verdict::guest`,
+so a cap-gated act is unavailable until a game hands the automation authority).
+A player verb's command keeps its `CommandTable` gate, so both entries express the
+same requirement at their own boundary; unifying an act-verb's two gates onto the
+affordance is deferred with the admin-verb table. Read-only commands that perform
+no affordance (a gated query) keep the `CommandTable` gate as their only home.
 
 ## Scope discipline: what we will not build
 

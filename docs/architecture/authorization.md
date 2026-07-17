@@ -21,7 +21,9 @@ exist before any character, must not ride the world's snapshot cadence, and must
 be walked by game systems or the reflection admin layer. So they are *not* entities
 in the ECS world. They are a thin, columnar table in the same store as the world.
 Authorization is then a `Verdict` resolved from an account's capabilities and its
-superuser bit, consulted at the dispatch seam.
+superuser bit, consulted where an act enters: the command dispatch seam (a verb's
+`CommandTable` gate) and the automation seam (an affordance's own `gate`, checked
+by `perform`; see [affordances.md](affordances.md)).
 
 ## Accounts live in the one store, not a parallel one
 
