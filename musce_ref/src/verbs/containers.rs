@@ -364,4 +364,155 @@ mod tests {
                 .any(|t| t.contains("Give what to whom?"))
         );
     }
+
+    // Affordance-promotion experiment: does an affordance's declarative
+    // precondition, evaluated through `RefWorldModel`, predict the same
+    // permit/refuse the imperative handler produces? These pin what the current
+    // predicate vocabulary can and cannot express as a gameplay veto.
+
+    /// `put`'s veto is a conjunction the vocabulary expresses in full (item held
+    /// AND destination is a container). The precondition agrees with the handler
+    /// on every gameplay case.
+    #[test]
+    fn put_precondition_predicts_the_gameplay_veto() {
+        use crate::agency::{RefWorldModel, put as put_aff};
+        use musce::agency::{Frame, WorldModel};
+
+        let holds = |world: &World, frame: &Frame| {
+            put_aff()
+                .precondition
+                .bind(frame)
+                .0
+                .iter()
+                .all(|p| RefWorldModel.holds(p, world))
+        };
+
+        // Held item + container destination: both permit.
+        {
+            let mut f = fixture();
+            crate::systems::register(&mut f.world);
+            let frame = Frame {
+                actor: f.actor,
+                object: Some(f.coin),
+                target: Some(f.chest),
+                kind: None,
+            };
+            let pre = holds(&f.world, &frame);
+            run(&mut f.world, f.actor, |c| put(c, "coin in chest"));
+            let committed = f.world.container_of(f.coin) == Some(f.chest);
+            assert!(pre && committed, "precond {pre}, committed {committed}");
+        }
+        // Held item + non-container destination (a creature): both refuse.
+        {
+            let mut f = fixture();
+            crate::systems::register(&mut f.world);
+            let frame = Frame {
+                actor: f.actor,
+                object: Some(f.coin),
+                target: Some(f.rat),
+                kind: None,
+            };
+            let pre = holds(&f.world, &frame);
+            run(&mut f.world, f.actor, |c| put(c, "coin in rat"));
+            let committed = f.world.container_of(f.coin) == Some(f.rat);
+            assert!(!pre && !committed, "precond {pre}, committed {committed}");
+        }
+        // Item not held (a container on the floor): both refuse.
+        {
+            let mut f = fixture();
+            crate::systems::register(&mut f.world);
+            let frame = Frame {
+                actor: f.actor,
+                object: Some(f.chest),
+                target: Some(f.chest),
+                kind: None,
+            };
+            assert!(!holds(&f.world, &frame), "floor item is not held");
+        }
+    }
+
+    /// The one refusal a precondition should NOT capture: the containment cycle
+    /// is a structural invariant the executor re-checks at commit, not a gameplay
+    /// rule. The precondition permits, the handler refuses, and that divergence is
+    /// the boundary between what belongs in a precondition and what does not.
+    #[test]
+    fn put_precondition_does_not_capture_the_structural_cycle() {
+        use crate::agency::{RefWorldModel, put as put_aff};
+        use musce::agency::{Frame, WorldModel};
+
+        let mut f = fixture();
+        crate::systems::register(&mut f.world);
+        let bag = spawn(&mut f.world, |b| {
+            b.add(Container);
+            b.add(Name("a leather bag".into()));
+        });
+        f.world.move_entity(bag, f.actor).unwrap();
+
+        let frame = Frame {
+            actor: f.actor,
+            object: Some(bag),
+            target: Some(bag),
+            kind: None,
+        };
+        let precond = put_aff()
+            .precondition
+            .bind(&frame)
+            .0
+            .iter()
+            .all(|p| RefWorldModel.holds(p, &f.world));
+        run(&mut f.world, f.actor, |c| put(c, "bag in bag"));
+        let committed = f.world.container_of(bag) == Some(bag);
+
+        assert!(
+            precond,
+            "bag is held and is a container: precondition permits"
+        );
+        assert!(!committed, "the cycle is a structural refusal at commit");
+    }
+
+    /// `drop`'s veto (the item is held) is a single relation predicate, fully
+    /// expressible; the precondition agrees with the handler.
+    #[test]
+    fn drop_precondition_predicts_the_veto() {
+        use crate::agency::{RefWorldModel, drop as drop_aff};
+        use crate::verbs::drop;
+        use musce::agency::{Frame, WorldModel};
+
+        let holds = |world: &World, frame: &Frame| {
+            drop_aff()
+                .precondition
+                .bind(frame)
+                .0
+                .iter()
+                .all(|p| RefWorldModel.holds(p, world))
+        };
+
+        // Held item: both permit, and it lands in the room.
+        {
+            let mut f = fixture();
+            crate::systems::register(&mut f.world);
+            let frame = Frame {
+                actor: f.actor,
+                object: Some(f.coin),
+                target: Some(f.room),
+                kind: None,
+            };
+            let pre = holds(&f.world, &frame);
+            run(&mut f.world, f.actor, |c| drop(c, "coin"));
+            let committed = f.world.container_of(f.coin) == Some(f.room);
+            assert!(pre && committed, "precond {pre}, committed {committed}");
+        }
+        // Item on the floor, not held: the precondition refuses.
+        {
+            let mut f = fixture();
+            crate::systems::register(&mut f.world);
+            let frame = Frame {
+                actor: f.actor,
+                object: Some(f.chest),
+                target: Some(f.room),
+                kind: None,
+            };
+            assert!(!holds(&f.world, &frame), "a floor item is not held");
+        }
+    }
 }

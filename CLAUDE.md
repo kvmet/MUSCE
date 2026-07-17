@@ -33,6 +33,8 @@ Touch the doc when you touch the code:
 | admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
 | accounts, authentication, capabilities, the verdict/gate (`musce_auth`, `AccountStore`, `CapRegistry`) | `authorization.md` |
 | sequences, effects, timers | `sequences.md` |
+| the affordance vocabulary, predicates, `WorldModel`, guards, the dispatch veto | `affordances.md` |
+| the GOAP planner, `bind_var`, `CostModel`, drives, the arbiter | `agency/README.md` |
 | secondary indexes (`musce_index`), the `World` resource store, coordinates | `indexes.md` |
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
 | the engine/game boundary, the injected `Game` | `engine-and-game.md` |

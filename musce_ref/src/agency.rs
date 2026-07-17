@@ -27,6 +27,58 @@ pub fn take() -> Affordance {
     }
 }
 
+/// `drop <item>`: the held item ends up in the actor's room. Unlike `take`, the
+/// gameplay veto (the item must be held) *is* expressible in the current
+/// vocabulary as a single relation predicate, so the precondition carries it
+/// rather than leaving it to the handler. The effect's destination is the room
+/// the actor stands in, which is not a parsed role; the caller (or planner)
+/// binds `target` to the enclosing locus, the same derived-location shape `go`
+/// has.
+pub fn drop() -> Affordance {
+    Affordance {
+        name: "drop".into(),
+        precondition: Clause(vec![Predicate::Related {
+            a: Term::var("object"),
+            b: Term::var("actor"),
+            kind: "contained_by".into(),
+        }]),
+        effect: Clause(vec![Predicate::Related {
+            a: Term::var("object"),
+            b: Term::var("target"),
+            kind: "contained_by".into(),
+        }]),
+    }
+}
+
+/// `put <item> in <container>`: the held item ends up inside a container. Its
+/// gameplay veto is a *conjunction* the current vocabulary expresses in full: the
+/// item is held (`related(object, actor, contained_by)`) and the destination is a
+/// container (`tag(target, "container")`). The one refusal the precondition does
+/// not capture is the containment *cycle* (putting a held bag into itself); that
+/// is a structural invariant the executor owns and re-checks at commit, not a
+/// gameplay rule, so it correctly stays out of the precondition.
+pub fn put() -> Affordance {
+    Affordance {
+        name: "put".into(),
+        precondition: Clause(vec![
+            Predicate::Related {
+                a: Term::var("object"),
+                b: Term::var("actor"),
+                kind: "contained_by".into(),
+            },
+            Predicate::Tag {
+                e: Term::var("target"),
+                comp: "container".into(),
+            },
+        ]),
+        effect: Clause(vec![Predicate::Related {
+            a: Term::var("object"),
+            b: Term::var("target"),
+            kind: "contained_by".into(),
+        }]),
+    }
+}
+
 /// Reads the affordance vocabulary's predicates against this game's world.
 ///
 /// Each predicate kind maps to a concrete world query: a `"contained_by"`

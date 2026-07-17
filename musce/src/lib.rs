@@ -37,6 +37,7 @@ pub mod action {
     pub use musce_action::actor_name;
     pub use musce_action::{Action, ExecError, execute};
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
+    pub use musce_action::{Affordance, Clause, Frame, Predicate, Term, Var, WorldModel};
     pub use musce_action::{Caller, CommandTable, Gate, Handler, dispatch_command};
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
@@ -71,10 +72,13 @@ pub mod index {
     pub use musce_index::*;
 }
 
-/// The generic agent-behavior mechanism (the affordance vocabulary now; the
-/// planner and arbiter later), behind the `musce_agency` feature. A game enables
+/// The optional planner side of the agency subsystem (the `CostModel` seam and
+/// the `bind_var` binding primitive now; the planner and arbiter later), behind
+/// the `musce_agency` feature. The affordance vocabulary it plans over is
+/// non-optional engine surface under [`action`]; this module re-exports it too,
+/// so a planner-facing consumer reaches everything from one path. A game enables
 /// `features = ["musce_agency"]` and reaches it here. See
-/// `docs/architecture/agency/`.
+/// `docs/architecture/agency/` and `docs/architecture/affordances.md`.
 #[cfg(feature = "musce_agency")]
 pub mod agency {
     pub use musce_agency::*;

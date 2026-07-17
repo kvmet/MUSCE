@@ -15,6 +15,7 @@
 //! - the audience resolver expands room/entity-addressed output into the
 //!   connections that should see it, before anything reaches net.
 
+mod affordance;
 mod audience;
 mod bindings;
 mod caps;
@@ -26,6 +27,7 @@ mod registry;
 
 use musce_core::{EntityId, World};
 
+pub use affordance::{Affordance, Clause, Frame, Predicate, Term, Var, WorldModel};
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};

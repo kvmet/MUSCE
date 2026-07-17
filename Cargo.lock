@@ -928,6 +928,7 @@ dependencies = [
 name = "musce_agency"
 version = "0.1.0"
 dependencies = [
+ "musce_action",
  "musce_core",
 ]
 

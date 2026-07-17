@@ -1,9 +1,10 @@
 # Affordances and Preconditions
 
 > Status: **partially built.** The core vocabulary, `Term`, `Predicate`
-> (`Related` / `Tag`), `Clause`, the `Affordance` struct, the `CostModel` and
-> `WorldModel` seams, the case `Frame` with clause binding, and the `bind_var`
-> enumeration primitive are built in `musce_agency` with unit tests. `musce_ref`
+> (`Related` / `Tag`), `Clause`, the `Affordance` struct, the `WorldModel` seam,
+> and the case `Frame`, are built in the engine (`musce_action`, non-optional; see
+> [../affordances.md](../affordances.md)); the `CostModel` seam and `bind_var` stay
+> on the optional planner side in `musce_agency`. `musce_ref`
 > carries the first real affordance (`agency::take`), `RefWorldModel`, the
 > `known_here` knowledge seed, and `perform` (the grounded-action dispatch); the
 > `take` verb is grounded as `do_take` so a player and a plan share one veto. A
@@ -376,7 +377,7 @@ Deliberately unresolved; listed so they are not mistaken for decided.
 
 - **Predicate representation.** *Decided.* Two chainable primitive kinds
   (`related` / `tag`) over terms (`Const | Var`), clauses as conjunctions, built in
-  `musce_agency`. Parameters (relation kinds, component tags) and `Var` names are
+  the engine (`musce_action`). Parameters (relation kinds, component tags) and `Var` names are
   `String`, matching the executor's `Action`. This is no longer migration-class:
   plans lower to structural `Action`s rather than serialize into `Intent` (see the
   README build order), so the predicate types are never persisted, and interning

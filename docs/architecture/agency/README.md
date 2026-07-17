@@ -1,9 +1,11 @@
 # Agency
 
 > Status: **proposed; vocabulary, binding, and manual plan execution built.**
-> `musce_agency` carries the affordance vocabulary (`Term`, `Predicate`, `Clause`,
-> `Affordance`), the `CostModel` and `WorldModel` seams, the case `Frame` with
-> clause binding, and the `bind_var` enumeration primitive (build steps 1 and 3).
+> The affordance vocabulary (`Term`, `Predicate`, `Clause`, `Affordance`, the case
+> `Frame` with clause binding) and the `WorldModel` seam are now **promoted into
+> the engine**, non-optional, in `musce_action` (see [../affordances.md](../affordances.md));
+> `musce_agency` re-exports them and keeps the optional planner side, the
+> `CostModel` seam and the `bind_var` enumeration primitive (build steps 1 and 3).
 > `musce_ref` grounds the `take` verb (`do_take`) and carries the `take`
 > affordance, `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
 > grounded-action dispatch a plan step lowers to). Tests run a hand-authored plan
@@ -184,6 +186,14 @@ onto the body. See [affordances.md](affordances.md) and
 [../authorization.md](../authorization.md).
 
 ## Crate boundary and the world-index question
+
+> Superseded in part by [../affordances.md](../affordances.md): the affordance /
+> predicate vocabulary and `WorldModel` are now promoted into the engine
+> (`musce_action`, non-optional; phase A built), with a guard-based dispatch veto
+> to follow, leaving `musce_agency` as the optional planner/arbiter/drives layer.
+> The generic / game split argued below still holds; the split moved from
+> *crate-optional vocabulary* to *engine-non-optional vocabulary plus an optional
+> planner*.
 
 **The generic mechanism is its own crate, `musce_agency`.** It is carved up front,
 with `musce_ref` as its first consumer, the way `musce_index` was: the generic
