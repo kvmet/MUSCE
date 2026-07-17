@@ -271,6 +271,20 @@ would skip the cascade, a raw `ecs.spawn` would make an `Id`-less entity, and a 
 `get::<&mut C>` would drop a change from the next delta snapshot. Making the raw
 handle unreachable turns that boundary from a convention into a compile error.
 
+Those write mutators are all **per-entity**: `modify(id, f)` is a point lookup
+(`EntityId` -> `hecs::Entity` -> archetype fetch) each call. A system that writes one
+component across many entities every tick therefore pays that lookup per entity where
+a raw `query::<(&mut C,)>()` would do one columnar pass. A sanctioned bulk mutator
+(`modify_each`) closes that gap without reopening the hole: iterate the mutable query
+under the hood, collect the touched ids, then mark them dirty and emit
+`ComponentChanged` in a second pass (the fact push cannot borrow `self` while the
+query holds `ecs`). It is **deferred** on purpose, not forgotten: keeping hecs's
+archetypal storage is precisely what leaves this escape valve open, but the right
+signature is consumer-shaped (a single-`C` form vs a filtered multi-component query,
+and whether the closure returns "did I change it" to keep fact emission precise), so
+it is built with the first hot bulk-write system that defines those, as a pure
+addition.
+
 The recursive contents walk (`descendants`) is a predicate-driven, visitor-based
 tree walk: the engine is the mechanism, the caller supplies the descent policy
 (e.g. stop at creatures or closed containers for looting; descend everywhere for
