@@ -37,7 +37,7 @@ pub mod action {
     pub use musce_action::actor_name;
     pub use musce_action::{Action, ExecError, execute};
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
-    pub use musce_action::{Affordance, Clause, Frame, Predicate, Term, Var, WorldModel};
+    pub use musce_action::{Affordance, Clause, Frame, Guard, Predicate, Term, Var, WorldModel};
     pub use musce_action::{Caller, CommandTable, Gate, Handler, dispatch_command};
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};

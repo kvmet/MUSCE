@@ -156,6 +156,23 @@ impl Frame {
     }
 }
 
+/// A declarative veto: a clause that must hold for an action to be permitted, and
+/// the reason a player hears when it does not. The unit the two consumers of a
+/// precondition read differently: the handler shows the `reason` of the first
+/// failing guard, the planner reads the `clause`s to test applicability and
+/// ignores the prose. A bare bool could serve neither well; see the affordances
+/// doc for why a guard is a predicate *plus a reason*.
+///
+/// `reason` is `&'static str` because the guard-worthy refusals are fixed game
+/// prose ("You can't put things in that."). A refusal whose message needs runtime
+/// data (a resolved name, a query echo) is not a guard; it stays a resolution
+/// failure in the handler, where the data is.
+#[derive(Debug, Clone)]
+pub struct Guard {
+    pub clause: Clause,
+    pub reason: &'static str,
+}
+
 /// A grounded action: the reusable unit a player verb and the planner both
 /// resolve to. This is the generic shape; concrete instances (which relation
 /// kinds and components a given verb names, its rule, its prose) are game
@@ -169,16 +186,39 @@ impl Frame {
 pub struct Affordance {
     /// By-name key for the parser's lookup.
     pub name: String,
-    /// Predicates that must hold for the action to be *plannable*: a symbolic
-    /// approximation of the handler's real pre-commit rule, which stays truth
-    /// and re-checks at execution.
-    pub precondition: Clause,
+    /// The declarative preconditions, in order. A handler evaluates them through
+    /// [`Affordance::veto`] and refuses with the first failing guard's reason; the
+    /// planner reads their clauses as the applicability condition. This is a
+    /// symbolic approximation of the handler's real pre-commit rule, which stays
+    /// truth and re-checks at execution (the structural invariants the executor
+    /// owns are deliberately *not* expressed here; see the affordances doc).
+    pub guards: Vec<Guard>,
     /// The predicates the action makes true, so the planner can chain backward
     /// toward a goal. Declared explicitly rather than projected off the
     /// committed `Action`, keeping the executor's internals out of the
     /// mechanism. Auto-projection is a possible later refinement (see the
     /// affordances doc); it may never be worth it.
     pub effect: Clause,
+}
+
+impl Affordance {
+    /// The reason this action is vetoed for `frame` in `world`, or `None` if every
+    /// guard holds. Grounds each guard's clause against the frame and reads it
+    /// through the game-supplied `model`, returning the first failing guard's
+    /// prose: the player-facing half of the veto. A handler calls this where its
+    /// hand-written precondition check used to sit; the planner instead reads the
+    /// same guard clauses for applicability, so the two cannot drift.
+    pub fn veto(
+        &self,
+        frame: &Frame,
+        world: &World,
+        model: &dyn WorldModel,
+    ) -> Option<&'static str> {
+        self.guards
+            .iter()
+            .find(|g| !g.clause.bind(frame).0.iter().all(|p| model.holds(p, world)))
+            .map(|g| g.reason)
+    }
 }
 
 /// The game-supplied reading of a predicate against the world. A predicate names
@@ -262,7 +302,7 @@ mod tests {
         // take = Move(item, into=actor); effect holds(actor, object).
         let take = Affordance {
             name: "take".into(),
-            precondition: Clause::default(),
+            guards: Vec::new(),
             effect: Clause(vec![Predicate::Related {
                 a: var("actor"),
                 b: var("object"),

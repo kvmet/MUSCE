@@ -11,7 +11,7 @@
 
 use musce_core::{EntityId, World};
 
-pub use musce_action::{Affordance, Clause, Frame, Predicate, Term, Var, WorldModel};
+pub use musce_action::{Affordance, Clause, Frame, Guard, Predicate, Term, Var, WorldModel};
 
 /// A plan cost the planner minimizes. Integer for MVP; widening to a fractional
 /// type for scaled costs (distance, effort) is a localized change to this alias
@@ -76,7 +76,7 @@ mod tests {
     fn unit_cost_is_one() {
         let take = Affordance {
             name: "take".into(),
-            precondition: Clause::default(),
+            guards: Vec::new(),
             effect: Clause::default(),
         };
         assert_eq!(UnitCost.cost(EntityId(1), &take, &World::new()), 1);

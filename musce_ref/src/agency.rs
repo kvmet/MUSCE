@@ -4,7 +4,7 @@
 //! generic mechanism lives in `musce_agency`; only this crate knows what
 //! `"contained_by"` means. See `docs/architecture/agency/`.
 
-use musce::agency::{Affordance, Clause, Frame, Predicate, Term, WorldModel};
+use musce::agency::{Affordance, Clause, Frame, Guard, Predicate, Term, WorldModel};
 use musce::world::{EntityId, World};
 
 use crate::verbs::{TakeOutcome, do_take};
@@ -12,13 +12,13 @@ use crate::verbs::{TakeOutcome, do_take};
 /// `take <item>`: the item ends up held by the actor. Its declared effect is the
 /// stored containment edge (`object` `contained_by` `actor`), the same edge the
 /// [`take`](crate::verbs::take) handler commits by moving the item into the
-/// actor. The precondition is empty on purpose: reachability is a live
-/// handler rule, and the planner's symbolic approximation of it is a step-4
-/// concern, not something to duplicate here.
+/// actor. It carries no guards on purpose: the takeable rule is a *negation*
+/// (not a fixture, not a being) the current vocabulary cannot express, so the
+/// veto stays whole in `do_take` until negation lands (phase C).
 pub fn take() -> Affordance {
     Affordance {
         name: "take".into(),
-        precondition: Clause::default(),
+        guards: Vec::new(),
         effect: Clause(vec![Predicate::Related {
             a: Term::var("object"),
             b: Term::var("actor"),
@@ -29,19 +29,21 @@ pub fn take() -> Affordance {
 
 /// `drop <item>`: the held item ends up in the actor's room. Unlike `take`, the
 /// gameplay veto (the item must be held) *is* expressible in the current
-/// vocabulary as a single relation predicate, so the precondition carries it
-/// rather than leaving it to the handler. The effect's destination is the room
-/// the actor stands in, which is not a parsed role; the caller (or planner)
-/// binds `target` to the enclosing locus, the same derived-location shape `go`
-/// has.
+/// vocabulary as a single relation predicate, so it is a guard rather than a
+/// handler check. The effect's destination is the room the actor stands in, which
+/// is not a parsed role; the caller (or planner) binds `target` to the enclosing
+/// locus, the same derived-location shape `go` has.
 pub fn drop() -> Affordance {
     Affordance {
         name: "drop".into(),
-        precondition: Clause(vec![Predicate::Related {
-            a: Term::var("object"),
-            b: Term::var("actor"),
-            kind: "contained_by".into(),
-        }]),
+        guards: vec![Guard {
+            clause: Clause(vec![Predicate::Related {
+                a: Term::var("object"),
+                b: Term::var("actor"),
+                kind: "contained_by".into(),
+            }]),
+            reason: "You aren't carrying that.",
+        }],
         effect: Clause(vec![Predicate::Related {
             a: Term::var("object"),
             b: Term::var("target"),
@@ -51,26 +53,38 @@ pub fn drop() -> Affordance {
 }
 
 /// `put <item> in <container>`: the held item ends up inside a container. Its
-/// gameplay veto is a *conjunction* the current vocabulary expresses in full: the
-/// item is held (`related(object, actor, contained_by)`) and the destination is a
-/// container (`tag(target, "container")`). The one refusal the precondition does
-/// not capture is the containment *cycle* (putting a held bag into itself); that
-/// is a structural invariant the executor owns and re-checks at commit, not a
-/// gameplay rule, so it correctly stays out of the precondition.
+/// gameplay veto is two guards the current vocabulary expresses in full: the item
+/// is held (`related(object, actor, contained_by)`) and the destination is a
+/// container (`tag(target, "container")`), each with the reason the `put` handler
+/// shows. The one refusal the guards do not capture is the containment *cycle*
+/// (putting a held bag into itself); that is a structural invariant the executor
+/// owns and re-checks at commit, not a gameplay rule, so it correctly stays out
+/// of the guards.
+///
+/// The held guard is redundant with the handler's inventory-scoped name
+/// resolution (a resolved item is already held), but the planner binds entities
+/// directly with no resolution, so it needs the full precondition; the handler
+/// evaluating a guard resolution already guaranteed is harmless.
 pub fn put() -> Affordance {
     Affordance {
         name: "put".into(),
-        precondition: Clause(vec![
-            Predicate::Related {
-                a: Term::var("object"),
-                b: Term::var("actor"),
-                kind: "contained_by".into(),
+        guards: vec![
+            Guard {
+                clause: Clause(vec![Predicate::Related {
+                    a: Term::var("object"),
+                    b: Term::var("actor"),
+                    kind: "contained_by".into(),
+                }]),
+                reason: "You aren't carrying that.",
             },
-            Predicate::Tag {
-                e: Term::var("target"),
-                comp: "container".into(),
+            Guard {
+                clause: Clause(vec![Predicate::Tag {
+                    e: Term::var("target"),
+                    comp: "container".into(),
+                }]),
+                reason: "You can't put things in that.",
             },
-        ]),
+        ],
         effect: Clause(vec![Predicate::Related {
             a: Term::var("object"),
             b: Term::var("target"),

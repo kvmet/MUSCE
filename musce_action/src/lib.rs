@@ -27,7 +27,7 @@ mod registry;
 
 use musce_core::{EntityId, World};
 
-pub use affordance::{Affordance, Clause, Frame, Predicate, Term, Var, WorldModel};
+pub use affordance::{Affordance, Clause, Frame, Guard, Predicate, Term, Var, WorldModel};
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};

@@ -1,20 +1,20 @@
 # Affordances, Predicates, and Guards
 
-> Status: **phase A built; B and C not yet built.** The affordance/predicate
+> Status: **phase A and B built; C not yet built.** The affordance/predicate
 > vocabulary now lives in the engine, non-optional, in `musce_action`
-> (`affordance.rs`); the optional `musce_agency` crate re-exports it and keeps the
-> planner-side `CostModel` and `bind_var`. The guard-based dispatch veto (phase B)
-> and negation (phase C) are still to come. This doc records the promotion
-> decision and the phased migration; the `> Status:` flips per phase as each
-> lands.
+> (`affordance.rs`), along with `Guard { clause, reason }` and the
+> `Affordance::veto` evaluator (phase B); the optional `musce_agency` crate
+> re-exports the vocabulary and keeps the planner-side `CostModel` and `bind_var`.
+> Negation (phase C) is still to come. This doc records the promotion decision and
+> the phased migration; the `> Status:` flips per phase as each lands.
 
 The affordance vocabulary was built agency-first, on the assumption that only a
 planner needs it. That assumption is wrong in a useful way: a verb-gate ("may
 this actor do this now, and if not, what do they hear?") exists whether or not
 anything plans. The GOAP planner is one *consumer* of that gate, not its owner.
-Promoting the vocabulary and a declarative veto into the engine makes verb
-dispatch itself precondition-aware, and leaves agency as what it should be: a
-drive/goal planner on top.
+Promoting the vocabulary and a declarative veto into the engine gives verbs and
+the planner a *single* precondition to read, and leaves agency as what it should
+be: a drive/goal planner on top.
 
 ## Why this belongs in the engine
 
@@ -22,11 +22,12 @@ drive/goal planner on top.
   declarative precondition is useful to any game, and to non-GOAP automation, with
   no planner in sight. That breadth is the justification for making it
   non-optional, not a violation of minimalism.
-- **"The engine owns a kind iff it reads it" is satisfied.** Post-promotion the
-  dispatcher genuinely *reads* predicates: it evaluates a verb's guards before
-  running the handler body. The engine still interprets no game vocabulary. It
-  iterates a clause and calls back into the game-supplied `WorldModel`, which is
-  the only thing that knows what `"contained_by"` or `"container"` mean.
+- **"The engine owns a kind iff it reads it" is satisfied.** The `veto` evaluator
+  is engine code that genuinely *reads* predicates: it iterates a guard's clause
+  and calls back into the game-supplied `WorldModel`, the only thing that knows
+  what `"contained_by"` or `"container"` mean. The engine interprets no game
+  vocabulary itself. A handler calls `veto` where its hand-written precondition
+  check used to sit (see the note on *where* the check runs, below).
 - **The planner becomes a client, not the home.** `musce_agency` keeps regression,
   `bind_var`, `CostModel`, the arbiter, and drives, and depends on the engine
   vocabulary like any other consumer.
@@ -35,12 +36,31 @@ drive/goal planner on top.
 
 - **Engine, non-optional (`musce_action`):** `Term` / `Predicate` / `Clause` /
   `Affordance` / `Frame`, the `WorldModel` evaluation seam, `Guard { clause,
-  reason }`, and the dispatch-time precondition gate. This crate already owns the
-  `Action` set the predicates mirror and `dispatch_command` where the gate lives,
-  so the types land where dispatch is. (The alternative, a new low crate between
-  core and action, was weighed and set aside for crate-count minimalism.)
+  reason }`, and the `Affordance::veto` evaluator. This crate already owns the
+  `Action` set the predicates mirror and the command dispatch a handler runs
+  under, so the types land where the handlers that call `veto` are. (The
+  alternative, a new low crate between core and action, was weighed and set aside
+  for crate-count minimalism.)
 - **Optional (`musce_agency`):** the planner regression, `bind_var`, `CostModel`,
   arbiter, drives. GOAP consumes the engine vocabulary.
+
+## Where the guard check runs: the handler, not `dispatch_command`
+
+The intuitive home for a precondition gate is `dispatch_command`, before the
+handler runs. It cannot live there. Evaluating a guard needs a `Frame` of
+resolved entities, and turning `"coin in chest"` into entities is *name
+resolution*, which is game policy that runs inside the handler. So the engine
+provides the guard vocabulary and `Affordance::veto`, and the handler calls it at
+the point its hand-written check used to sit, once it has resolved its entities.
+This is still the de-duplication that matters: the handler and the planner read
+the *same* affordance clause, so they cannot drift on what a verb permits.
+
+A second consequence: name-resolution *scope* already enforces some
+preconditions. `put` resolves its item in the actor's inventory, which *is* the
+"item is held" guard; by the time the handler builds a frame, that guard is
+guaranteed to pass, and the container guard is the one that does real work. The
+planner has no resolver, so it needs the full guard set (held *and* container);
+the handler evaluating a guard resolution already guaranteed is harmless.
 
 ## The veto model: a guard is a predicate *plus a reason*, not a bool
 
@@ -109,11 +129,14 @@ Each phase is independently falsifiable and reversible until the next begins.
   `musce::agency`. Ground truth held: every existing test green after the pure
   move. `CostModel` / `UnitCost` / `bind_var` stayed on the planner side in
   `musce_agency`.
-- **B. Guard model and the dispatch gate.** Add `Guard { clause, reason }` and a
-  dispatch-time precondition check. Prove it on `put`: replace the handler's
-  `has::<Container>` check with a guard, show the player messages are unchanged
-  *and* the planner reads the same clause. This is the de-duplication made real:
-  one guard, two consumers.
+- **B. Guard model and the veto evaluator. (Built.)** Added `Guard { clause,
+  reason }` and `Affordance::veto`, and replaced `put`'s handler `has::<Container>`
+  check with a `veto` call over the same guard clauses the planner reads. Player
+  messages are unchanged; the container check now has a single source of truth.
+  The check runs *in the handler* after entity resolution, not in
+  `dispatch_command` (see "Where the guard check runs"), which the original plan
+  had wrong. `take` stayed guard-less: its rule is a negation the vocabulary
+  cannot yet express.
 - **C. Negation, when `go` needs it.** Add `Not(Predicate)`, convert `go`'s
   `not Locked` veto to a guard, prove agreement. Disjunction and comparison stay
   deferred.
@@ -127,8 +150,10 @@ on top of a stable engine vocabulary.
   planner, arbiter, and drives. The crate-boundary argument there (the generic /
   game split) still holds, but the split moves from *crate-optional vocabulary* to
   *engine-non-optional vocabulary plus an optional planner*.
-- [command-dispatch.md](command-dispatch.md): home of the dispatch-time guard
-  gate added in phase B.
+- [command-dispatch.md](command-dispatch.md): the dispatch path a handler runs
+  under. The guard check is *not* a `dispatch_command` gate; it is the handler
+  calling `Affordance::veto` after resolving entities (name resolution is game
+  policy, so the frame cannot exist before the handler runs).
 - [actions.md](actions.md): the structural-only executor stays the commit-time
   backstop that guards deliberately do not replace.
 - [engine-and-game.md](engine-and-game.md): the `WorldModel` seam is the new

@@ -26,10 +26,14 @@ an NPC planner resolve to. It carries four things:
   (`Relate(source, target, kind)`, with `Move` its containment face). See
   [../actions.md](../actions.md). `kind` is the preposition/relation:
   `in`/`to`/`with`.
-- **A precondition set:** predicates that must hold for the action to be
-  *plannable*. This is a symbolic approximation of the handler's real pre-commit
-  rule, not the rule itself. The real rule (`can_traverse`, reachability) stays
-  truth and re-checks at execution; the precondition set only steers the planner.
+- **A guard set:** predicates that must hold for the action, each paired with the
+  reason a player hears when it fails (`Guard { clause, reason }`). This is a
+  symbolic approximation of the handler's real pre-commit rule, not the rule
+  itself. It has two readers: the handler calls `Affordance::veto` to gate the
+  verb (showing the first failing guard's reason), and the planner reads the same
+  clauses to test plannability. The parts of the real rule the vocabulary cannot
+  express (`can_traverse`, the containment cycle) stay truth and re-check at
+  execution. See [../affordances.md](../affordances.md).
 - **An effect set:** the predicates the action makes true or false, so the
   planner can chain backward toward a goal.
 - **A cost:** the edge weight A\* minimizes. Where personality lives.
