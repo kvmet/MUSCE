@@ -6,25 +6,15 @@ use musce::action::{Action, Ctx, Frame, execute};
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
-use crate::commit_or_log;
+use crate::agency::RefWorldModel;
 use crate::names::{self, Scope, display_name};
-
-/// The outcome of the grounded `take`: the item was picked up, or the rule
-/// refused it (with the reason a player should hear). Mirrors [`MoveOutcome`]:
-/// the veto is structural game policy, decided here once, so the player verb and
-/// a planned agent action share it.
-///
-/// [`MoveOutcome`]: super::movement::MoveOutcome
-pub(crate) enum TakeOutcome {
-    Took,
-    Refused(&'static str),
-}
+use crate::verbs::Outcome;
 
 /// Pick `item` up into `actor`'s hands, subject to the takeable rule. The
 /// grounded action a player's `take` verb and an agent's plan both resolve to,
 /// so a scripted actor is vetoed exactly as a player is. `Ctx`-free and silent;
 /// the caller narrates.
-pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> TakeOutcome {
+pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> Outcome {
     // The takeable veto is the `take` affordance's guard, read through the same
     // `RefWorldModel` the planner reads, so a scripted take is filtered exactly
     // as a typed one. The frame binds the item to the `object` role the guard names.
@@ -34,8 +24,8 @@ pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> Tak
         target: None,
         kind: None,
     };
-    if let Some(reason) = crate::agency::take().veto(&frame, world, &crate::agency::RefWorldModel) {
-        return TakeOutcome::Refused(reason);
+    if let Some(reason) = crate::agency::take().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(reason);
     }
     // The one structural way this fails is taking a container the actor stands
     // inside (a containment cycle); the executor rejects it and "you can't take
@@ -47,8 +37,43 @@ pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> Tak
             into: actor,
         },
     ) {
-        Ok(_) => TakeOutcome::Took,
-        Err(_) => TakeOutcome::Refused("You can't take that."),
+        Ok(_) => Outcome::Committed,
+        Err(_) => Outcome::Refused("You can't take that."),
+    }
+}
+
+/// Put `item` down into the actor's current room, subject to the held rule. The
+/// grounded action a player's `drop` verb and an agent's plan both resolve to.
+/// The destination is not a choice: `drop` always means "into the room I stand
+/// in", so it is derived here rather than passed. `Ctx`-free and silent; the
+/// caller narrates.
+pub(crate) fn do_drop(world: &mut World, actor: EntityId, item: EntityId) -> Outcome {
+    let Some(room) = world.enclosing_locus(actor) else {
+        return Outcome::Refused("There is nowhere to drop it.");
+    };
+    // The held veto is the `drop` affordance's guard (`object contained_by
+    // actor`), read through the same `RefWorldModel` the planner reads. `target`
+    // is bound to the room the effect names, though the guard reads only `object`.
+    let frame = Frame {
+        actor,
+        object: Some(item),
+        target: Some(room),
+        kind: None,
+    };
+    if let Some(reason) = crate::agency::drop().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(reason);
+    }
+    // Dropping a held item into its enclosing room cannot cycle, so this commits;
+    // a structural error here would be a bug, surfaced as a refusal to the player.
+    match execute(
+        world,
+        Action::Move {
+            entity: item,
+            into: room,
+        },
+    ) {
+        Ok(_) => Outcome::Committed,
+        Err(_) => Outcome::Refused("You can't drop that."),
     }
 }
 
@@ -68,8 +93,8 @@ pub fn take(ctx: &mut Ctx, args: &str) {
     let room = ctx.world.enclosing_locus(ctx.actor);
 
     match do_take(ctx.world, ctx.actor, target) {
-        TakeOutcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-        TakeOutcome::Took => {
+        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+        Outcome::Committed => {
             ctx.emit_self(EventKind::Feedback, format!("You take {name}."));
             if let Some(room) = room {
                 ctx.emit_locus_except_self(
@@ -92,28 +117,23 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "You aren't carrying that.");
         return;
     };
-    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
-        ctx.emit_self(EventKind::Feedback, "There is nowhere to drop it.");
-        return;
-    };
 
     let name = display_name(ctx.world, target);
     let who = display_name(ctx.world, ctx.actor);
 
-    // Dropping a held item into its enclosing room cannot cycle, so this should
-    // never fail; a bug here is logged loud, not silently shown as a refusal.
-    if !commit_or_log(
-        ctx.world,
-        Action::Move {
-            entity: target,
-            into: room,
-        },
-        "drop: move held item into the room",
-    ) {
-        ctx.emit_self(EventKind::Feedback, "You can't drop that.");
-        return;
+    match do_drop(ctx.world, ctx.actor, target) {
+        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+        Outcome::Committed => {
+            ctx.emit_self(EventKind::Feedback, format!("You drop {name}."));
+            // The actor did not move, so its enclosing locus is the room the item
+            // landed in; narrate the third-person view to it.
+            if let Some(room) = ctx.world.enclosing_locus(ctx.actor) {
+                ctx.emit_locus_except_self(
+                    room,
+                    EventKind::Narration,
+                    format!("{who} drops {name}."),
+                );
+            }
+        }
     }
-
-    ctx.emit_self(EventKind::Feedback, format!("You drop {name}."));
-    ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} drops {name}."));
 }

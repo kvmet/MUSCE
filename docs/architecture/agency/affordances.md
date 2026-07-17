@@ -5,12 +5,13 @@
 > engine (`musce_action`, non-optional; see [../affordances.md](../affordances.md)).
 > `musce_ref` carries the first affordances (`take` / `drop` / `put` / `go`),
 > `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
-> grounded-action dispatch); `take` is grounded as `do_take` so a player and a plan
-> share one veto, `put`'s handler reads its container guard and `can_traverse` reads
-> `go`'s negated `¬ tag(exit, "locked")` guard through the same affordances the
-> planner would. The affordance *table* and its two indexes, the
-> rest of the verb catalog as `musce_ref` instances, and the planner (regression)
-> remain proposed. This doc covers what a grounded action carries and how the
+> grounded-action dispatch). All four are grounded as `Ctx`-free actions
+> (`do_take` / `do_drop` / `do_put` / `do_move`) that fold in their own veto, so a
+> player verb and `perform` share one rule per verb; `perform` dispatches every one
+> and returns a uniform committed/refused `Outcome` (movement's richer
+> `MoveOutcome` is collapsed to it). The affordance *table* and its two indexes,
+> the rest of the verb catalog as `musce_ref` instances, and the planner
+> (regression) remain proposed. This doc covers what a grounded action carries and how the
 > reference verbs collapse onto a handful of structural shapes; the symbolic
 > vocabulary a precondition is written in lives in its sibling
 > [preconditions.md](preconditions.md).

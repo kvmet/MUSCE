@@ -110,9 +110,10 @@ conceptual top layer (drives) last and the bottom of the planner first.
    there is **no affordance-carrying `Intent` variant**. The lowering resolution
    (crate section) is why: a synthesized plan is transient runtime output, and a
    plan step lowers by dispatching to the game's grounded action (`perform` →
-   `do_take` / `do_move`), where the veto already lives, so a planned pickup is
-   filtered and refused exactly as a typed `take` is (the tests prove the veto
-   rejects the planned path, not just the typed one). Nothing agency-owned
+   `do_take` / `do_drop` / `do_put` / `do_move`, returning a committed/refused
+   `Outcome`), where the veto already lives, so a planned action is filtered and
+   refused exactly as its typed verb is (the tests prove the veto rejects the
+   planned path, not just the typed one, for every verb). Nothing agency-owned
    serializes; the persisted `Sequences` / `Intent` scripts stay a *separate*
    bypass seam (a hand-authored script injects at the sweep, per the two bypass
    seams above). `Known` is seeded the trivial way ("co-located ⇒ known",
@@ -221,12 +222,13 @@ The one shape that could still weld agency to `sequences` is the plan step, and 
 is resolved by keeping a synthesized plan **transient** and lowering it through
 game code, not by a new serialized variant. A plan step lowers by dispatching to
 the game's **grounded action** for that affordance (`perform` → `do_take` /
-`do_move`), the same handler-level unit a player's verb runs, which validates its
-veto and *then* commits the structural `Action`. The veto is why lowering is not a
-generic effect→`Action` translation: an affordance's declared effect is the
-*symbolic* mutation the planner chains on and that the step-2 oracle checks against
-the world, but the committing path must run the game's rule (`is_takeable`,
-`can_traverse`), so the game supplies the dispatch (see
+`do_drop` / `do_put` / `do_move`), the same handler-level unit a player's verb
+runs, which validates its veto and *then* commits the structural `Action`. The
+veto is why lowering is not a generic effect→`Action` translation: an affordance's
+declared effect is the *symbolic* mutation the planner chains on and that the
+step-2 oracle checks against the world, but the committing path must run the game's
+rule (the affordance guard each `do_*` reads through `RefWorldModel`, and
+`can_traverse` for `go`), so the game supplies the dispatch (see
 [affordances.md](affordances.md) and [../actions.md](../actions.md)). Two things
 keep the crate acyclic. The grounded actions live in `musce_ref`, which already
 depends on `musce_agency`, so affordance types flow *downward* into `perform` with

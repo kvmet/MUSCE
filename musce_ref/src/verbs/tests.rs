@@ -1,7 +1,7 @@
 use super::movement::Locked;
 use super::{
-    TakeOutcome, do_take, drop, examine, go, help, inventory, look, pilot, release, say, take,
-    tell, wave,
+    Outcome, do_drop, do_put, do_take, drop, examine, go, help, inventory, look, pilot, release,
+    say, take, tell, wave,
 };
 use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Container, Creature, Exit, Item, Player};
@@ -254,7 +254,7 @@ fn take_guards_predict_the_gameplay_veto() {
         // The grounded action still refuses: the move would cycle.
         assert!(matches!(
             do_take(&mut f.world, f.actor, bag),
-            TakeOutcome::Refused("You can't take that.")
+            Outcome::Refused("You can't take that.")
         ));
     }
 }
@@ -303,7 +303,10 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
         target: None,
         kind: None,
     };
-    assert!(perform(&mut f.world, &take_affordance(), &frame));
+    assert!(matches!(
+        perform(&mut f.world, &take_affordance(), &frame),
+        Outcome::Committed
+    ));
     assert_eq!(f.world.container_of(f.key), Some(f.actor));
 
     // The same veto a player hits refuses a planned take of the creature: the
@@ -314,8 +317,130 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
         target: None,
         kind: None,
     };
-    assert!(!perform(&mut f.world, &take_affordance(), &rat_frame));
+    assert!(matches!(
+        perform(&mut f.world, &take_affordance(), &rat_frame),
+        Outcome::Refused(_)
+    ));
     assert_eq!(f.world.container_of(rat), Some(f.garden)); // unmoved
+}
+
+/// Build step 3, completed for the rest of the verb set: `perform` dispatches
+/// `put`, `drop`, and `go` through the same grounded action (and thus the same
+/// veto) the typed verb runs, not just `take`. Each verb's permitted case lands
+/// the mutation and its refused case leaves the world untouched, proving the
+/// old debug-assert stubs are gone and planned ≡ typed for every verb.
+#[test]
+fn planned_put_drop_go_run_through_the_typed_veto() {
+    use crate::agency::{drop as drop_aff, go as go_aff, perform, put as put_aff};
+    use crate::kinds::{Container, Item};
+    use musce::agency::Frame;
+
+    // put: a held coin into a chest commits; the same coin into a non-container
+    // (a creature) is refused by the container guard, and nothing moves.
+    {
+        let mut f = fixture();
+        let chest = spawn(&mut f.world, |b| {
+            b.add(Container);
+            b.add(Description("a wooden chest".into()));
+        });
+        f.world.move_entity(chest, f.hall).unwrap();
+        let rat = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Description("a sewer rat".into()));
+        });
+        f.world.move_entity(rat, f.hall).unwrap();
+        let coin = spawn(&mut f.world, |b| {
+            b.add(Item);
+            b.add(Description("a gold coin".into()));
+        });
+        f.world.move_entity(coin, f.actor).unwrap(); // held
+
+        let framed = |obj, tgt| Frame {
+            actor: f.actor,
+            object: Some(obj),
+            target: Some(tgt),
+            kind: None,
+        };
+        assert!(matches!(
+            perform(&mut f.world, &put_aff(), &framed(coin, chest)),
+            Outcome::Committed
+        ));
+        assert_eq!(f.world.container_of(coin), Some(chest));
+
+        f.world.move_entity(coin, f.actor).unwrap(); // back to hand for a clean try
+        assert!(matches!(
+            perform(&mut f.world, &put_aff(), &framed(coin, rat)),
+            Outcome::Refused(_)
+        ));
+        assert_eq!(f.world.container_of(coin), Some(f.actor)); // unmoved
+    }
+
+    // drop: a held coin lands in the room; an unheld thing (the garden key) is
+    // refused by the held guard.
+    {
+        let mut f = fixture();
+        let coin = spawn(&mut f.world, |b| {
+            b.add(Item);
+            b.add(Description("a gold coin".into()));
+        });
+        f.world.move_entity(coin, f.actor).unwrap();
+        let held = Frame {
+            actor: f.actor,
+            object: Some(coin),
+            target: None,
+            kind: None,
+        };
+        assert!(matches!(
+            perform(&mut f.world, &drop_aff(), &held),
+            Outcome::Committed
+        ));
+        assert_eq!(f.world.container_of(coin), Some(f.hall));
+
+        let unheld = Frame {
+            actor: f.actor,
+            object: Some(f.key), // in the garden, not carried
+            target: None,
+            kind: None,
+        };
+        assert!(matches!(
+            perform(&mut f.world, &drop_aff(), &unheld),
+            Outcome::Refused(_)
+        ));
+        assert_eq!(f.world.container_of(f.key), Some(f.garden)); // unmoved
+    }
+
+    // go: an open exit moves the actor; a locked one is refused, actor unmoved.
+    {
+        let mut f = fixture();
+        let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
+        let framed = Frame {
+            actor: f.actor,
+            object: None,
+            target: Some(north),
+            kind: None,
+        };
+        assert!(matches!(
+            perform(&mut f.world, &go_aff(), &framed),
+            Outcome::Committed
+        ));
+        assert_eq!(f.world.enclosing_locus(f.actor), Some(f.garden));
+    }
+    {
+        let mut f = fixture();
+        let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
+        f.world.insert(north, Locked);
+        let framed = Frame {
+            actor: f.actor,
+            object: None,
+            target: Some(north),
+            kind: None,
+        };
+        assert!(matches!(
+            perform(&mut f.world, &go_aff(), &framed),
+            Outcome::Refused(_)
+        ));
+        assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // unmoved
+    }
 }
 
 #[test]

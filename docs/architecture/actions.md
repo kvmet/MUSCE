@@ -51,12 +51,15 @@ post-mutation world), each fact's shape, and why most mutations emit none are in
 [facts.md](facts.md).
 
 Gameplay rules and perception prose live one layer up, in the verb handlers. "The
-move logic exists once" is achieved by a shared rule helper: `do_move` runs the
-traversal rule (`can_traverse`, today a `Locked`-exit veto) and the commit, shared
-by `go`, the `wander` system, and scripted sequences, so a scripted mover is
-vetoed exactly as a player is and each caller owns only its prose. Not by pushing
-rules into `execute`: each primitive stays atomic and free of intent, `execute`
-owns the world, handlers own meaning.
+rule logic exists once" is achieved by a shared **grounded action** per verb, a
+`Ctx`-free function that runs the veto and the commit and leaves the prose to its
+caller: `do_move` (the traversal rule `can_traverse`, today a `Locked`-exit veto),
+and `do_take` / `do_drop` / `do_put` (each folding in the affordance guard it reads
+through `RefWorldModel`). Each is shared by the player verb, the tick-loop movers
+(`wander`, sequences), and the agency layer's `perform`, so a scripted or planned
+actor is vetoed exactly as a player is and each caller owns only its prose. Not by
+pushing rules into `execute`: each primitive stays atomic and free of intent,
+`execute` owns the world, handlers own meaning.
 
 A **Command** is a request with provenance (it may be rejected); an **Action** is
 the authorized, validated mutation it parses into. The command/action boundary,

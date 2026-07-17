@@ -37,9 +37,22 @@ pub use social::{say, tell, wave};
 // Shared with the tick-loop movers (`wander`, sequences), which route through the
 // one rule-checked move path; the `Locked` marker is registered for persistence.
 pub(crate) use movement::{Locked, MoveOutcome, do_move};
-// The grounded `take`, shared with the agency layer's plan execution so a planned
-// pickup is vetoed by the same takeable rule a player's `take` runs.
-pub(crate) use manipulate::{TakeOutcome, do_take};
+// The grounded manipulate/container actions, shared with the agency layer's plan
+// execution so a planned take/drop/put is vetoed by the same rule the typed verb
+// runs.
+pub(crate) use containers::do_put;
+pub(crate) use manipulate::{do_drop, do_take};
+
+/// The result of a grounded game action (`do_take`, `do_put`, `do_drop`): the
+/// commit landed, or a rule refused it with the reason a player should hear. The
+/// shared shape a player verb and a planned action both read, so a scripted or
+/// planned act is committed-or-refused exactly as a typed one. Movement keeps its
+/// own richer [`MoveOutcome`] (it carries the room left, the destination, and the
+/// exit label each mover narrates from); the commit/refuse verbs are uniform.
+pub(crate) enum Outcome {
+    Committed,
+    Refused(&'static str),
+}
 // The combat stat components: read by `attack`, seeded on the avatar and its foes,
 // and registered for persistence in `systems::register`.
 pub(crate) use combat::{Health, Special};

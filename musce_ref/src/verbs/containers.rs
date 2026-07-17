@@ -9,9 +9,46 @@ use musce::action::{Action, Ctx, Frame, execute};
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
+use crate::agency::RefWorldModel;
 use crate::commit_or_log;
 use crate::kinds::{Creature, Player};
 use crate::names::{self, Scope, display_name};
+use crate::verbs::Outcome;
+
+/// Put `item` into `container`, subject to the put rule. The grounded action a
+/// player's `put` verb and an agent's plan both resolve to, so a scripted put is
+/// vetoed exactly as a typed one. `Ctx`-free and silent; the caller narrates.
+pub(crate) fn do_put(
+    world: &mut World,
+    actor: EntityId,
+    item: EntityId,
+    container: EntityId,
+) -> Outcome {
+    // The gameplay veto (item held, destination is a container) is the `put`
+    // affordance's guards, read through the same `RefWorldModel` the planner
+    // reads, so verb and plan cannot disagree on what `put` permits.
+    let frame = Frame {
+        actor,
+        object: Some(item),
+        target: Some(container),
+        kind: None,
+    };
+    if let Some(reason) = crate::agency::put().veto(&frame, world, &RefWorldModel) {
+        return Outcome::Refused(reason);
+    }
+    // Putting a held container into itself would cycle; the executor rejects it,
+    // and "you can't put that there" is the right thing for the player to hear.
+    match execute(
+        world,
+        Action::Move {
+            entity: item,
+            into: container,
+        },
+    ) {
+        Ok(_) => Outcome::Committed,
+        Err(_) => Outcome::Refused("You can't put that there."),
+    }
+}
 
 /// `put <item> in <container>`: move a held thing into a container in reach. The
 /// item comes from the actor's hands; the container may be held (a pack) or on the
@@ -39,53 +76,27 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         );
         return;
     };
-    // The gameplay veto (destination is a container) is the `put` affordance's
-    // guard, read through the same `RefWorldModel` the planner uses, so verb and
-    // plan cannot disagree on what `put` permits. Name resolution above already
-    // guaranteed the held guard, so it is the container guard that fires here.
-    let frame = Frame {
-        actor: ctx.actor,
-        object: Some(item),
-        target: Some(container),
-        kind: None,
-    };
-    if let Some(reason) =
-        crate::agency::put().veto(&frame, ctx.world, &crate::agency::RefWorldModel)
-    {
-        ctx.emit_self(EventKind::Feedback, reason);
-        return;
-    }
 
     let item_name = display_name(ctx.world, item);
     let container_name = display_name(ctx.world, container);
     let who = display_name(ctx.world, ctx.actor);
     let room = ctx.world.enclosing_locus(ctx.actor);
 
-    // Putting a held container into itself would cycle; the executor rejects it and
-    // "you can't put that there" is the right thing for the player to hear.
-    if execute(
-        ctx.world,
-        Action::Move {
-            entity: item,
-            into: container,
-        },
-    )
-    .is_err()
-    {
-        ctx.emit_self(EventKind::Feedback, "You can't put that there.");
-        return;
-    }
-
-    ctx.emit_self(
-        EventKind::Feedback,
-        format!("You put {item_name} in {container_name}."),
-    );
-    if let Some(room) = room {
-        ctx.emit_locus_except_self(
-            room,
-            EventKind::Narration,
-            format!("{who} puts {item_name} in {container_name}."),
-        );
+    match do_put(ctx.world, ctx.actor, item, container) {
+        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+        Outcome::Committed => {
+            ctx.emit_self(
+                EventKind::Feedback,
+                format!("You put {item_name} in {container_name}."),
+            );
+            if let Some(room) = room {
+                ctx.emit_locus_except_self(
+                    room,
+                    EventKind::Narration,
+                    format!("{who} puts {item_name} in {container_name}."),
+                );
+            }
+        }
     }
 }
 

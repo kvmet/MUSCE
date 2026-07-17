@@ -7,7 +7,7 @@
 use musce::agency::{Affordance, Clause, Frame, Guard, Predicate, Term, WorldModel};
 use musce::world::{EntityId, World};
 
-use crate::verbs::{TakeOutcome, do_take};
+use crate::verbs::{MoveOutcome, Outcome, do_drop, do_move, do_put, do_take};
 
 /// `take <item>`: the item ends up held by the actor. Its declared effect is the
 /// stored containment edge (`object` `contained_by` `actor`), the same edge the
@@ -223,27 +223,53 @@ pub fn known_here(world: &World, actor: EntityId) -> Vec<EntityId> {
 }
 
 /// Execute one bound affordance through this game's grounded action for it, so a
-/// planned action is vetoed exactly as the matching player verb is. Returns
-/// whether the action committed (`true`) or was refused by its rule (`false`):
-/// that committed/refused bit is the per-beat outcome a planner and the step-6
-/// learner read. Dispatch is by affordance name, the by-name key a player's
-/// parser also uses; the frame's roles must already be ground (enumeration fills
-/// them first).
-pub fn perform(world: &mut World, affordance: &Affordance, frame: &Frame) -> bool {
+/// planned action is vetoed exactly as the matching player verb is. Returns the
+/// [`Outcome`] the grounded action produced: `Committed`, or `Refused` with the
+/// reason a player would hear, the per-beat result a planner and the step-6
+/// learner read. Dispatch is by affordance name, the by-name key a player's parser
+/// also uses; the frame's roles must already be ground (enumeration fills them
+/// first). Movement's richer `MoveOutcome` is collapsed to the uniform result
+/// here, since a plan step reads only committed-or-refused.
+pub fn perform(world: &mut World, affordance: &Affordance, frame: &Frame) -> Outcome {
     match affordance.name.as_str() {
         "take" => match frame.object {
-            Some(item) => matches!(do_take(world, frame.actor, item), TakeOutcome::Took),
-            None => {
-                debug_assert!(false, "take affordance performed with no object bound");
-                false
-            }
+            Some(item) => do_take(world, frame.actor, item),
+            None => bad_frame("take", "an object"),
+        },
+        "drop" => match frame.object {
+            Some(item) => do_drop(world, frame.actor, item),
+            None => bad_frame("drop", "an object"),
+        },
+        "put" => match (frame.object, frame.target) {
+            (Some(item), Some(container)) => do_put(world, frame.actor, item, container),
+            _ => bad_frame("put", "an object and a target"),
+        },
+        "go" => match frame.target {
+            Some(exit) => match do_move(world, frame.actor, exit) {
+                MoveOutcome::Moved { .. } => Outcome::Committed,
+                MoveOutcome::Blocked(reason) => Outcome::Refused(reason),
+                MoveOutcome::NoDestination => Outcome::Refused("There's no exit that way."),
+            },
+            None => bad_frame("go", "a target"),
         },
         other => {
             debug_assert!(
                 false,
                 "perform: no grounded action for affordance {other:?}"
             );
-            false
+            Outcome::Refused("You can't do that.")
         }
     }
+}
+
+/// A plan handed `perform` a frame missing a role the affordance needs. A correct
+/// enumerator grounds every role before performing, so this is a bug (a
+/// `debug_assert` in development), surfaced as a refusal rather than a panic in a
+/// release build.
+fn bad_frame(affordance: &str, roles: &str) -> Outcome {
+    debug_assert!(
+        false,
+        "{affordance} affordance performed without {roles} bound"
+    );
+    Outcome::Refused("You can't do that.")
 }
