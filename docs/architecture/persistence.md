@@ -36,9 +36,9 @@ raw path owns the same discipline `forbid_tracking` already names.
 What is and isn't serialized:
 
 - **Persisted:** real component data and forward relation links (`RelTarget`).
-- **Not persisted:** reverse relation lists (`RelSources`) and the `EntityId`
-  index. Both are derived and rebuilt on load. This shrinks the save and removes
-  a class of "the two sides disagree on disk" bugs.
+- **Not persisted:** reverse relation lists (the `reverse` side map on `World`)
+  and the `EntityId` index. Both are derived and rebuilt on load. This shrinks the
+  save and removes a class of "the two sides disagree on disk" bugs.
 - **Not persisted:** `World` resources (`insert_resource`/`resource`/
   `take_resource`), type-keyed transient singletons for derived state such as a
   secondary index (see indexes.md). `snapshot` serializes entity rows only, so a

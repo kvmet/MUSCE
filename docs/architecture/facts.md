@@ -189,9 +189,9 @@ pattern the repo forbids on the critical path); they fail loud at startup.
 A hygiene check (`bb/guards.clj`, run by `bb/hygiene.clj`) closes the remaining
 in-crate gap: every raw `&mut` component borrow in `musce_core` must carry an
 explicit `hygiene:allow-raw-mut` waiver, so a new unwaived one fails the gate rather
-than silently dropping writes from the delta. The handful of legitimate sites
-(`modify` itself, the derived `RelSources` reverse-index maintenance) are waived and
-greppable in one search.
+than silently dropping writes from the delta. The one production site (`modify`,
+routed through the private `raw_get_mut` funnel) plus the footgun test that proves
+the bypass are waived and greppable in one search.
 
 ## Created, Related, and Unrelated get no fact
 
@@ -203,10 +203,11 @@ re-`relate` overwrote), and then carrying exactly that and no more.
 
 There is likewise no `RelationChanged` *trigger* paralleling `ComponentChanged`, and
 the asymmetry is the point: a component index needed a trigger because nothing
-maintained it, but relations already ship a derived reverse index (`RelSources`,
-rebuilt on load), so there is no per-tick maintainer left to feed. Such a trigger
-would earn its place only if a game wanted a *keyed* index over relations rather than
-the reverse-membership `RelSources` already gives, which nothing needs yet.
+maintained it, but relations already ship a derived reverse index (the `reverse`
+side map, rebuilt on load), so there is no per-tick maintainer left to feed. Such a
+trigger would earn its place only if a game wanted a *keyed* index over relations
+rather than the reverse-membership the side map already gives, which nothing needs
+yet.
 
 `Created` is the instructive one: it fails **both** halves of the test. It carries
 nothing unrecoverable (a spawned entity is right there to query), and as a trigger it

@@ -20,7 +20,7 @@ pub mod world {
     pub use musce_core::hecs;
     pub use musce_core::{Map, Value};
 
-    pub use musce_core::{Cascade, RelSources, RelTarget, Relation, RelationError};
+    pub use musce_core::{Cascade, RelTarget, Relation, RelationError};
     pub use musce_core::{
         ComponentBlob, Description, Id, Locus, Name, NamedComponent, RegistryError,
     };

@@ -10,7 +10,7 @@ use crate::containment::Containment;
 use crate::control::{Controls, Focus};
 use crate::fact::{DestroyCause, Fact};
 use crate::id::{EntityId, EntityIndex};
-use crate::relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
+use crate::relation::{Cascade, RelTarget, Relation, RelationError};
 
 type DespawnHandler = fn(&mut World, EntityId);
 type RebuildHandler = fn(&mut World);
@@ -94,6 +94,19 @@ pub struct World {
     /// opaque game state, homed here only because a `fn`-pointer system can reach no
     /// state but the world.
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    /// Derived reverse index per relation: `R -> (target -> its sources)`. The
+    /// forward link (`RelTarget<R>`) is the persisted source of truth on the source
+    /// entity; this is the rebuilt-on-load reverse of it, maintained inline by the
+    /// same mutators that write the forward link so `sources_of` is synchronously
+    /// consistent (the despawn cascade reads it mid-tick). Homed here, beside the
+    /// other derived indexes (`resources`, `musce_index`) rather than as a component,
+    /// because it is only ever point-looked-up by target, never iterated
+    /// archetypally: a component would fragment archetypes and force a raw `&mut` to
+    /// maintain, for no columnar benefit. Keyed by `TypeId::of::<R>()`; the values
+    /// are plain `Vec<EntityId>` regardless of `R`, so no type erasure is needed.
+    /// Never persisted; `rebuild_relations` repopulates it from the forward links on
+    /// load.
+    reverse: HashMap<TypeId, HashMap<EntityId, Vec<EntityId>>>,
 }
 
 impl Default for World {
@@ -116,6 +129,7 @@ impl World {
             tracked: HashSet::new(),
             forbid_track: HashSet::new(),
             resources: HashMap::new(),
+            reverse: HashMap::new(),
         };
         w.register_defaults();
         w
@@ -290,6 +304,13 @@ impl World {
         // linger in the live dirty set (a snapshot would skip it anyway, but a
         // failed-save `remark_dirty` should never resurrect a dead id).
         self.dirty.remove(&id);
+        // Drop its reverse-index entries (its role as a relation *target*). Its role
+        // as a *source* was already detached from every target's list by the despawn
+        // handlers above; this evicts the key a component drop used to reclaim for
+        // free. Cheap: one pass over the handful of registered relations.
+        for m in self.reverse.values_mut() {
+            m.remove(&id);
+        }
         self.despawned.push(id);
     }
 
@@ -379,6 +400,18 @@ impl World {
     /// literally unwritable outside the engine core.
     pub(crate) fn entity_ref(&self, id: EntityId) -> Option<hecs::EntityRef<'_>> {
         self.ecs.entity(self.index.get(id)?).ok()
+    }
+
+    /// The one raw `&mut C` borrow in the crate: `modify`'s in-place write to a
+    /// live component funnels through here, so the single hazard the raw-mutation
+    /// guard polices sits at exactly one auditable site. Module-private on purpose:
+    /// were it `pub(crate)`, any in-crate code could take an unbookkept `&mut`
+    /// without tripping the `.get::<&mut` lint, reopening the very bypass this
+    /// funnel closes. `modify` owns the bookkeeping the raw write skips: it marks
+    /// the entity dirty and emits `ComponentChanged` afterward. (Reverse-index
+    /// maintenance no longer reaches here; it lives in the `reverse` side map.)
+    fn raw_get_mut<C: hecs::Component>(&self, e: hecs::Entity) -> Option<hecs::RefMut<'_, C>> {
+        self.ecs.get::<&mut C>(e).ok() // hygiene:allow-raw-mut
     }
 
     // --- type-erased component mutation (the reflection layer) -----------
@@ -480,9 +513,8 @@ impl World {
         };
         {
             // This method IS the sanctioned in-place mutator: it marks dirty and
-            // emits the trigger below, so the raw borrow is warranted.
-            let Ok(mut c) = self.ecs.get::<&mut C>(e) else {
-                // hygiene:allow-raw-mut
+            // emits the trigger below, so reaching for the raw borrow is warranted.
+            let Some(mut c) = self.raw_get_mut::<C>(e) else {
                 return false;
             };
             f(&mut *c);
@@ -603,10 +635,10 @@ impl World {
     /// inventory) sorts at the display site by something meaningful to it; the
     /// engine promises membership, not order.
     pub fn sources_of<R: Relation>(&self, target: EntityId) -> Vec<EntityId> {
-        self.index
-            .get(target)
-            .and_then(|e| self.ecs.entity(e).ok())
-            .and_then(|er| er.get::<&RelSources<R>>().map(|s| s.0.clone()))
+        self.reverse
+            .get(&TypeId::of::<R>())
+            .and_then(|m| m.get(&target))
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -701,36 +733,35 @@ impl World {
     }
 
     fn add_source<R: Relation>(&mut self, target: EntityId, source: EntityId) {
-        let Some(te) = self.index.get(target) else {
-            return;
-        };
-        // RelSources is the derived reverse index: rebuilt on load and omitted from
-        // the snapshot, so raw-mutating it carries no persistence hazard.
-        if let Ok(mut s) = self.ecs.get::<&mut RelSources<R>>(te) {
-            // hygiene:allow-raw-mut
-            if !s.0.contains(&source) {
-                s.0.push(source);
-            }
-            return;
+        // `relate` (the sole caller) has already verified `target` is live, so no
+        // liveness guard here: the old guard existed only because a hecs component
+        // could not be inserted on a dead entity, a constraint the side map lifts.
+        let sources = self
+            .reverse
+            .entry(TypeId::of::<R>())
+            .or_default()
+            .entry(target)
+            .or_default();
+        if !sources.contains(&source) {
+            sources.push(source);
         }
-        let _ = self.ecs.insert_one(te, RelSources::<R>::new(vec![source]));
     }
 
     /// Overwrite a target's reverse list wholesale. Used by relation rebuild,
     /// where sources are unique by construction (no dedup needed).
     pub(crate) fn set_sources<R: Relation>(&mut self, target: EntityId, sources: Vec<EntityId>) {
-        if let Some(te) = self.index.get(target) {
-            let _ = self.ecs.insert_one(te, RelSources::<R>::new(sources));
-        }
+        self.reverse
+            .entry(TypeId::of::<R>())
+            .or_default()
+            .insert(target, sources);
     }
 
     fn remove_source<R: Relation>(&mut self, target: EntityId, source: EntityId) {
-        // RelSources reverse-index maintenance: derived, not persisted (see add_source).
-        if let Some(te) = self.index.get(target)
-            && let Ok(mut s) = self.ecs.get::<&mut RelSources<R>>(te)
-        // hygiene:allow-raw-mut
+        // Derived reverse-index maintenance, not persisted (see the `reverse` field).
+        if let Some(m) = self.reverse.get_mut(&TypeId::of::<R>())
+            && let Some(s) = m.get_mut(&target)
         {
-            s.0.retain(|&x| x != source);
+            s.retain(|&x| x != source);
         }
     }
 

@@ -46,19 +46,9 @@ impl<R: Relation> RelTarget<R> {
     }
 }
 
-/// Reverse list, stored on the target side: which sources point at this target.
-/// A derived index, rebuilt from `RelTarget` on load and never persisted.
-pub struct RelSources<R: Relation>(pub Vec<EntityId>, PhantomData<R>);
-
-impl<R: Relation> RelSources<R> {
-    pub fn new(sources: Vec<EntityId>) -> Self {
-        Self(sources, PhantomData)
-    }
-
-    pub fn ids(&self) -> &[EntityId] {
-        &self.0
-    }
-}
+// The reverse of this link (a target's sources) is a derived index rebuilt from
+// the forward links on load; it lives in a side map on `World`, not as a
+// component, since it is only ever point-looked-up by target. See `World::reverse`.
 
 // Transparent serde for the forward link: serialize only the inner EntityId,
 // independent of the marker type R.

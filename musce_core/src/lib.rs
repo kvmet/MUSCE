@@ -21,7 +21,7 @@ pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
 pub use fact::{DestroyCause, Fact};
 pub use id::{EntityId, EntityIndex};
-pub use relation::{Cascade, RelSources, RelTarget, Relation, RelationError};
+pub use relation::{Cascade, RelTarget, Relation, RelationError};
 pub use snapshot::{EntityBlob, Snapshot};
 pub use world::{MutateError, World};
 

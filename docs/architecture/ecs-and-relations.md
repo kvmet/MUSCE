@@ -57,9 +57,18 @@ many sources. (One-to-one is the degenerate case; many-to-many would be a
 different primitive, not yet needed.)
 
 - `RelTarget<R>` on the source is the **forward link and the source of truth**.
-  It is persisted.
-- `RelSources<R>` on the target is the **reverse list, a derived index**. It is
-  rebuilt from the forward links on load and never persisted.
+  It is a persisted component.
+- The **reverse list** (a target's sources) is a **derived index**, rebuilt from
+  the forward links on load and never persisted. It lives in a side map on `World`
+  (`reverse: R -> (target -> sources)`), maintained inline by the same mutators
+  that write the forward link, *not* as a component: it is only ever
+  point-looked-up by target (via `sources_of`), never iterated archetypally, so a
+  component would fragment archetypes and force a raw `&mut` to maintain for no
+  columnar benefit. It is homed beside the other derived indexes (`resources`,
+  [`musce_index`](indexes.md)), the one place all rebuilt-on-load state lives. It
+  cannot instead be a fact-reactive `musce_index`, because the despawn cascade
+  reads `sources_of` synchronously mid-tick and a deferred index would be a tick
+  stale.
 
 The reverse list is **unordered**: because it is rebuilt from the forward links on
 load rather than preserving live insertion order, the order of `sources_of` (and
@@ -85,10 +94,10 @@ action).
 
 ### Important: relations are ergonomics, not speed
 
-The relation layer compiles down to the same components you would hand-roll, so
-it does **not** make traversal faster. Its value is writing the bidirectional
-bookkeeping, cascade, and acyclicity once and reusing it across every relation
-type. If traversal ever profiles hot, the fix is a separate derived index (a
+The forward link compiles down to the same component you would hand-roll, and the
+reverse list to the same side map, so the layer does **not** make traversal
+faster. Its value is writing the bidirectional bookkeeping, cascade, and
+acyclicity once and reusing it across every relation type. If traversal ever profiles hot, the fix is a separate derived index (a
 dirty-flagged cache or arena tree) invalidated at the mutator, not moving
 relations out of the ECS. That index is deferred.
 
