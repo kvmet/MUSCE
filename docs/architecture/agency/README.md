@@ -156,11 +156,15 @@ conceptual top layer (drives) last and the bottom of the planner first.
 
 ## Documents
 
-- [affordances.md](affordances.md): the affordance and precondition *sets*:
-  primitives are the structural action shapes and verbs are instances, the
-  predicate vocabulary (`related`/`tag` plus content filters) as a view over the
-  relation graph, effects as the committed mutation projected, and how the veto
-  lives once in the handler rather than duplicated into the planner.
+- [affordances.md](affordances.md): the grounded action itself. Primitives are
+  the structural action shapes and verbs are instances, effects as the committed
+  mutation projected, the reference verb catalog, and how the veto lives once in
+  the handler rather than duplicated into the planner (with the declarative slice
+  now a shared `Guard`).
+- [preconditions.md](preconditions.md): the symbolic vocabulary a precondition or
+  goal is written in. The predicate set (`related`/`tag` plus content filters) as
+  a view over the relation graph, why objects are identified by constraint rather
+  than by id, and how a variable binds lazily against what an agent knows.
 
 ## Deferred / not yet written
 

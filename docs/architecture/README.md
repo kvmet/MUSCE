@@ -72,11 +72,11 @@ These hold across every subsystem:
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
   a seeded patroller and burning torch.)*
-- [affordances.md](affordances.md): the decision to promote the affordance /
-  predicate vocabulary and a guard-based dispatch veto (`Guard { clause, reason }`)
-  into the engine (`musce_action`, non-optional), why the veto is a predicate plus
-  a reason rather than a bool, and the phased migration. *(Target design; the
-  vocabulary is built in `musce_agency` today, promotion pending.)*
+- [affordances.md](affordances.md): the promotion of the affordance / predicate
+  vocabulary and a guard-based veto (`Guard { clause, reason }`) into the engine
+  (`musce_action`, non-optional), why the veto is a predicate plus a reason rather
+  than a bool, and the phased migration. *(Phases A and B built: vocabulary and
+  `Affordance::veto` are engine surface; negation is phase C.)*
 - [agency/](agency/README.md): autonomous agent behavior on a shared affordance
   layer: drives to goals, an arbiter, a GOAP planner over the world graph filtered
   by what an agent knows (`Known` relation edges), and execution reusing the
