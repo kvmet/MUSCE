@@ -38,9 +38,12 @@ Familiar predicates are **macros** over the two, named for readability but not n
 primitives: `holds(a, i)` = `related(a, i, Contains)`; `knows(a, e)` =
 `related(a, e, Known)`; `at(e, L)` = the enclosing-locus walk over `Contains`;
 `near(a, t)` = `a` and `t` share an enclosing locus; `reachable(a, i)` = `near`
-plus no closed container between them; `open(c)` = `¬ tag(c, Locked)`. So the
-relation-graph economy holds fully: the whole model is `related`/`tag` queries
-against state that already exists. There is **no separate belief store**:
+plus no closed container between them; `open(c)` = `¬ tag(c, Locked)`. The `¬`
+there is real and built: a clause is a conjunction of `Literal { negated,
+predicate }`, and the engine evaluates the negation (`go`'s `¬ tag(exit, Locked)`
+is the first negated guard), so `WorldModel` still answers only atomic questions.
+So the relation-graph economy holds fully: the whole model is `related`/`tag`
+queries against state that already exists. There is **no separate belief store**:
 knowledge is `Known` edges in the world graph, which persist like any relation
 (so an agent's memory survives a restart for free), and the planner reads truth
 filtered to entities the agent has a `Known` edge to.
@@ -200,8 +203,10 @@ thin frame and the constraint form:
 Deliberately unresolved; listed so they are not mistaken for decided.
 
 - **Predicate representation.** *Decided.* Two chainable primitive kinds
-  (`related` / `tag`) over terms (`Const | Var`), clauses as conjunctions, built in
-  the engine (`musce_action`). Parameters (relation kinds, component tags) and `Var` names are
+  (`related` / `tag`) over terms (`Const | Var`); a clause is a conjunction of
+  `Literal { negated, predicate }`, so negation is engine-owned and the game's
+  reading stays atomic; all built in the engine (`musce_action`). Parameters
+  (relation kinds, component tags) and `Var` names are
   `String`, matching the executor's `Action`. This is no longer migration-class:
   plans lower to structural `Action`s rather than serialize into `Intent` (see the
   README build order), so the predicate types are never persisted, and interning

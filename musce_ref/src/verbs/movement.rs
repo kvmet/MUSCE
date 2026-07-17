@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use musce::action::{Action, Ctx};
+use musce::action::{Action, Ctx, Frame};
 use musce::wire::EventKind;
 use musce::world::{EntityId, NamedComponent, World};
 
@@ -140,9 +140,19 @@ pub(crate) fn do_move(world: &mut World, actor: EntityId, exit: EntityId) -> Mov
 /// seam, reached through [`do_move`] so every mover (player, wanderer, sequence)
 /// is vetoed alike. Today the one veto is a [`Locked`] exit; richer checks (a key,
 /// a skill check, open/closed door state) slot in here additively.
-fn can_traverse(world: &World, _mover: EntityId, exit: EntityId) -> Result<(), &'static str> {
-    if world.has::<Locked>(exit) {
-        return Err("It's locked.");
+///
+/// The `Locked` veto is the `go` affordance's guard (`¬ tag(exit, "locked")`),
+/// evaluated through the same `RefWorldModel` the planner would read, so verb and
+/// plan cannot disagree on when an exit is passable.
+fn can_traverse(world: &World, mover: EntityId, exit: EntityId) -> Result<(), &'static str> {
+    let frame = Frame {
+        actor: mover,
+        object: None,
+        target: Some(exit),
+        kind: None,
+    };
+    match crate::agency::go().veto(&frame, world, &crate::agency::RefWorldModel) {
+        Some(reason) => Err(reason),
+        None => Ok(()),
     }
-    Ok(())
 }

@@ -20,6 +20,7 @@ struct Fixture {
 /// hall. The reverse exit (garden --south--> hall) too.
 fn fixture() -> Fixture {
     let mut world = World::new();
+    crate::systems::register(&mut world);
 
     let hall = spawn(&mut world, |b| {
         b.add(Locus);
@@ -156,7 +157,7 @@ fn take_affordance_effect_matches_the_verb() {
 
     assert!(!effect.0.is_empty(), "take must declare an effect");
     assert!(
-        effect.0.iter().all(|p| model.holds(p, &f.world)),
+        effect.0.iter().all(|l| l.holds(&f.world, &model)),
         "take's declared effect does not hold after the verb ran"
     );
 
@@ -182,10 +183,6 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
     use musce::agency::{Clause, Frame, Predicate, Term, Var, bind_var};
 
     let mut f = fixture();
-    // The `tag(x, "item")` predicate resolves the component tag through the
-    // registry, so the game's kind components must be registered (the parser-driven
-    // verb tests never touch tag lookup, so the shared fixture does not register).
-    crate::systems::register(&mut f.world);
     f.world.move_entity(f.actor, f.garden).unwrap(); // co-located with the key
     // A creature shares the room: a known entity that is *not* an item, so the
     // constraint must reject it, and the veto must refuse a take of it.
@@ -198,10 +195,13 @@ fn a_planned_take_binds_a_candidate_and_runs_through_the_veto() {
     // The plan step: "take some x that is an item." The object role is left free
     // and constrained; enumeration fills it from what the actor knows.
     let x = Var("x".into());
-    let constraint = Clause(vec![Predicate::Tag {
-        e: Term::Var(x.clone()),
-        comp: "item".into(),
-    }]);
+    let constraint = Clause(vec![
+        Predicate::Tag {
+            e: Term::Var(x.clone()),
+            comp: "item".into(),
+        }
+        .into(),
+    ]);
     let candidates = known_here(&f.world, f.actor);
     let bound = bind_var(&x, &constraint, &candidates, &f.world, &RefWorldModel);
 
@@ -368,8 +368,8 @@ fn go_invalid_exit_rejects() {
 /// Half of the shared-rule guarantee: a locked exit vetoes the player. The
 /// `wander` twin (`a_locked_exit_keeps_it_put` in systems.rs) proves the same
 /// veto stops a scripted/ambient mover, which is the bug routing both through
-/// `do_move` fixes. Lock the resolved exit directly (no registry needed: the
-/// veto reads `world.has::<Locked>`, not the persisted blob).
+/// `do_move` fixes. The veto is now the `go` affordance's `¬ tag(exit, "locked")`
+/// guard, which reads the marker by name, so the fixture registers components.
 #[test]
 fn go_through_a_locked_exit_rejects() {
     let mut f = fixture();
@@ -379,6 +379,38 @@ fn go_through_a_locked_exit_rejects() {
     let out = run(&mut f.world, f.actor, |c| go(c, "north"));
 
     assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // didn't move
+    assert!(self_feedback(&out).iter().any(|t| t.contains("locked")));
+}
+
+/// Guard/handler agreement for the negated guard: `go`'s `¬ tag(exit, "locked")`
+/// veto, read through `RefWorldModel`, predicts the same permit/refuse (and the
+/// same message) `can_traverse` produces. Proves negation is evaluated correctly
+/// and that the movement veto and the affordance the planner reads cannot drift.
+#[test]
+fn go_guard_predicts_the_locked_veto() {
+    use crate::agency::{RefWorldModel, go as go_aff};
+    use musce::agency::Frame;
+
+    let mut f = fixture();
+    let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
+    let frame = Frame {
+        actor: f.actor,
+        object: None,
+        target: Some(north),
+        kind: None,
+    };
+
+    // Unlocked: no veto, and the actor traverses.
+    let veto_open = go_aff().veto(&frame, &f.world, &RefWorldModel);
+    assert!(veto_open.is_none());
+
+    // Locked: the negated guard fires with exactly the message the handler shows.
+    f.world.insert(north, Locked);
+    let veto_locked = go_aff().veto(&frame, &f.world, &RefWorldModel);
+    assert_eq!(veto_locked, Some("It's locked."));
+
+    let out = run(&mut f.world, f.actor, |c| go(c, "north"));
+    assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // vetoed, didn't move
     assert!(self_feedback(&out).iter().any(|t| t.contains("locked")));
 }
 

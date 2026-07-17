@@ -45,10 +45,22 @@ pub enum Predicate {
     Tag { e: Term, comp: String },
 }
 
-/// A precondition or goal: a conjunction of predicates whose `Var`s are
-/// existentially bound by the planner. An empty clause is trivially satisfied.
+/// A predicate under an optional negation: the atom a clause is actually built
+/// from. `negated` is engine-owned boolean structure: [`Literal::holds`] evaluates
+/// it as `model.holds(predicate) != negated`, so a game's [`WorldModel`] only ever
+/// answers atomic `Related`/`Tag` questions and never implements negation (nor can
+/// get it wrong). A positive literal is `predicate.into()`; a negative one is
+/// `predicate.not()`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Literal {
+    pub negated: bool,
+    pub predicate: Predicate,
+}
+
+/// A precondition, guard clause, or goal: a conjunction of literals whose `Var`s
+/// are existentially bound by the planner. An empty clause is trivially satisfied.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct Clause(pub Vec<Predicate>);
+pub struct Clause(pub Vec<Literal>);
 
 impl Term {
     /// A planner variable term, by name. Sugar for `Term::Var(Var(name.into()))`.
@@ -112,19 +124,64 @@ impl Predicate {
             },
         }
     }
+
+    /// This predicate negated: the literal holds iff the predicate does *not*. The
+    /// `¬` in a guard or goal (`go`'s `¬ tag(exit, Locked)`); the positive form is
+    /// `predicate.into()`.
+    pub fn not(self) -> Literal {
+        Literal {
+            negated: true,
+            predicate: self,
+        }
+    }
+}
+
+impl From<Predicate> for Literal {
+    /// A positive literal: holds exactly when the predicate does.
+    fn from(predicate: Predicate) -> Literal {
+        Literal {
+            negated: false,
+            predicate,
+        }
+    }
+}
+
+impl Literal {
+    /// Ground this literal's predicate against a frame, preserving the negation.
+    pub fn bind(&self, frame: &Frame) -> Literal {
+        Literal {
+            negated: self.negated,
+            predicate: self.predicate.bind(frame),
+        }
+    }
+
+    /// Substitute the named variable `var` with `id`, preserving the negation.
+    pub fn substitute(&self, var: &Var, id: EntityId) -> Literal {
+        Literal {
+            negated: self.negated,
+            predicate: self.predicate.substitute(var, id),
+        }
+    }
+
+    /// Whether this literal holds in `world`: the game reads the atomic predicate
+    /// through `model`, the engine applies the negation. This is the *only* place
+    /// `¬` is evaluated, which is why no `WorldModel` ever sees it.
+    pub fn holds(&self, world: &World, model: &dyn WorldModel) -> bool {
+        model.holds(&self.predicate, world) != self.negated
+    }
 }
 
 impl Clause {
     /// Ground this clause against a frame: each role-var becomes the entity the
     /// frame fills it with, and free variables are left for the planner. A
-    /// precondition or effect written over roles becomes a concrete predicate set.
+    /// precondition or effect written over roles becomes a concrete literal set.
     pub fn bind(&self, frame: &Frame) -> Clause {
-        Clause(self.0.iter().map(|p| p.bind(frame)).collect())
+        Clause(self.0.iter().map(|l| l.bind(frame)).collect())
     }
 
     /// Substitute the named variable `var` with `id` throughout this clause.
     pub fn substitute(&self, var: &Var, id: EntityId) -> Clause {
-        Clause(self.0.iter().map(|p| p.substitute(var, id)).collect())
+        Clause(self.0.iter().map(|l| l.substitute(var, id)).collect())
     }
 }
 
@@ -216,7 +273,7 @@ impl Affordance {
     ) -> Option<&'static str> {
         self.guards
             .iter()
-            .find(|g| !g.clause.bind(frame).0.iter().all(|p| model.holds(p, world)))
+            .find(|g| !g.clause.bind(frame).0.iter().all(|l| l.holds(world, model)))
             .map(|g| g.reason)
     }
 }
@@ -261,11 +318,13 @@ mod tests {
                 a: var("self"),
                 b: var("x"),
                 kind: "contains".into(),
-            },
+            }
+            .into(),
             Predicate::Tag {
                 e: var("x"),
                 comp: "food".into(),
-            },
+            }
+            .into(),
         ]);
         assert_eq!(goal.0.len(), 2);
     }
@@ -278,16 +337,43 @@ mod tests {
                 a: var("self"),
                 b: var("x"),
                 kind: "worn".into(),
-            },
+            }
+            .into(),
             Predicate::Tag {
                 e: var("x"),
                 comp: "armor".into(),
-            },
+            }
+            .into(),
         ]);
-        assert!(goal.0.contains(&Predicate::Tag {
-            e: var("x"),
-            comp: "armor".into(),
-        }));
+        assert!(
+            goal.0.contains(
+                &Predicate::Tag {
+                    e: var("x"),
+                    comp: "armor".into(),
+                }
+                .into()
+            )
+        );
+    }
+
+    #[test]
+    fn negation_flips_a_literal() {
+        // A stub model where every tag holds and no relation does: the positive
+        // literal holds, its negation does not. Negation is engine-side, so this
+        // never touches the game's reading.
+        struct TagsHold;
+        impl WorldModel for TagsHold {
+            fn holds(&self, p: &Predicate, _w: &World) -> bool {
+                matches!(p, Predicate::Tag { .. })
+            }
+        }
+        let w = World::new();
+        let locked = Predicate::Tag {
+            e: Term::Const(EntityId(1)),
+            comp: "locked".into(),
+        };
+        assert!(Literal::from(locked.clone()).holds(&w, &TagsHold));
+        assert!(!locked.not().holds(&w, &TagsHold));
     }
 
     #[test]
@@ -303,11 +389,14 @@ mod tests {
         let take = Affordance {
             name: "take".into(),
             guards: Vec::new(),
-            effect: Clause(vec![Predicate::Related {
-                a: var("actor"),
-                b: var("object"),
-                kind: "contains".into(),
-            }]),
+            effect: Clause(vec![
+                Predicate::Related {
+                    a: var("actor"),
+                    b: var("object"),
+                    kind: "contains".into(),
+                }
+                .into(),
+            ]),
         };
         assert_eq!(take.name, "take");
         assert_eq!(take.effect.0.len(), 1);
@@ -316,11 +405,14 @@ mod tests {
     #[test]
     fn frame_binds_role_vars_to_consts() {
         // take's effect over roles: object becomes contained_by actor.
-        let effect = Clause(vec![Predicate::Related {
-            a: var("object"),
-            b: var("actor"),
-            kind: "contained_by".into(),
-        }]);
+        let effect = Clause(vec![
+            Predicate::Related {
+                a: var("object"),
+                b: var("actor"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+        ]);
         let frame = Frame {
             actor: EntityId(1),
             object: Some(EntityId(2)),
@@ -329,21 +421,27 @@ mod tests {
         };
         assert_eq!(
             effect.bind(&frame),
-            Clause(vec![Predicate::Related {
-                a: Term::Const(EntityId(2)),
-                b: Term::Const(EntityId(1)),
-                kind: "contained_by".into(),
-            }])
+            Clause(vec![
+                Predicate::Related {
+                    a: Term::Const(EntityId(2)),
+                    b: Term::Const(EntityId(1)),
+                    kind: "contained_by".into(),
+                }
+                .into(),
+            ])
         );
     }
 
     #[test]
     fn binding_leaves_free_vars_for_the_planner() {
         // `x` names no frame role, so it survives as a Var (the "any food" slot).
-        let c = Clause(vec![Predicate::Tag {
-            e: var("x"),
-            comp: "food".into(),
-        }]);
+        let c = Clause(vec![
+            Predicate::Tag {
+                e: var("x"),
+                comp: "food".into(),
+            }
+            .into(),
+        ]);
         let frame = Frame {
             actor: EntityId(1),
             object: None,

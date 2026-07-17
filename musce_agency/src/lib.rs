@@ -11,7 +11,9 @@
 
 use musce_core::{EntityId, World};
 
-pub use musce_action::{Affordance, Clause, Frame, Guard, Predicate, Term, Var, WorldModel};
+pub use musce_action::{
+    Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
+};
 
 /// A plan cost the planner minimizes. Integer for MVP; widening to a fractional
 /// type for scaled costs (distance, effort) is a localized change to this alias
@@ -38,7 +40,7 @@ impl CostModel for UnitCost {
 }
 
 /// Enumerate the candidates that, substituted for the free variable `var`,
-/// satisfy every predicate of `constraint` under `model`. The shared binding
+/// satisfy every literal of `constraint` under `model`. The shared binding
 /// primitive: a plan step uses it to fill a fungible slot from the actor's known
 /// entities, and the planner reuses it when regressing an existential clause
 /// (`∃x. tag(x, Food)`), branching one grounded plan per match.
@@ -63,7 +65,7 @@ pub fn bind_var(
                 .substitute(var, id)
                 .0
                 .iter()
-                .all(|p| model.holds(p, world))
+                .all(|l| l.holds(world, model))
         })
         .collect()
 }

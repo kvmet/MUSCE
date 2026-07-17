@@ -1,12 +1,13 @@
 # Affordances, Predicates, and Guards
 
-> Status: **phase A and B built; C not yet built.** The affordance/predicate
-> vocabulary now lives in the engine, non-optional, in `musce_action`
-> (`affordance.rs`), along with `Guard { clause, reason }` and the
-> `Affordance::veto` evaluator (phase B); the optional `musce_agency` crate
-> re-exports the vocabulary and keeps the planner-side `CostModel` and `bind_var`.
-> Negation (phase C) is still to come. This doc records the promotion decision and
-> the phased migration; the `> Status:` flips per phase as each lands.
+> Status: **phases A, B, and C built.** The affordance/predicate vocabulary lives
+> in the engine, non-optional, in `musce_action` (`affordance.rs`), along with
+> `Guard { clause, reason }` and the `Affordance::veto` evaluator (phase B) and
+> engine-owned negation via `Literal { negated, predicate }` (phase C); the
+> optional `musce_agency` crate re-exports the vocabulary and keeps the
+> planner-side `CostModel` and `bind_var`. `go`'s locked-exit veto is the first
+> negated guard. This doc records the promotion decision and the phased migration;
+> the remaining agency work (the planner and up) sits on top.
 
 The affordance vocabulary was built agency-first, on the assumption that only a
 planner needs it. That assumption is wrong in a useful way: a verb-gate ("may
@@ -34,9 +35,9 @@ be: a drive/goal planner on top.
 
 ## Layering after promotion
 
-- **Engine, non-optional (`musce_action`):** `Term` / `Predicate` / `Clause` /
-  `Affordance` / `Frame`, the `WorldModel` evaluation seam, `Guard { clause,
-  reason }`, and the `Affordance::veto` evaluator. This crate already owns the
+- **Engine, non-optional (`musce_action`):** `Term` / `Predicate` / `Literal` /
+  `Clause` / `Affordance` / `Frame`, the `WorldModel` evaluation seam, `Guard {
+  clause, reason }`, and the `Affordance::veto` evaluator. This crate already owns the
   `Action` set the predicates mirror and the command dispatch a handler runs
   under, so the types land where the handlers that call `veto` are. (The
   alternative, a new low crate between core and action, was weighed and set aside
@@ -110,13 +111,14 @@ share of the common verbs but never all of them.
 The generality here is an *emergent property of a clean shape*, not a license to
 build surface no verb exercises. Held lines:
 
-- **Negation only, and only when a verb needs it.** The experiment proved
+- **Negation only, and only where a verb needs it.** The experiment proved
   negation is the one real gap (`go`'s `not Locked`, `take`'s non-fixture rule).
   Disjunction is avoidable with positive markers (`give`'s recipient); value
-  comparison appears in zero current verbs. So we add `Not(Predicate)` when we
-  convert `go`, and defer the rest until a verb pulls it.
+  comparison appears in zero current verbs. Negation shipped in phase C as a
+  `Literal` wrapper (below); `go` uses it, and no other predicate operator is
+  built until a verb pulls it.
 - **No general rules engine, guard DSL, or event hooks.** Just `Guard { clause,
-  reason }` over the vocabulary we have.
+  reason }` over `Literal`s of the vocabulary we have.
 
 ## Phased plan
 
@@ -137,9 +139,17 @@ Each phase is independently falsifiable and reversible until the next begins.
   `dispatch_command` (see "Where the guard check runs"), which the original plan
   had wrong. `take` stayed guard-less: its rule is a negation the vocabulary
   cannot yet express.
-- **C. Negation, when `go` needs it.** Add `Not(Predicate)`, convert `go`'s
-  `not Locked` veto to a guard, prove agreement. Disjunction and comparison stay
-  deferred.
+- **C. Negation, when `go` needs it. (Built.)** Added negation as an engine-owned
+  `Literal { negated, predicate }` (a `Clause` is now a conjunction of literals),
+  *not* a `Predicate::Not` variant: the game's `WorldModel::holds` still answers
+  only atomic `Related`/`Tag` questions and never sees `¬`, which the engine
+  evaluates in `Literal::holds` as `holds(predicate) != negated`. `go`'s
+  `¬ tag(exit, "locked")` veto is now a guard, evaluated in `can_traverse` through
+  the same `RefWorldModel` the planner reads; a proven test shows the guard
+  predicts `can_traverse`'s permit/refuse and message. Disjunction and value
+  comparison stay deferred. (The `Predicate::Not` spelling the earlier draft named
+  was set aside because it forces every game's `holds` to implement negation, and
+  to implement it correctly; the wrapper keeps boolean logic engine-side.)
 
 The remaining agency work (the planner, drives, and per-actor learning) then sits
 on top of a stable engine vocabulary.

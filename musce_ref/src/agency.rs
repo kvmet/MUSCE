@@ -12,18 +12,23 @@ use crate::verbs::{TakeOutcome, do_take};
 /// `take <item>`: the item ends up held by the actor. Its declared effect is the
 /// stored containment edge (`object` `contained_by` `actor`), the same edge the
 /// [`take`](crate::verbs::take) handler commits by moving the item into the
-/// actor. It carries no guards on purpose: the takeable rule is a *negation*
-/// (not a fixture, not a being) the current vocabulary cannot express, so the
-/// veto stays whole in `do_take` until negation lands (phase C).
+/// actor. It carries no guards on purpose: the takeable rule is a three-way
+/// negated disjunction (not a locus, not a player, not a creature) sharing one
+/// "You can't take that." message, so per-guard reasons buy nothing; the veto
+/// stays whole in `do_take`. Negation exists now (`go` uses it), so this could be
+/// converted later, but no consumer needs the split yet.
 pub fn take() -> Affordance {
     Affordance {
         name: "take".into(),
         guards: Vec::new(),
-        effect: Clause(vec![Predicate::Related {
-            a: Term::var("object"),
-            b: Term::var("actor"),
-            kind: "contained_by".into(),
-        }]),
+        effect: Clause(vec![
+            Predicate::Related {
+                a: Term::var("object"),
+                b: Term::var("actor"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+        ]),
     }
 }
 
@@ -37,18 +42,24 @@ pub fn drop() -> Affordance {
     Affordance {
         name: "drop".into(),
         guards: vec![Guard {
-            clause: Clause(vec![Predicate::Related {
-                a: Term::var("object"),
-                b: Term::var("actor"),
-                kind: "contained_by".into(),
-            }]),
+            clause: Clause(vec![
+                Predicate::Related {
+                    a: Term::var("object"),
+                    b: Term::var("actor"),
+                    kind: "contained_by".into(),
+                }
+                .into(),
+            ]),
             reason: "You aren't carrying that.",
         }],
-        effect: Clause(vec![Predicate::Related {
-            a: Term::var("object"),
-            b: Term::var("target"),
-            kind: "contained_by".into(),
-        }]),
+        effect: Clause(vec![
+            Predicate::Related {
+                a: Term::var("object"),
+                b: Term::var("target"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+        ]),
     }
 }
 
@@ -70,26 +81,62 @@ pub fn put() -> Affordance {
         name: "put".into(),
         guards: vec![
             Guard {
-                clause: Clause(vec![Predicate::Related {
-                    a: Term::var("object"),
-                    b: Term::var("actor"),
-                    kind: "contained_by".into(),
-                }]),
+                clause: Clause(vec![
+                    Predicate::Related {
+                        a: Term::var("object"),
+                        b: Term::var("actor"),
+                        kind: "contained_by".into(),
+                    }
+                    .into(),
+                ]),
                 reason: "You aren't carrying that.",
             },
             Guard {
-                clause: Clause(vec![Predicate::Tag {
-                    e: Term::var("target"),
-                    comp: "container".into(),
-                }]),
+                clause: Clause(vec![
+                    Predicate::Tag {
+                        e: Term::var("target"),
+                        comp: "container".into(),
+                    }
+                    .into(),
+                ]),
                 reason: "You can't put things in that.",
             },
         ],
-        effect: Clause(vec![Predicate::Related {
-            a: Term::var("object"),
-            b: Term::var("target"),
-            kind: "contained_by".into(),
-        }]),
+        effect: Clause(vec![
+            Predicate::Related {
+                a: Term::var("object"),
+                b: Term::var("target"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+        ]),
+    }
+}
+
+/// `go <dir>`: the actor traverses an exit. Its one gameplay veto, a locked exit,
+/// is the first *negated* guard: `¬ tag(target, "locked")` with the `can_traverse`
+/// message. The exit fills the `target` role (the thing resolved from the
+/// direction), and `RefWorldModel` reads the `Locked` marker by name; negation is
+/// evaluated engine-side, so the reading stays the plain tag test.
+///
+/// No effect is declared yet: `go`'s effect is "actor is now at the exit's
+/// destination", but the destination is *derived* from the exit (the `target`
+/// role) rather than a frame role of its own, so it awaits the planner's
+/// derived-location handling (step 4). Nothing reads effects until then.
+pub fn go() -> Affordance {
+    Affordance {
+        name: "go".into(),
+        guards: vec![Guard {
+            clause: Clause(vec![
+                Predicate::Tag {
+                    e: Term::var("target"),
+                    comp: "locked".into(),
+                }
+                .not(),
+            ]),
+            reason: "It's locked.",
+        }],
+        effect: Clause::default(),
     }
 }
 

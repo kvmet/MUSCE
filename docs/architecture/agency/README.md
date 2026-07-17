@@ -1,18 +1,19 @@
 # Agency
 
-> Status: **proposed; vocabulary, binding, and manual plan execution built.**
-> The affordance vocabulary (`Term`, `Predicate`, `Clause`, `Affordance`, the case
-> `Frame` with clause binding) and the `WorldModel` seam are now **promoted into
-> the engine**, non-optional, in `musce_action` (see [../affordances.md](../affordances.md));
+> Status: **proposed; vocabulary, guards, binding, and manual plan execution
+> built.** The affordance vocabulary (`Term`, `Predicate`, `Literal` with engine
+> negation, `Clause`, `Affordance`, the case `Frame`), the `WorldModel` seam, and
+> `Guard { clause, reason }` with `Affordance::veto` are **promoted into the
+> engine**, non-optional, in `musce_action` (see [../affordances.md](../affordances.md));
 > `musce_agency` re-exports them and keeps the optional planner side, the
 > `CostModel` seam and the `bind_var` enumeration primitive (build steps 1 and 3).
-> `musce_ref` grounds the `take` verb (`do_take`) and carries the `take`
-> affordance, `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
-> grounded-action dispatch a plan step lowers to). Tests run a hand-authored plan
-> end to end: a candidate is bound by enumeration and executed through the same
-> veto a player hits (a wrong kind, flipped direction, or bypassed veto all fail).
-> The planner (regression), arbiter, and drives remain proposed. The `> Status:`
-> markers on each doc say how settled each piece is.
+> `musce_ref` grounds the `take`/`drop`/`put`/`go` verbs and carries their
+> affordances, `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
+> grounded-action dispatch a plan step lowers to). `put`'s container check and
+> `go`'s locked-exit check are guards the handler and planner share; a hand-authored
+> plan runs end to end (a candidate is bound by enumeration and executed through the
+> same veto a player hits). The planner (regression), arbiter, and drives remain
+> proposed. The `> Status:` markers on each doc say how settled each piece is.
 
 "Agent" here is any entity that acts on its own: an NPC is the obvious case, but
 the same machinery drives a possessed puppet running on autopilot, a summoned

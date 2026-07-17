@@ -3,11 +3,12 @@
 > Status: **partially built.** The `Affordance` struct, the case `Frame`, and
 > `Guard { clause, reason }` with the `Affordance::veto` evaluator are built in the
 > engine (`musce_action`, non-optional; see [../affordances.md](../affordances.md)).
-> `musce_ref` carries the first affordances (`take` / `drop` / `put`),
+> `musce_ref` carries the first affordances (`take` / `drop` / `put` / `go`),
 > `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
 > grounded-action dispatch); `take` is grounded as `do_take` so a player and a plan
-> share one veto, and `put`'s handler now reads its container guard through the same
-> affordance the planner would. The affordance *table* and its two indexes, the
+> share one veto, `put`'s handler reads its container guard and `can_traverse` reads
+> `go`'s negated `¬ tag(exit, "locked")` guard through the same affordances the
+> planner would. The affordance *table* and its two indexes, the
 > rest of the verb catalog as `musce_ref` instances, and the planner (regression)
 > remain proposed. This doc covers what a grounded action carries and how the
 > reference verbs collapse onto a handful of structural shapes; the symbolic
