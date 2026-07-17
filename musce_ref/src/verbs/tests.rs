@@ -1,5 +1,8 @@
 use super::movement::Locked;
-use super::{drop, examine, go, help, inventory, look, pilot, release, say, take, tell, wave};
+use super::{
+    TakeOutcome, do_take, drop, examine, go, help, inventory, look, pilot, release, say, take,
+    tell, wave,
+};
 use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Container, Creature, Exit, Item, Player};
 use crate::names::{self, Scope};
@@ -169,6 +172,91 @@ fn take_affordance_effect_matches_the_verb() {
         kind: "contained_by".into(),
     };
     assert!(!model.holds(&reversed, &f.world));
+}
+
+/// `take`'s veto is a conjunction of negated tags (not a locus, not a player,
+/// not a creature), all sharing one message. The `veto`, read through
+/// `RefWorldModel`, agrees with the handler on every gameplay case, and the
+/// structural cycle it deliberately does not capture stays a commit-time refusal.
+#[test]
+fn take_guards_predict_the_gameplay_veto() {
+    use crate::agency::{RefWorldModel, take as take_affordance};
+    use musce::agency::Frame;
+
+    // A movable item: no veto, and the take commits.
+    {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap(); // be where the key is
+        let frame = Frame {
+            actor: f.actor,
+            object: Some(f.key),
+            target: None,
+            kind: None,
+        };
+        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        run(&mut f.world, f.actor, |c| take(c, "key"));
+        let committed = f.world.container_of(f.key) == Some(f.actor);
+        assert!(
+            veto.is_none() && committed,
+            "veto {veto:?}, committed {committed}"
+        );
+    }
+    // A being (a creature): the guard vetoes with the message the handler shows.
+    {
+        let mut f = fixture();
+        f.world.move_entity(f.actor, f.garden).unwrap();
+        let rat = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Description("a sewer rat".into()));
+        });
+        f.world.move_entity(rat, f.garden).unwrap();
+        let frame = Frame {
+            actor: f.actor,
+            object: Some(rat),
+            target: None,
+            kind: None,
+        };
+        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        assert_eq!(veto, Some("You can't take that."));
+        assert_eq!(f.world.container_of(rat), Some(f.garden)); // unmoved
+    }
+    // A fixture (a room, tagged Locus): the guard vetoes it too.
+    {
+        let f = fixture();
+        let frame = Frame {
+            actor: f.actor,
+            object: Some(f.garden),
+            target: None,
+            kind: None,
+        };
+        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        assert_eq!(veto, Some("You can't take that."));
+    }
+    // A held container the actor stands inside: the guard permits (a container is
+    // neither locus, player, nor creature), but taking it would close a cycle, so
+    // the executor refuses at commit. That divergence is the guard/executor boundary.
+    {
+        let mut f = fixture();
+        let bag = spawn(&mut f.world, |b| {
+            b.add(Container);
+            b.add(Description("a leather bag".into()));
+        });
+        f.world.move_entity(bag, f.garden).unwrap();
+        f.world.move_entity(f.actor, bag).unwrap(); // the actor is inside the bag
+        let frame = Frame {
+            actor: f.actor,
+            object: Some(bag),
+            target: None,
+            kind: None,
+        };
+        let veto = take_affordance().veto(&frame, &f.world, &RefWorldModel);
+        assert!(veto.is_none(), "a container is takeable by the guard");
+        // The grounded action still refuses: the move would cycle.
+        assert!(matches!(
+            do_take(&mut f.world, f.actor, bag),
+            TakeOutcome::Refused("You can't take that.")
+        ));
+    }
 }
 
 /// Build step 3: a hand-authored plan, run end to end without the parser. The

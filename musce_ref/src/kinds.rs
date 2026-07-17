@@ -46,8 +46,7 @@ kind!(
     "exit",
     "An exit entity's kind tag. Connectivity itself (the `LeadsFrom`/`LeadsTo` \
      relations) is game vocabulary too, defined in `crate::exits` over the engine's \
-     public relation layer; this marks the kind game rules filter on (`go`, \
-     `is_takeable`)."
+     public relation layer; this marks the kind game rules filter on (`go`)."
 );
 
 /// Register the game's kind markers so they persist and reload. Called from the

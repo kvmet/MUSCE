@@ -12,15 +12,40 @@ use crate::verbs::{TakeOutcome, do_take};
 /// `take <item>`: the item ends up held by the actor. Its declared effect is the
 /// stored containment edge (`object` `contained_by` `actor`), the same edge the
 /// [`take`](crate::verbs::take) handler commits by moving the item into the
-/// actor. It carries no guards on purpose: the takeable rule is a three-way
-/// negated disjunction (not a locus, not a player, not a creature) sharing one
-/// "You can't take that." message, so per-guard reasons buy nothing; the veto
-/// stays whole in `do_take`. Negation exists now (`go` uses it), so this could be
-/// converted later, but no consumer needs the split yet.
+/// actor.
+///
+/// Its one gameplay veto, the takeable rule, is a conjunction of negated tags: a
+/// thing is takeable when it is not a locus, not a player, and not a creature
+/// (fixtures and beings stay put). The three literals share one "You can't take
+/// that." message, so they are a single guard whose clause is the conjunction;
+/// `do_take` reads it through the same `RefWorldModel` the planner does, so verb
+/// and plan cannot disagree on what is takeable. The one refusal the guard does
+/// not capture, taking a container the actor stands inside (a containment cycle),
+/// is a structural invariant the executor re-checks at commit, exactly as `put`'s
+/// cycle is.
 pub fn take() -> Affordance {
     Affordance {
         name: "take".into(),
-        guards: Vec::new(),
+        guards: vec![Guard {
+            clause: Clause(vec![
+                Predicate::Tag {
+                    e: Term::var("object"),
+                    comp: "locus".into(),
+                }
+                .not(),
+                Predicate::Tag {
+                    e: Term::var("object"),
+                    comp: "player".into(),
+                }
+                .not(),
+                Predicate::Tag {
+                    e: Term::var("object"),
+                    comp: "creature".into(),
+                }
+                .not(),
+            ]),
+            reason: "You can't take that.",
+        }],
         effect: Clause(vec![
             Predicate::Related {
                 a: Term::var("object"),

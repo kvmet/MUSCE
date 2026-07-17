@@ -1,8 +1,8 @@
 //! Object manipulation: taking movable things up off the floor and putting them
-//! back down. The takeable rule is game policy, kept in the handler, not in
-//! `execute`.
+//! back down. The takeable rule is game policy, kept in the `take` affordance's
+//! guard (read through the shared `RefWorldModel`), not in `execute`.
 
-use musce::action::{Action, Ctx, execute};
+use musce::action::{Action, Ctx, Frame, execute};
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
@@ -25,8 +25,17 @@ pub(crate) enum TakeOutcome {
 /// so a scripted actor is vetoed exactly as a player is. `Ctx`-free and silent;
 /// the caller narrates.
 pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> TakeOutcome {
-    if !is_takeable(world, item) {
-        return TakeOutcome::Refused("You can't take that.");
+    // The takeable veto is the `take` affordance's guard, read through the same
+    // `RefWorldModel` the planner reads, so a scripted take is filtered exactly
+    // as a typed one. The frame binds the item to the `object` role the guard names.
+    let frame = Frame {
+        actor,
+        object: Some(item),
+        target: None,
+        kind: None,
+    };
+    if let Some(reason) = crate::agency::take().veto(&frame, world, &crate::agency::RefWorldModel) {
+        return TakeOutcome::Refused(reason);
     }
     // The one structural way this fails is taking a container the actor stands
     // inside (a containment cycle); the executor rejects it and "you can't take
@@ -107,14 +116,4 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
 
     ctx.emit_self(EventKind::Feedback, format!("You drop {name}."));
     ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} drops {name}."));
-}
-
-/// Takeable means a movable object, not a fixture or a being: rooms and players
-/// and creatures stay put. This is the gameplay rule, kept here in the handler,
-/// not in `execute`.
-fn is_takeable(world: &World, entity: EntityId) -> bool {
-    use crate::kinds::{Creature, Player};
-    use musce::world::Locus;
-    // A locus (in this game, a room) is a fixture, not takeable.
-    !(world.has::<Locus>(entity) || world.has::<Player>(entity) || world.has::<Creature>(entity))
 }

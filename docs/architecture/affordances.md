@@ -115,8 +115,8 @@ build surface no verb exercises. Held lines:
   negation is the one real gap (`go`'s `not Locked`, `take`'s non-fixture rule).
   Disjunction is avoidable with positive markers (`give`'s recipient); value
   comparison appears in zero current verbs. Negation shipped in phase C as a
-  `Literal` wrapper (below); `go` uses it, and no other predicate operator is
-  built until a verb pulls it.
+  `Literal` wrapper (below); `go` and `take` use it, and no other predicate
+  operator is built until a verb pulls it.
 - **No general rules engine, guard DSL, or event hooks.** Just `Guard { clause,
   reason }` over `Literal`s of the vocabulary we have.
 
@@ -137,8 +137,9 @@ Each phase is independently falsifiable and reversible until the next begins.
   messages are unchanged; the container check now has a single source of truth.
   The check runs *in the handler* after entity resolution, not in
   `dispatch_command` (see "Where the guard check runs"), which the original plan
-  had wrong. `take` stayed guard-less: its rule is a negation the vocabulary
-  cannot yet express.
+  had wrong. `take` stayed guard-less at this phase: its non-fixture rule is a
+  negation the vocabulary could not yet express (converted once phase C shipped
+  negation; `do_take` now reads a `¬locus ∧ ¬player ∧ ¬creature` guard).
 - **C. Negation, when `go` needs it. (Built.)** Added negation as an engine-owned
   `Literal { negated, predicate }` (a `Clause` is now a conjunction of literals),
   *not* a `Predicate::Not` variant: the game's `WorldModel::holds` still answers
