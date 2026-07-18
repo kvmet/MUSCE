@@ -101,6 +101,7 @@ async fn connect_play_look_go_take() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000, // keep saves out of the way for this test
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -169,6 +170,7 @@ async fn inscribe_then_read_a_book_round_trips_cold_storage() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -229,6 +231,7 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -299,6 +302,7 @@ async fn possess_then_pilot_drives_a_created_thing() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -362,6 +366,7 @@ async fn a_wandering_creature_moves_with_no_input() {
         tick_interval: Duration::from_millis(100),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -414,6 +419,7 @@ async fn a_hungry_creature_finds_and_eats_food_with_no_input() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -471,6 +477,7 @@ async fn destroying_a_thing_cries_out_in_the_room() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -521,6 +528,7 @@ async fn admin_verbs_build_the_world() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -595,6 +603,7 @@ async fn a_patrolling_sentry_moves_with_no_input() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -642,6 +651,7 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -685,6 +695,7 @@ async fn attack_wears_a_foe_down_then_kills_it() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -745,6 +756,7 @@ async fn put_a_coin_in_the_chest_then_see_it_inside() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -804,6 +816,7 @@ async fn give_a_coin_to_the_drone() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -858,6 +871,7 @@ async fn a_granted_builder_creates_until_quelled() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -946,6 +960,7 @@ async fn accounts_survive_a_restart() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
 
     // Sim 1: mint the builder and grant it build.
@@ -1018,6 +1033,7 @@ async fn login_rejects_a_wrong_password() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),
@@ -1071,6 +1087,7 @@ async fn password_change_takes_effect_for_the_next_login() {
         tick_interval: Duration::from_millis(10),
         save_every: 10_000,
         listen_addr: Some(addr),
+        ws_listen_addr: None,
     };
     let handle = tokio::spawn(run(
         store.clone(),

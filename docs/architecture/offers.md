@@ -1,9 +1,12 @@
 # Offers: enumerating affordances for a client
 
-> Status: **the query is built** in `musce_ref` (`offers.rs`): given an actor and
-> an entity, it returns the affordances available on that entity, each annotated.
-> The wire form (a request/response over a transport) and the type filter noted
-> below are proposed, pending the WebSocket transport and a real client consumer.
+> Status: **the query is built and wire-exposed.** In `musce_ref` (`offers.rs`)
+> the enumeration returns the affordances available on an entity, each annotated;
+> `pointing.rs` projects them to the `musce_proto::web` DTOs behind the
+> `Game.offers` seam, and the WebSocket read `Query::Offers` round-trips the sim
+> thread to reply with them (see
+> [networking-and-sessions.md](networking-and-sessions.md)). The type filter noted
+> below is still proposed.
 
 A text parser never needs to *enumerate* affordances: a player types a verb and
 the parser resolves it straight to one handler. A pointing client (click, tap,
@@ -26,8 +29,13 @@ construction.
 
 The same split governs the tree the client shows: "what is here" is
 `World::contents` / `container_of` / `enclosing_locus` rendered as nesting, an
-existing read over containment, not new world state. Whether the tree reveals the
-contents of a *closed* container is a visibility layer that does not exist yet
+existing read over containment, not new world state. Each node also carries a
+passive **detail bag**: game-projected `(label, value)` pairs an actor perceives by
+presence (today its `Description`), so a focused entity renders without a second
+round-trip. That bag is the passive-inspection half of the split above, delivered
+as read data; the narrated `examine` act reveals the same prose but broadcasts and
+can trigger reactions, and lands with the `perform` slice. Whether the tree reveals
+the contents of a *closed* container is a visibility layer that does not exist yet
 (`Container` is a bare tag); for now it shows all contents.
 
 ## Three shapes the query forces, that `veto` alone did not
@@ -79,10 +87,10 @@ second consumer exists.
 
 - [affordances.md](affordances.md): the veto model this reads. `OfferStatus` is
   the "richer renderer reads the `clause`" audience that doc anticipated.
-- [networking-and-sessions.md](networking-and-sessions.md): the eventual wire
-  form. Because enumeration is a read, it wants a request/response message pair
-  distinct from the command/event action path, landing with the WebSocket
-  transport a browser client needs.
+- [networking-and-sessions.md](networking-and-sessions.md): the wire form, now
+  built. Because enumeration is a read, it rides a `Query`/`Reply` message pair
+  distinct from the command/event action path, over the WebSocket transport a
+  browser client needs.
 - [agency/README.md](agency/README.md): the planner, the other resolver-less
   consumer of the same guards, which required the full guard set for the same
   reason enumeration does.

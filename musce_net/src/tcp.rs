@@ -13,34 +13,45 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
-use musce_proto::{Capabilities, Command, ConnectionId};
+use musce_proto::{Capabilities, Command, Delivery, Input, ServerMsg};
 
-use crate::connection::{Connection, LineReader, LineWriter, Registry, serve_connection};
+use crate::connection::{Connection, EventWriter, InputReader, Registry, spawn_serve};
 
 /// A TCP connection's read half, buffered for line framing.
 pub struct TcpReader(BufReader<OwnedReadHalf>);
 
-impl LineReader for TcpReader {
-    async fn next_line(&mut self) -> io::Result<Option<String>> {
+impl InputReader for TcpReader {
+    async fn next_input(&mut self) -> io::Result<Option<Input>> {
         let mut buf = String::new();
         match self.0.read_line(&mut buf).await? {
             0 => Ok(None), // EOF
             _ => {
-                // Strip the line terminator (\n or \r\n) the client sent.
+                // Strip the line terminator (\n or \r\n) the client sent. A telnet
+                // client only ever sends text, so every line is an `Input::Line`.
                 let line = buf.trim_end_matches(['\r', '\n']).to_string();
-                Ok(Some(line))
+                Ok(Some(Input::Line(line)))
             }
         }
     }
 }
 
-/// A TCP connection's write half.
+/// A TCP connection's write half. Frames each event with CRLF, which line-mode
+/// clients (telnet, `nc`) expect as the terminator.
 pub struct TcpWriter(OwnedWriteHalf);
 
-impl LineWriter for TcpWriter {
-    async fn write_line(&mut self, line: &str) -> io::Result<()> {
-        self.0.write_all(line.as_bytes()).await?;
+impl EventWriter for TcpWriter {
+    async fn write_event(&mut self, ev: &Delivery) -> io::Result<()> {
+        self.0.write_all(ev.text.as_bytes()).await?;
+        self.0.write_all(b"\r\n").await?;
         self.0.flush().await
+    }
+
+    async fn write_reply(&mut self, _reply: &ServerMsg) -> io::Result<()> {
+        // A line-mode client never sends a query, so it never receives a reply. One
+        // routed here is an upstream bug, not content to render; drop it with a
+        // trace rather than dumping JSON onto a telnet session.
+        tracing::debug!("dropping a structured reply bound for a line-mode connection");
+        Ok(())
     }
 }
 
@@ -67,17 +78,19 @@ impl Connection for TcpConnection {
     }
 }
 
-/// Bind and run the accept loop. For each connection: allocate an id, register a
-/// mailbox, and spawn `serve_connection`. Returns the bound address (useful when
-/// binding to port 0). The loop runs until the task is dropped.
+/// Bind and run the accept loop. Each accepted socket becomes a `TcpConnection`
+/// handed to `spawn_serve`, which allocates its id (from the shared counter, so
+/// ids never collide with another transport's) and drives it. Returns the bound
+/// address (useful when binding to port 0). The loop runs until the task is
+/// dropped.
 pub async fn listen(
     addr: SocketAddr,
     inbox: Sender<Command>,
     registry: Registry,
+    ids: Arc<AtomicU64>,
 ) -> io::Result<SocketAddr> {
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
-    let ids = Arc::new(AtomicU64::new(0));
 
     tokio::spawn(async move {
         loop {
@@ -89,20 +102,13 @@ pub async fn listen(
                 }
             };
             let _ = stream.set_nodelay(true);
-
-            let id = ConnectionId::next(&ids);
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            registry.lock().unwrap().insert(id, tx);
-
-            tracing::info!(?id, %peer, "connection opened");
-            tokio::spawn(serve_connection(
-                id,
-                Some(peer),
+            spawn_serve(
                 TcpConnection(stream),
+                Some(peer),
                 inbox.clone(),
-                rx,
                 registry.clone(),
-            ));
+                &ids,
+            );
         }
     });
 

@@ -1,11 +1,21 @@
 # Networking and Sessions
 
-> Status: **first slice built, plus the session attachment and durable
-> embodiment.** The raw TCP line-mode transport, the transport-agnostic
-> `Connection` abstraction, the commands-in/events-out pipe
+> Status: **first slice built, plus the session attachment, durable embodiment,
+> and the WebSocket transport.** The raw TCP line-mode transport, the
+> transport-agnostic `Connection` abstraction, the commands-in/events-out pipe
 > (`musce_net`/`musce_proto`), and the session floor
 > (`@quit`/`@who`/`@help`/`@play`, auth stubbed) are implemented and wired into the
-> tick loop. The dispatcher routes bare commands to an embodiment frame through
+> tick loop. The **WebSocket transport is built** as a second `Connection` behind
+> the same accept/serve path (both transports share one id counter and registry so
+> ids never collide). It carries the text line pipe *and* a **structured JSON
+> envelope** (`musce_proto::web`): the transport parses a `ClientMsg` into a typed
+> `Input` and serializes a `ServerMsg`, so the sim sees typed values while a telnet
+> client still speaks bare text. On that envelope the **read pair is built**: a
+> `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
+> dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
+> by the game's `snapshot`/`offers` seams (see
+> [engine-and-game.md](engine-and-game.md)). Acting on a clicked id (perform-by-id)
+> is the remaining slice. The dispatcher routes bare commands to an embodiment frame through
 > the connection's **session attachment**: `@play` records which *character* the
 > connection drives as session state on the floor, and the driven actor is
 > resolved live from that character's `Focus` (`actor =
@@ -14,7 +24,7 @@
 > persisted `Controls` and `Focus` relations make embodiment durable: a character
 > piloting a robot survives a reboot still piloting it. Dynamic possession (the
 > `@possess`/`@unpossess` admin verbs) is built: staff can establish and tear down
-> a `Controls` edge at runtime. WebSocket/SSH transports, char/raw input-mode
+> a `Controls` edge at runtime. The SSH transport, char/raw input-mode
 > switching, real accounts/auth, and modal overlays remain proposed; the rest of
 > this document records that design.
 
@@ -33,7 +43,14 @@ The thread split from [concurrency.md](concurrency.md) holds: **net is a mostly-
 Every transport reduces to a bidirectional stream plus capability flags (line- vs char-capable, color, terminal size and resize events). Each transport implements a common `Connection`; the sim never knows which one a player is on, so adding transports is additive.
 
 - **Raw TCP line-mode** — the dumb dev transport, built first to make the loop interactive. A plain client talks to it in line mode.
-- **WebSocket** — first-class, for the web client. Does char- or line-mode trivially (the client chooses framing).
+- **WebSocket** — **built.** First-class, for the web client. A second
+  `Connection` impl (`musce_net::ws`) behind the same accept/serve path as TCP.
+  Unlike telnet it owns a wire *format*: each frame is a JSON envelope
+  (`musce_proto::web`), which the transport parses into a typed `Input` and
+  produces from a typed `ServerMsg`. This is why the transport boundary yields
+  `Input` (not raw strings): each transport owns its own framing and parsing, and
+  the sim only ever sees typed values. Carries text commands, the structured read
+  pair, and (later) perform-by-id.
 - **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-game VI, WASD movement. (`russh` for an in-process server.)
 - **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
 
@@ -156,7 +173,9 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 ## Build order
 
 1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
-2. WebSocket + SSH behind the same `Connection` abstraction.
+2. **WebSocket built; SSH proposed.** Both behind the same `Connection`
+   abstraction. WebSocket also carries the structured JSON envelope and the
+   snapshot/offers read pair; perform-by-id is the next slice on it.
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. **Embodiment**, in sub-steps (the model is spelled out under "Sessions and
    control" above):

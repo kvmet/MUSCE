@@ -8,15 +8,23 @@
 //! authoring vocabulary (`Event`/`Audience`) lives in `musce_action`, which owns
 //! resolution; net never sees it.
 //!
-//! These types are **ephemeral**: they ride an in-process channel and are never
-//! persisted, so nothing here derives `serde`. A connection is a live socket, not a
-//! saved record; if that ever changes it is a deliberate decision, not a reflex.
+//! The crate-root types are **ephemeral**: they ride an in-process channel and are
+//! never persisted, so they carry no serde. A connection is a live socket, not a
+//! saved record. The one deliberate exception is the [`web`] submodule's JSON
+//! envelope (`ClientMsg`/`ServerMsg` and their payloads): those *do* cross the wire
+//! to a browser, so they derive serde as a front-end contract. `EventKind` derives
+//! `Serialize` because that envelope carries it.
 //!
 //! See `docs/architecture/networking-and-sessions.md` and
 //! `docs/architecture/actions.md`.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::Serialize;
+
+mod web;
+pub use web::{ClientMsg, Entity, Offer, OfferStatus, Query, Role, ServerMsg, SnapshotData};
 
 /// Net-local identity for one live connection. Monotonic and never reused, so a
 /// stale reference can never resolve to a different connection.
@@ -69,6 +77,10 @@ pub enum Input {
     },
     /// One line of input (the trailing newline already stripped).
     Line(String),
+    /// A structured read query from a pointing client (parsed from the WebSocket
+    /// JSON envelope by the transport). Answered by an `Outgoing::Reply`; the sim
+    /// runs it as a pure read, never through the verb/action path.
+    Query(Query),
     /// Net lost the connection (client closed, or net closed it after `Close`).
     Disconnected,
 }
@@ -79,6 +91,10 @@ pub enum Input {
 #[derive(Debug, Clone)]
 pub enum Outgoing {
     Event(Delivery),
+    /// A structured reply to a read query, bound for one connection. Only a
+    /// pointing client (WebSocket) provokes one; the transport serializes it to the
+    /// JSON envelope, and a telnet connection never receives one.
+    Reply(ConnectionId, ServerMsg),
     /// Drop a connection (e.g. after `@quit`). Net flushes any already-queued
     /// content for it first, then closes the socket.
     Close(ConnectionId),
@@ -106,7 +122,8 @@ impl Delivery {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum EventKind {
     /// Server-originated notice (connect banner, shutdown warning).
     System,

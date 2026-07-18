@@ -100,6 +100,15 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   it wires its `Gate::Cap` gates. The runtime resolves account grant strings against
   this same registry (see [authorization.md](authorization.md)). Empty for a game
   with no capability-gated verbs.
+- **`snapshot: fn(&World, EntityId) -> web::SnapshotData`** and
+  **`offers: fn(&World, EntityId, EntityId) -> Vec<web::Offer>`** the pointing web
+  client's reads: the perceivable containment tree for an actor (each node carrying
+  the passive detail it perceives by presence, such as a `Description`), and the
+  affordances available on a clicked entity. Game policy because names, kinds, the
+  detail projection, and the affordance set are all game vocabulary; the engine only
+  routes a read `Query` to them and serializes the wire result (see
+  [networking-and-sessions.md](networking-and-sessions.md) and
+  [offers.md](offers.md)). A game with no pointing client returns empty projections.
 
 ### The component boundary
 

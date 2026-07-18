@@ -7,8 +7,8 @@
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
 use musce_action::{Caller, ColdOp, CommandTable, dispatch_command, run_systems};
-use musce_core::World;
-use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing};
+use musce_core::{EntityId, World};
+use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing, Query, ServerMsg};
 
 use crate::accounts::{AccountOp, AccountOutcome};
 use crate::session::{Sessions, resolve_actor};
@@ -63,6 +63,10 @@ impl Dispatch {
                 Vec::new()
             }
             Input::Line(line) => self.handle_line(id, line.trim(), world, emit),
+            Input::Query(query) => {
+                self.handle_query(id, query, world, emit);
+                Vec::new()
+            }
         }
     }
 
@@ -100,6 +104,39 @@ impl Dispatch {
     pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
         let actors = self.floor.audience_index(world);
         run_systems(world, &self.game.systems, &actors, ctx.tick, ctx.now, emit);
+    }
+
+    /// Answer a read query for the connection's actor. A pure read: it runs the
+    /// game's projection seams and emits a structured `Reply`, never mutating the
+    /// world, entering the verb/action path, or resolving an audience. A connection
+    /// with no character yet has no actor to read from and is told to `@play`.
+    fn handle_query(
+        &self,
+        id: ConnectionId,
+        query: Query,
+        world: &World,
+        emit: &mut impl FnMut(Outgoing),
+    ) {
+        if !self.floor.is_live(id) {
+            return;
+        }
+        let Some(character) = self.floor.character_of(id) else {
+            emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                "You have no character. Use @play to enter the world.",
+            )));
+            return;
+        };
+        let actor = resolve_actor(world, character);
+        let reply = match query {
+            Query::Snapshot => ServerMsg::Snapshot((self.game.snapshot)(world, actor)),
+            Query::Offers { clicked } => ServerMsg::Offers {
+                clicked,
+                offers: (self.game.offers)(world, actor, EntityId(clicked)),
+            },
+        };
+        emit(Outgoing::Reply(id, reply));
     }
 
     fn handle_line(
@@ -265,6 +302,19 @@ mod tests {
             caps: Arc::new(caps),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
+            // Echo the resolved actor so a query test can assert `@play` resolution,
+            // and hand back one sentinel offer so a reply is observable.
+            snapshot: |_, actor| musce_proto::SnapshotData {
+                root: 0,
+                actor: actor.0,
+                entities: Vec::new(),
+            },
+            offers: |_, _, _| {
+                vec![musce_proto::Offer {
+                    name: "take".into(),
+                    status: musce_proto::OfferStatus::Available,
+                }]
+            },
         }
     }
 
@@ -310,6 +360,20 @@ mod tests {
             Command {
                 connection: id,
                 input: Input::Line(s.into()),
+            },
+            world,
+            &mut |o| out.push(o),
+        );
+        out
+    }
+
+    /// Drive one read query and collect the connection-facing output.
+    fn query(d: &mut Dispatch, world: &mut World, id: ConnectionId, q: Query) -> Vec<Outgoing> {
+        let mut out = Vec::new();
+        d.handle(
+            Command {
+                connection: id,
+                input: Input::Query(q),
             },
             world,
             &mut |o| out.push(o),
@@ -414,6 +478,80 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("a test chamber"))
         );
+    }
+
+    /// A read query before `@play` has no actor to read from: no reply, and the
+    /// same `@play` hint a bare command gets.
+    #[test]
+    fn a_query_without_a_character_is_refused_with_a_play_hint() {
+        let mut world = World::new();
+        let mut d = Dispatch::new(test_game());
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        let out = query(&mut d, &mut world, id, Query::Snapshot);
+        assert!(
+            out.iter().all(|o| !matches!(o, Outgoing::Reply(..))),
+            "no reply without a character"
+        );
+        assert!(conn_texts(&out).iter().any(|t| t.contains("@play")));
+    }
+
+    /// A snapshot query after `@play` replies for the resolved actor: the router
+    /// resolved the connection's character to its avatar and handed it to the game's
+    /// snapshot seam.
+    #[test]
+    fn a_snapshot_query_replies_for_the_played_actor() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = query(&mut d, &mut world, id, Query::Snapshot);
+        let avatar = world
+            .query::<(&Id, &Avatar)>()
+            .iter()
+            .next()
+            .map(|(id, _)| id.0)
+            .unwrap();
+        let reply = out
+            .iter()
+            .find_map(|o| match o {
+                Outgoing::Reply(_, ServerMsg::Snapshot(data)) => Some(data),
+                _ => None,
+            })
+            .expect("a snapshot reply");
+        assert_eq!(reply.actor, avatar.0);
+    }
+
+    /// An offers query echoes the clicked id (host-set, so the client can match the
+    /// reply to its request) and carries the game seam's offers.
+    #[test]
+    fn an_offers_query_echoes_the_clicked_id_and_carries_the_offers() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = query(&mut d, &mut world, id, Query::Offers { clicked: 42 });
+        let (clicked, offers) = out
+            .iter()
+            .find_map(|o| match o {
+                Outgoing::Reply(_, ServerMsg::Offers { clicked, offers }) => {
+                    Some((*clicked, offers))
+                }
+                _ => None,
+            })
+            .expect("an offers reply");
+        assert_eq!(clicked, 42);
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].name, "take");
     }
 
     /// A superuser session passes a capability-gated admin verb by su bypass.
@@ -630,6 +768,8 @@ mod tests {
             caps: Arc::new(CapRegistry::new()),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
+            snapshot: |_, _| musce_proto::SnapshotData::default(),
+            offers: |_, _, _| Vec::new(),
         };
         let dispatch = Dispatch::new(game);
         let mut world = World::new();

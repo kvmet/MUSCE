@@ -55,7 +55,9 @@ pub mod store {
 /// The wire vocabulary a game's output addresses: connection identity and the
 /// event kinds a handler emits.
 pub mod wire {
-    pub use musce_proto::{ConnectionId, EventKind};
+    pub use musce_proto::{
+        ConnectionId, Entity, EventKind, Offer, OfferStatus, Role, SnapshotData,
+    };
 }
 
 /// The authentication surface an app supplies to the runtime: the login veto and
@@ -89,7 +91,7 @@ pub mod agency {
 // The composition-root API: what a game's `main` wires up and hands to `run`.
 pub use musce_host::{
     ChooseActor, Config, Game, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed, TICK_INTERVAL,
-    TickCtx, run,
+    TickCtx, WS_LISTEN_ADDR, run,
 };
 
 /// The high-frequency surface, for `use musce::prelude::*;`. Curated, not a glob

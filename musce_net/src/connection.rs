@@ -5,28 +5,40 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::Sender;
 use tokio::sync::mpsc;
 
-use musce_proto::{Capabilities, Command, ConnectionId, Delivery, Input, Outgoing};
+use musce_proto::{Capabilities, Command, ConnectionId, Delivery, Input, Outgoing, ServerMsg};
 
-/// A reader half: yields input one line at a time. `None` means end of stream.
-/// The newline framing is the transport's concern (a WebSocket frame is already
-/// a "line"); the layers above only ever see whole lines.
-pub trait LineReader: Send + 'static {
-    fn next_line(&mut self)
-    -> impl std::future::Future<Output = io::Result<Option<String>>> + Send;
+/// A reader half: yields the next input already in the sim's `Input` vocabulary.
+/// `None` means end of stream. Framing (a WebSocket frame boundary, a telnet
+/// newline) and, for a structured transport, parsing the wire envelope are the
+/// transport's concern; the layers above only ever see typed `Input`. A telnet
+/// transport only ever yields `Input::Line`; a WebSocket transport also yields
+/// `Input::Query` from its JSON envelope.
+pub trait InputReader: Send + 'static {
+    fn next_input(&mut self)
+    -> impl std::future::Future<Output = io::Result<Option<Input>>> + Send;
 }
 
-/// A writer half: renders are done above; this just puts bytes on the wire.
-/// Transport-specific framing (WebSocket envelopes, telnet IAC) lives in the
-/// impl, below this method.
-pub trait LineWriter: Send + 'static {
-    fn write_line(
+/// A writer half: renders the sim's output to this transport's wire format. Two
+/// kinds cross it: streamed events and structured replies. A telnet writer emits
+/// bare text lines for events and drops replies (a line-mode client never asks for
+/// one); a WebSocket writer emits a JSON envelope for both. Transport-specific
+/// framing lives in the impl.
+pub trait EventWriter: Send + 'static {
+    fn write_event(
         &mut self,
-        line: &str,
+        ev: &Delivery,
+    ) -> impl std::future::Future<Output = io::Result<()>> + Send;
+
+    fn write_reply(
+        &mut self,
+        reply: &ServerMsg,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send;
 }
 
@@ -34,8 +46,8 @@ pub trait LineWriter: Send + 'static {
 /// expose its stream as independent read/write halves (so one task can read and
 /// write without aliasing) plus the capabilities it advertises.
 pub trait Connection: Send + 'static {
-    type Reader: LineReader;
-    type Writer: LineWriter;
+    type Reader: InputReader;
+    type Writer: EventWriter;
 
     fn capabilities(&self) -> Capabilities;
     fn split(self) -> (Self::Reader, Self::Writer);
@@ -45,6 +57,9 @@ pub trait Connection: Send + 'static {
 #[derive(Debug, Clone)]
 pub enum ConnMsg {
     Event(Delivery),
+    /// A structured reply to a read query. Only a structured transport can render
+    /// it; a line-mode writer drops it.
+    Reply(ServerMsg),
     /// Close after the already-queued messages ahead of this drain.
     Close,
 }
@@ -54,11 +69,23 @@ pub enum ConnMsg {
 /// exit. Locks are held only for the map op, never across an await.
 pub type Registry = Arc<Mutex<HashMap<ConnectionId, mpsc::UnboundedSender<ConnMsg>>>>;
 
-/// Render a semantic event to the wire format for a connection. Plain ANSI-less
-/// text for now; `caps` (color, size) will shape this when richer rendering
-/// lands. CRLF because line-mode clients expect it.
-pub fn render(ev: &Delivery, _caps: &Capabilities) -> String {
-    format!("{}\r\n", ev.text)
+/// Allocate an id for an established connection, register its mailbox, and spawn
+/// its `serve_connection` task. Shared by every transport's accept loop: the id
+/// comes from one process-wide counter (`ids`), so two transports running at once
+/// never mint the same `ConnectionId` (which is the registry key). A transport
+/// calls this once its handshake, if any, has produced a live `Connection`.
+pub(crate) fn spawn_serve<C: Connection>(
+    conn: C,
+    peer: Option<SocketAddr>,
+    inbox: Sender<Command>,
+    registry: Registry,
+    ids: &Arc<AtomicU64>,
+) {
+    let id = ConnectionId::next(ids);
+    let (tx, rx) = mpsc::unbounded_channel();
+    registry.lock().unwrap().insert(id, tx);
+    tracing::info!(?id, ?peer, "connection opened");
+    tokio::spawn(serve_connection(id, peer, conn, inbox, rx, registry));
 }
 
 /// Own one connection end to end: announce it, pump input up as `Command`s and
@@ -84,9 +111,9 @@ pub async fn serve_connection<C: Connection>(
 
     loop {
         tokio::select! {
-            line = reader.next_line() => match line {
-                Ok(Some(line)) => {
-                    if inbox.send(Command { connection: id, input: Input::Line(line) }).is_err() {
+            input = reader.next_input() => match input {
+                Ok(Some(input)) => {
+                    if inbox.send(Command { connection: id, input }).is_err() {
                         break; // sim gone
                     }
                 }
@@ -98,7 +125,13 @@ pub async fn serve_connection<C: Connection>(
             },
             msg = rx.recv() => match msg {
                 Some(ConnMsg::Event(ev)) => {
-                    if let Err(e) = writer.write_line(&render(&ev, &caps)).await {
+                    if let Err(e) = writer.write_event(&ev).await {
+                        tracing::debug!(?id, error = %e, "write error; closing connection");
+                        break;
+                    }
+                }
+                Some(ConnMsg::Reply(reply)) => {
+                    if let Err(e) = writer.write_reply(&reply).await {
                         tracing::debug!(?id, error = %e, "write error; closing connection");
                         break;
                     }
@@ -124,6 +157,7 @@ pub async fn route_events(mut outbox: mpsc::UnboundedReceiver<Outgoing>, registr
     while let Some(out) = outbox.recv().await {
         match out {
             Outgoing::Event(ev) => send_to(&registry, ev.to, ConnMsg::Event(ev)),
+            Outgoing::Reply(to, reply) => send_to(&registry, to, ConnMsg::Reply(reply)),
             Outgoing::Close(id) => {
                 send_to(&registry, id, ConnMsg::Close);
                 registry.lock().unwrap().remove(&id);

@@ -14,9 +14,16 @@ async fn line_in_event_out() {
     let (inbox_tx, inbox_rx) = crossbeam_channel::unbounded::<Command>();
     let (outbox_tx, outbox_rx) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
 
-    let addr = start("127.0.0.1:0".parse().unwrap(), inbox_tx, outbox_rx)
-        .await
-        .unwrap();
+    let addr = start(
+        Some("127.0.0.1:0".parse().unwrap()),
+        None,
+        inbox_tx,
+        outbox_rx,
+    )
+    .await
+    .unwrap()
+    .tcp
+    .unwrap();
 
     let mut client = TcpStream::connect(addr).await.unwrap();
     client.write_all(b"hello\n").await.unwrap();
@@ -62,9 +69,16 @@ async fn close_drops_connection() {
     let (inbox_tx, inbox_rx) = crossbeam_channel::unbounded::<Command>();
     let (outbox_tx, outbox_rx) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
 
-    let addr = start("127.0.0.1:0".parse().unwrap(), inbox_tx, outbox_rx)
-        .await
-        .unwrap();
+    let addr = start(
+        Some("127.0.0.1:0".parse().unwrap()),
+        None,
+        inbox_tx,
+        outbox_rx,
+    )
+    .await
+    .unwrap()
+    .tcp
+    .unwrap();
 
     let client = TcpStream::connect(addr).await.unwrap();
 

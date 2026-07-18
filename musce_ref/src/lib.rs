@@ -13,6 +13,7 @@ mod hoard;
 mod kinds;
 mod names;
 pub mod offers;
+mod pointing;
 mod seed;
 mod sequences;
 pub mod spatial;
@@ -61,6 +62,10 @@ pub fn game() -> Game {
         decode_cold: |bytes| {
             String::from_utf8(bytes.to_vec()).map_err(|_| "The text is unreadable.".to_string())
         },
+        // The pointing web client's reads: the containment snapshot and the
+        // affordance offers, both game vocabulary projected to the wire.
+        snapshot: pointing::snapshot,
+        offers: pointing::offers,
     }
 }
 

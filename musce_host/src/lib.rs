@@ -33,14 +33,18 @@ pub const TICK_INTERVAL: Duration = Duration::from_millis(100);
 pub const SAVE_EVERY: u32 = 50;
 /// Default TCP listen address for the line-mode transport.
 pub const LISTEN_ADDR: &str = "127.0.0.1:4000";
+/// Default listen address for the WebSocket transport (the web client).
+pub const WS_LISTEN_ADDR: &str = "127.0.0.1:4001";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub tick_interval: Duration,
     pub save_every: u32,
-    /// Where the TCP transport binds. `None` runs headless (no networking),
-    /// which is what the tests use.
+    /// Where the TCP transport binds. `None` disables it (`None` on both
+    /// addresses runs headless, which is what the tests use).
     pub listen_addr: Option<SocketAddr>,
+    /// Where the WebSocket transport binds. `None` disables it.
+    pub ws_listen_addr: Option<SocketAddr>,
 }
 
 impl Default for Config {
@@ -49,6 +53,11 @@ impl Default for Config {
             tick_interval: TICK_INTERVAL,
             save_every: SAVE_EVERY,
             listen_addr: Some(LISTEN_ADDR.parse().expect("valid default listen addr")),
+            ws_listen_addr: Some(
+                WS_LISTEN_ADDR
+                    .parse()
+                    .expect("valid default ws listen addr"),
+            ),
         }
     }
 }
@@ -118,6 +127,17 @@ pub struct Game {
     /// decode. The reference game reads UTF-8; a game with a different cold encoding
     /// supplies its own. See `docs/architecture/persistence.md`.
     pub decode_cold: fn(&[u8]) -> Result<String, String>,
+    /// Project the world into a pointing client's containment snapshot for an
+    /// actor: the perceivable tree rooted at its room, with each entity's name and
+    /// kinds. Game policy, because names and kinds are game vocabulary; the engine
+    /// only routes the read query to it. Returns the wire snapshot the reply
+    /// carries. See `docs/architecture/networking-and-sessions.md`.
+    pub snapshot: fn(&World, EntityId) -> musce_proto::SnapshotData,
+    /// Enumerate the affordances available on a clicked entity for an actor: the
+    /// reactionary "what can I do to this?" read behind the pointing client's offer
+    /// list. Game content, the same affordance set `perform` dispatches. See
+    /// `docs/architecture/offers.md`.
+    pub offers: fn(&World, EntityId, EntityId) -> Vec<musce_proto::Offer>,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -189,9 +209,9 @@ pub async fn run(
     let account_caps = game.caps.clone();
     let login_veto = game.login_veto;
 
-    if let Some(addr) = config.listen_addr {
-        match musce_net::start(addr, cmd_tx, event_rx).await {
-            Ok(bound) => tracing::info!(%bound, "listening"),
+    if config.listen_addr.is_some() || config.ws_listen_addr.is_some() {
+        match musce_net::start(config.listen_addr, config.ws_listen_addr, cmd_tx, event_rx).await {
+            Ok(bound) => tracing::info!(?bound, "listening"),
             Err(e) => tracing::error!(error = %e, "failed to start networking"),
         }
     }
@@ -532,6 +552,8 @@ mod tests {
             caps: Arc::new(CapRegistry::new()),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
+            snapshot: |_, _| musce_proto::SnapshotData::default(),
+            offers: |_, _, _| Vec::new(),
         }
     }
 
@@ -593,6 +615,7 @@ mod tests {
             tick_interval: Duration::from_millis(10),
             save_every: 2,
             listen_addr: None, // headless: no real socket in the lifecycle test
+            ws_listen_addr: None,
         };
         let report = run(store.clone(), config, shutdown, test_game())
             .await
@@ -641,6 +664,7 @@ mod tests {
             tick_interval: Duration::from_millis(10),
             save_every: 1000,
             listen_addr: None,
+            ws_listen_addr: None,
         };
         let result = run(store.clone(), config, shutdown, test_game()).await;
         assert!(
