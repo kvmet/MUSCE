@@ -89,6 +89,27 @@ impl<'a> Ctx<'a> {
         self.verdict.is_su()
     }
 
+    /// The acting principal's authorization, for a game routine that must pass it
+    /// onward: a shared narrating-perform runs the affordance's gate, so a verb
+    /// handler routing through it must hand it the same verdict a bare
+    /// `agency::perform` would check, or a cap-gated affordance-verb would lose the
+    /// player's authority. Returns the borrow with its own lifetime, not tied to
+    /// `&self`, so a handler can read it and still call [`Ctx::world_and_out`].
+    pub fn verdict(&self) -> &'a Verdict {
+        self.verdict
+    }
+
+    /// The world and the raw output buffer together. The seam a shared game routine
+    /// emits through when it has no `Ctx` in common with its other callers: the
+    /// narrating perform runs from a verb handler (a `Ctx`), a click (a `Ctx`), and
+    /// a tick system's driver closure (neither), so it takes these two borrows
+    /// explicitly and each caller yields them from whatever context it holds. Split
+    /// out as a pair because the routine mutates the world and emits at once, which a
+    /// single `&mut self` accessor to either field alone could not satisfy.
+    pub fn world_and_out(&mut self) -> (&mut World, &mut Vec<Outbound>) {
+        (self.world, self.out)
+    }
+
     /// Whether this command's account holds `cap` (or su is in force). Lets an inline
     /// rule ask the same question a `Gate::Cap` asks.
     pub fn has_cap(&self, cap: CapId) -> bool {
@@ -233,6 +254,14 @@ impl<'a> SystemCtx<'a> {
     pub fn emit_locus(&mut self, locus: EntityId, kind: EventKind, text: impl Into<String>) {
         self.out
             .push(Outbound::new(Event::to_locus(locus, kind, text)));
+    }
+
+    /// The world and the raw output buffer together, the [`Ctx::world_and_out`]
+    /// analogue for the simulation half: a tick system driving an autonomous agent
+    /// through the shared narrating perform hands the routine these two borrows, so
+    /// an NPC's act narrates to the room from the same code a player's does.
+    pub fn world_and_out(&mut self) -> (&mut World, &mut Vec<Outbound>) {
+        (self.world, self.out)
     }
 }
 

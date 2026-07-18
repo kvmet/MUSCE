@@ -20,11 +20,9 @@ use musce::agency::Frame;
 use musce::wire::{Entity, EventKind, Offer, OfferStatus, Role, SnapshotData};
 use musce::world::{Description, EntityId, Locus, World};
 
-use crate::agency;
 use crate::kinds::{Container, Creature, Edible, Exit, Item, Player};
-use crate::names::display_name;
 use crate::offers::{self, affordances_on};
-use crate::verbs::{Locked, Outcome};
+use crate::verbs::Locked;
 
 /// Project the perceivable containment tree for `actor`: rooted at its enclosing
 /// room, every entity nested within (including, as the actor's own contents, its
@@ -124,16 +122,13 @@ fn to_wire_role(role: offers::Role) -> Role {
 /// Perform a clicked affordance for `actor`, entities already bound: `focus` is the
 /// clicked entity and `with` an optional sub-pick, mapped onto the affordance's
 /// roles by the same [`focus_role`](offers::focus_role) convention enumeration
-/// uses. It then runs the identical guarded, gate-checked action a verb or a plan
-/// step resolves to (`crate::agency::perform`); the click supplies the ground the
-/// name resolver would otherwise recover.
+/// uses. The click supplies the ground the name resolver would otherwise recover;
+/// beyond that it is an ordinary act, so it routes through the shared
+/// [`crate::act::perform_narrated`], narrating to the actor and the room exactly as
+/// the typed verb does. A co-located text player reads the third-person line at
+/// once, not on their next snapshot.
 ///
-/// The third pointing seam, but an act, not a read: it mutates and acknowledges the
-/// actor. Full narration (first- and third-person, to actor and room, as a typed
-/// verb narrates) is deferred to the slice that makes `perform` the single
-/// narration owner for verbs, clicks, and NPC acts alike; for now a click reports a
-/// refusal's reason or a minimal confirmation, and co-located observers see the
-/// world change on their next snapshot. See
+/// The third pointing seam, but an act, not a read: it mutates and narrates. See
 /// `docs/architecture/networking-and-sessions.md`.
 pub fn perform(
     ctx: &mut Ctx,
@@ -177,17 +172,9 @@ pub fn perform(
         ctx.emit_self(EventKind::Feedback, "You need to choose something first.");
         return;
     }
-    match agency::perform(ctx.world, &affordance, &frame, verdict) {
-        Outcome::Committed => {
-            // Name the object where the act binds one, else the focus, so `go` (whose
-            // object is unset) still names the exit. A placeholder acknowledgement;
-            // per-verb prose lands with the narration-owner slice.
-            let subject = object.unwrap_or(focus);
-            let thing = display_name(ctx.world, subject);
-            ctx.emit_self(EventKind::Feedback, format!("You {name} {thing}."));
-        }
-        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-    }
+    let actor = ctx.actor;
+    let (world, out) = ctx.world_and_out();
+    crate::act::perform_narrated(world, actor, &affordance, &frame, verdict, out);
 }
 
 /// Whether `actor` can perceive `id`: it shares the actor's enclosing locus, the
@@ -224,10 +211,22 @@ mod tests {
         out
     }
 
-    /// The first-person feedback lines an outbound buffer carries.
+    /// The first-person feedback lines an outbound buffer carries. Directed at the
+    /// actor: the narrating perform emits its first person `to_entity(actor)`, while
+    /// the pre-perform gates (perception, arity) emit connection-addressed refusals,
+    /// so both count as feedback here.
     fn feedback(out: &[Outbound]) -> Vec<String> {
         out.iter()
-            .filter(|o| matches!(o.event.to, Audience::Connection(_)))
+            .filter(|o| matches!(o.event.to, Audience::Connection(_) | Audience::Entity(_)))
+            .map(|o| o.event.text.clone())
+            .collect()
+    }
+
+    /// The third-person lines broadcast to a locus: the room narration a co-located
+    /// player would read.
+    fn room_narration(out: &[Outbound]) -> Vec<String> {
+        out.iter()
+            .filter(|o| matches!(o.event.to, Audience::Locus(_)))
             .map(|o| o.event.text.clone())
             .collect()
     }
@@ -406,6 +405,31 @@ mod tests {
                 .any(|t| t == "You take a smooth rock."),
             "got: {:?}",
             feedback(&out)
+        );
+    }
+
+    #[test]
+    fn a_clicked_take_narrates_to_the_room() {
+        // The B fix: a click is an act, so it narrates the third-person line to the
+        // room exactly as a typed verb does. Before the shared narrator a click
+        // emitted only its first person and a co-located player saw nothing until
+        // their next snapshot. The line is locus-addressed and excludes the actor.
+        let mut f = fixture();
+        let rock = f.rock;
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "take", rock, None);
+        });
+        assert!(
+            room_narration(&out)
+                .iter()
+                .any(|t| t == "an adventurer takes a smooth rock."),
+            "got: {:?}",
+            room_narration(&out)
+        );
+        assert!(
+            out.iter()
+                .any(|o| matches!(o.event.to, Audience::Locus(_)) && o.exclude.contains(&f.actor)),
+            "the room line excludes the actor, who reads their own first person"
         );
     }
 

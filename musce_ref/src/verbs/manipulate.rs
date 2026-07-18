@@ -7,7 +7,7 @@ use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
 use crate::agency::RefWorldModel;
-use crate::names::{self, Scope, display_name};
+use crate::names::{self, Scope};
 use crate::verbs::Outcome;
 
 /// Pick `item` up into `actor`'s hands, subject to the takeable rule. The
@@ -78,6 +78,9 @@ pub(crate) fn do_drop(world: &mut World, actor: EntityId, item: EntityId) -> Out
 }
 
 /// `take <item>`: pick a reachable thing up off the floor into the actor's hands.
+/// The verb owns the parse and the room-scoped name resolution; the act and its
+/// narration are the shared [`crate::act::perform_narrated`], so a typed take, a
+/// clicked one, and a planned one commit and narrate alike.
 pub fn take(ctx: &mut Ctx, args: &str) {
     if args.trim().is_empty() {
         ctx.emit_self(EventKind::Feedback, "Take what?");
@@ -88,26 +91,22 @@ pub fn take(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let name = display_name(ctx.world, target);
-    let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_locus(ctx.actor);
-
-    match do_take(ctx.world, ctx.actor, target) {
-        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-        Outcome::Committed => {
-            ctx.emit_self(EventKind::Feedback, format!("You take {name}."));
-            if let Some(room) = room {
-                ctx.emit_locus_except_self(
-                    room,
-                    EventKind::Narration,
-                    format!("{who} takes {name}."),
-                );
-            }
-        }
-    }
+    let actor = ctx.actor;
+    let frame = Frame {
+        actor,
+        object: Some(target),
+        target: None,
+        kind: None,
+    };
+    let verdict = ctx.verdict();
+    let (world, out) = ctx.world_and_out();
+    crate::act::perform_narrated(world, actor, &crate::agency::take(), &frame, verdict, out);
 }
 
-/// `drop <item>`: put a held thing down into the current room.
+/// `drop <item>`: put a held thing down into the current room. The verb owns the
+/// parse and the inventory-scoped resolution; the act and its narration are the
+/// shared [`crate::act::perform_narrated`]. `drop` derives its destination (the
+/// actor's room) inside the act, so the frame binds only the object.
 pub fn drop(ctx: &mut Ctx, args: &str) {
     if args.trim().is_empty() {
         ctx.emit_self(EventKind::Feedback, "Drop what?");
@@ -118,22 +117,14 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let name = display_name(ctx.world, target);
-    let who = display_name(ctx.world, ctx.actor);
-
-    match do_drop(ctx.world, ctx.actor, target) {
-        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-        Outcome::Committed => {
-            ctx.emit_self(EventKind::Feedback, format!("You drop {name}."));
-            // The actor did not move, so its enclosing locus is the room the item
-            // landed in; narrate the third-person view to it.
-            if let Some(room) = ctx.world.enclosing_locus(ctx.actor) {
-                ctx.emit_locus_except_self(
-                    room,
-                    EventKind::Narration,
-                    format!("{who} drops {name}."),
-                );
-            }
-        }
-    }
+    let actor = ctx.actor;
+    let frame = Frame {
+        actor,
+        object: Some(target),
+        target: None,
+        kind: None,
+    };
+    let verdict = ctx.verdict();
+    let (world, out) = ctx.world_and_out();
+    crate::act::perform_narrated(world, actor, &crate::agency::drop(), &frame, verdict, out);
 }

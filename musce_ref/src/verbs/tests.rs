@@ -89,9 +89,14 @@ fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outb
     out
 }
 
+/// The lines directed at a specific party, not broadcast to a locus. A handler's
+/// first-person feedback is entity-addressed now (the narrating perform emits
+/// `to_entity(actor)` so an NPC's self-line reaches no one), so both a
+/// connection-addressed reply and an entity-addressed one count as directed
+/// output here.
 fn self_feedback(out: &[Outbound]) -> Vec<String> {
     out.iter()
-        .filter(|o| matches!(o.event.to, Audience::Connection(_)))
+        .filter(|o| matches!(o.event.to, Audience::Connection(_) | Audience::Entity(_)))
         .map(|o| o.event.text.clone())
         .collect()
 }

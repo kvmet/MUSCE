@@ -12,7 +12,7 @@ use musce::world::{EntityId, World};
 use crate::agency::{RefWorldModel, eat as eat_affordance};
 use crate::consume::Fed;
 use crate::kinds::Edible;
-use crate::names::{self, Scope, display_name};
+use crate::names::{self, Scope};
 use crate::verbs::Outcome;
 
 /// Consume `food` for `actor`: sate the eater and use the food up. Vetoes through
@@ -56,23 +56,16 @@ pub fn eat(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let name = display_name(ctx.world, target);
-    let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_locus(ctx.actor);
-
-    match do_eat(ctx.world, ctx.actor, target) {
-        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-        Outcome::Committed => {
-            ctx.emit_self(EventKind::Feedback, format!("You eat {name}."));
-            if let Some(room) = room {
-                ctx.emit_locus_except_self(
-                    room,
-                    EventKind::Narration,
-                    format!("{who} eats {name}."),
-                );
-            }
-        }
-    }
+    let actor = ctx.actor;
+    let frame = Frame {
+        actor,
+        object: Some(target),
+        target: None,
+        kind: None,
+    };
+    let verdict = ctx.verdict();
+    let (world, out) = ctx.world_and_out();
+    crate::act::perform_narrated(world, actor, &crate::agency::eat(), &frame, verdict, out);
 }
 
 #[cfg(test)]

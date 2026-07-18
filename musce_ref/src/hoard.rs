@@ -264,10 +264,15 @@ fn magpie_known(world: &World, bird: EntityId) -> Vec<EntityId> {
     known
 }
 
-/// Plan and run the committed goal through the real `perform`, returning how it ended
-/// and the object of the last committed beat (what the bird actually moved, for
-/// narration). The whole plan runs in this one call; interleaving it a beat per tick
-/// is the deferred sim refinement (see `docs/architecture/agency/execution.md`).
+/// Plan and run the committed goal through the *silent* [`perform`], returning how it
+/// ended and the object of the last committed beat (what the bird actually moved, for
+/// narration). This is the deliberate flavor-override path: the magpie's line is
+/// goal-flavored ("tucks it into its nest" for a `put` serving the hoard drive, not
+/// the default "puts it in the nest"), which the affordance-level narrator cannot
+/// express, so the bird keeps its beats silent and emits one evocative line itself
+/// (see [`hoard`] and `crate::act`). The whole plan runs in this one call;
+/// interleaving it a beat per tick is the deferred sim refinement (see
+/// `docs/architecture/agency/execution.md`).
 fn pursue_goal(world: &mut World, bird: EntityId, goal: &Clause) -> (Progress, Option<EntityId>) {
     let table = [take(), put()];
     let known = magpie_known(world, bird);

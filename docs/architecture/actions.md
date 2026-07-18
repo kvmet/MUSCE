@@ -57,9 +57,27 @@ caller: `do_move` (the traversal rule `can_traverse`, today a `Locked`-exit veto
 and `do_take` / `do_drop` / `do_put` (each folding in the affordance guard it reads
 through `RefWorldModel`). Each is shared by the player verb, the tick-loop movers
 (`wander`, sequences), and the agency layer's `perform`, so a scripted or planned
-actor is vetoed exactly as a player is and each caller owns only its prose. Not by
-pushing rules into `execute`: each primitive stays atomic and free of intent,
-`execute` owns the world, handlers own meaning.
+actor is vetoed exactly as a player is. Not by pushing rules into `execute`: each
+primitive stays atomic and free of intent, `execute` owns the world, handlers own
+meaning.
+
+**The narration is shared too, one layer higher.** The default prose an affordance
+produces is not the verb handler's to duplicate: a single **narrating perform**
+(`musce_ref`'s `act::perform_narrated`) runs the silent `agency::perform` and emits
+the affordance's first- and third-person lines, so a typed verb, a clicked control,
+and an autonomous agent all narrate the same act identically. A verb handler now
+owns only its parse and name resolution, then hands the ground frame to the shared
+narrator; a click grounds the frame by id and hands it over the same way; a tick
+system's driver runs it per beat, so an NPC's acts narrate to the room instead of
+mutating silently. First-person is **entity-addressed** (`to_entity(actor)`, not
+`to_connection`), so it follows embodiment: it reaches a self-acting player, a
+piloting player through the body they drive, and no one for a connless NPC, while
+the room line reaches bystanders in every case. A performer wanting bespoke,
+goal-flavored narration (the magpie's "tucks it into its nest" for a `put` serving
+its hoard drive, which the affordance-level narrator cannot know) opts out: it runs
+the silent `agency::perform` and emits its own line. `go` stays out of the default
+narrator for now: its dual-locus departure/arrival prose and its follow-on `look`
+are coupled to the derived-destination work deferred with multi-room perception.
 
 A **Command** is a request with provenance (it may be rejected); an **Action** is
 the authorized, validated mutation it parses into. The command/action boundary,
@@ -227,7 +245,8 @@ minimal:
   as ground truth for tests and play.
 
 Output is addressed semantically and resolved sim-side: handlers emit first-person
-feedback to the acting connection, a directed line to a specific entity, and
+feedback (to the acting connection, or `to_entity(actor)` when the act's narration
+must serve a connless performer too), a directed line to a specific entity, and
 third-person narration to the actor's locus excluding a set of parties (the actor
 alone, or the actor and a target both, so a directed act like `wave at` never shows
 either party the bystander view they already received). The audience resolver expands

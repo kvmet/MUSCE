@@ -16,16 +16,12 @@
 //! content over `musce_agency`'s generic mechanism; the mid-search binding it leans
 //! on is the one new engine-side capability.
 
-use std::cell::RefCell;
-
-use musce::action::{SystemCtx, Verdict};
-use musce::agency::{Beat, Clause, Driver, Goal, Planner, Predicate, Progress, Term, UnitCost};
-use musce::wire::EventKind;
+use musce::action::{Outbound, SystemCtx, Verdict};
+use musce::agency::{Beat, Clause, Driver, Goal, Planner, Predicate, Term, UnitCost};
 use musce::world::{Controls, EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
-use crate::agency::{RefWorldModel, eat, known_here, perform, take};
-use crate::names::display_name;
+use crate::agency::{RefWorldModel, eat, known_here, take};
 use crate::verbs::Outcome;
 
 /// A creature that gets hungry, carrying its current pang. Its presence opts a
@@ -109,30 +105,35 @@ pub fn consume_drive(world: &World, eater: EntityId) -> Option<Goal> {
     })
 }
 
-/// Plan and run the fed goal through the real `perform`, returning how it ended and
-/// the object of the last committed beat (the food, for narration). The whole plan
-/// runs in this one call, as the magpie's does.
-fn pursue_goal(world: &mut World, eater: EntityId, goal: &Clause) -> (Progress, Option<EntityId>) {
+/// Plan the fed goal and run it beat by beat through the shared narrating perform,
+/// so the room sees the creature take its food and then eat it, the same lines a
+/// player eating would produce (an already-fed creature runs an empty plan and
+/// narrates nothing). The whole plan runs in this one call, as the magpie's does;
+/// interleaving it a beat per tick is the deferred sim refinement.
+fn pursue_goal(world: &mut World, out: &mut Vec<Outbound>, eater: EntityId, goal: &Clause) {
     let table = [take(), eat()];
     let known = known_here(world, eater);
     let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
     let driver = Driver::new(&planner);
+    let verdict = Verdict::guest();
 
-    let acted: RefCell<Option<EntityId>> = RefCell::new(None);
-    let progress = driver.pursue(eater, goal, &known, world, |world, step| {
-        let out = perform(world, &step.affordance, &step.frame, &Verdict::guest());
-        if matches!(out, Outcome::Committed)
-            && let Some(item) = step.frame.object
-        {
-            *acted.borrow_mut() = Some(item);
-        }
-        match out {
+    driver.pursue(
+        eater,
+        goal,
+        &known,
+        world,
+        |world, step| match crate::act::perform_narrated(
+            world,
+            eater,
+            &step.affordance,
+            &step.frame,
+            &verdict,
+            out,
+        ) {
             Outcome::Committed => Beat::Committed,
             Outcome::Refused(_) => Beat::Refused,
-        }
-    });
-    let acted = *acted.borrow();
-    (progress, acted)
+        },
+    );
 }
 
 /// Run every uncontrolled hungry creature one turn of the consume loop, on ticks
@@ -154,32 +155,26 @@ pub fn consume(ctx: &mut SystemCtx) {
         .map(|(id, _)| id.0)
         .collect();
 
+    // Split the world and the output buffer once: the driver's per-beat narration
+    // emits into `out` while the pursuit mutates `world`.
+    let (world, out) = ctx.world_and_out();
     for eater in eaters {
         // A controller halts it, exactly as it halts a wanderer or a magpie.
-        if ctx.world.target_of::<Controls>(eater).is_some() {
+        if world.target_of::<Controls>(eater).is_some() {
             continue;
         }
 
         // Metabolism moves the pang from the current world state: up while hungry,
         // down once fed, so relief is a property of the world (read here), never of
         // the drive or the driver.
-        metabolize(ctx.world, eater);
+        metabolize(world, eater);
 
-        let Some(goal) = consume_drive(ctx.world, eater) else {
+        let Some(goal) = consume_drive(world, eater) else {
             continue;
         };
-        let (progress, acted) = pursue_goal(ctx.world, eater, &goal.predicate);
-
-        // Narrate only a beat that actually ate something (an already-fed creature
-        // runs an empty plan and eats nothing).
-        if progress == Progress::Achieved
-            && let Some(food) = acted
-            && let Some(room) = ctx.world.enclosing_locus(eater)
-        {
-            let who = display_name(ctx.world, eater);
-            let what = display_name(ctx.world, food);
-            ctx.emit_locus(room, EventKind::Narration, format!("{who} eats {what}."));
-        }
+        // The narrated perform emits each beat (the take, then the eat) to the room
+        // itself, so there is no terminal narration to reconstruct here.
+        pursue_goal(world, out, eater, &goal.predicate);
     }
 }
 
@@ -334,6 +329,35 @@ mod tests {
         assert!(
             room_narration(&out).is_empty(),
             "an already-fed mouse eats nothing more"
+        );
+    }
+
+    /// The room hears *every* beat, not just the last. The mouse must take the loose
+    /// crust before it can eat it, so the two-beat plan narrates the take and the eat
+    /// in turn, the same lines a player would produce. Before the shared narrator the
+    /// drive reconstructed one terminal line and the intermediate take was silent (an
+    /// NPC grabbed its food invisibly). Both beats are the default affordance prose.
+    #[test]
+    fn the_room_hears_each_beat_of_the_meal() {
+        let mut f = fixture();
+
+        let mut out = Vec::new();
+        for n in 1..=THRESHOLD as u64 {
+            out = tick(&mut f.world, CONSUME_EVERY * n);
+        }
+
+        let lines = room_narration(&out);
+        assert!(
+            lines
+                .iter()
+                .any(|t| t == "a field mouse takes a crust of bread."),
+            "the take beat narrates, got: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|t| t == "a field mouse eats a crust of bread."),
+            "the eat beat narrates, got: {lines:?}"
         );
     }
 

@@ -20,10 +20,12 @@
 > game's `perform` seam, grounding the act with no name to resolve. The game gates
 > the supplied ids through the actor's perceivable set (the scope the reads use), so
 > a click is no more powerful than a typed verb, and refuses an under-bound frame
-> (a missing sub-pick) rather than grounding it. It currently
-> runs the silent grounded action with actor-facing feedback only; full narration
-> (folding verbs, clicks, and NPC acts onto one narrating `perform`) is the next
-> slice. The dispatcher routes bare commands to an embodiment frame through
+> (a missing sub-pick) rather than grounding it. A grounded click then routes through
+> the game's shared narrating perform (`act::perform_narrated`), the same one a typed
+> verb and an autonomous agent use, so a click narrates to the actor and the room
+> alike (a co-located text player reads the third-person line at once, not on their
+> next snapshot). First-person is entity-addressed so the one narrator serves a
+> connless NPC too; see [actions.md](actions.md). The dispatcher routes bare commands to an embodiment frame through
 > the connection's **session attachment**: `@play` records which *character* the
 > connection drives as session state on the floor, and the driven actor is
 > resolved live from that character's `Focus` (`actor =
@@ -184,8 +186,8 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 2. **WebSocket built; SSH proposed.** Both behind the same `Connection`
    abstraction. WebSocket also carries the structured JSON envelope, the
    snapshot/offers read pair, and perform-by-id (a `Perform` frame grounds a clicked
-   act through `dispatch_perform`, silent grounded action with actor feedback for
-   now; the narration unification is the next slice).
+   act through `dispatch_perform`, then routes it through the shared narrating
+   perform, so verbs, clicks, and NPC acts all narrate one act one way).
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. **Embodiment**, in sub-steps (the model is spelled out under "Sessions and
    control" above):

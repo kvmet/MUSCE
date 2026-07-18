@@ -5,6 +5,7 @@
 //! content-free; a real game forks this crate and replaces its content. See
 //! `docs/architecture/engine-and-game.md`.
 
+mod act;
 mod admin;
 pub mod agency;
 mod consume;

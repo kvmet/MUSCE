@@ -77,27 +77,16 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let item_name = display_name(ctx.world, item);
-    let container_name = display_name(ctx.world, container);
-    let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_locus(ctx.actor);
-
-    match do_put(ctx.world, ctx.actor, item, container) {
-        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
-        Outcome::Committed => {
-            ctx.emit_self(
-                EventKind::Feedback,
-                format!("You put {item_name} in {container_name}."),
-            );
-            if let Some(room) = room {
-                ctx.emit_locus_except_self(
-                    room,
-                    EventKind::Narration,
-                    format!("{who} puts {item_name} in {container_name}."),
-                );
-            }
-        }
-    }
+    let actor = ctx.actor;
+    let frame = Frame {
+        actor,
+        object: Some(item),
+        target: Some(container),
+        kind: None,
+    };
+    let verdict = ctx.verdict();
+    let (world, out) = ctx.world_and_out();
+    crate::act::perform_narrated(world, actor, &crate::agency::put(), &frame, verdict, out);
 }
 
 /// `give <item> to <someone>`: hand a held thing to a being in the room.
@@ -268,9 +257,12 @@ mod tests {
         out
     }
 
+    // Directed lines, whether connection- or entity-addressed: `put` narrates its
+    // first person to the actor entity through the shared narrator, while `give`
+    // still emits its own connection-addressed feedback.
     fn feedback(out: &[Outbound]) -> Vec<String> {
         out.iter()
-            .filter(|o| matches!(o.event.to, Audience::Connection(_)))
+            .filter(|o| matches!(o.event.to, Audience::Connection(_) | Audience::Entity(_)))
             .map(|o| o.event.text.clone())
             .collect()
     }
