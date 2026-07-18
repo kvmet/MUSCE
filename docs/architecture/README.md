@@ -77,6 +77,11 @@ These hold across every subsystem:
   (`musce_action`, non-optional), why the veto is a predicate plus a reason rather
   than a bool, and the phased migration. *(Phases A and B built: vocabulary and
   `Affordance::veto` are engine surface; negation is phase C.)*
+- [offers.md](offers.md): enumerating the affordances available on an entity for a
+  pointing client ("what can I do to this?"), the three-way `OfferStatus`, why it
+  is a private read rather than the `examine` verb, and the type-filter gap a
+  resolver-less consumer inherits. *(Built: the query in `musce_ref`; the wire form
+  is proposed.)*
 - [agency/](agency/README.md): autonomous agent behavior on a shared affordance
   layer: drives to goals, an arbiter, a GOAP planner over the world graph filtered
   by what an agent knows (`Known` relation edges), and execution reusing the
@@ -193,7 +198,9 @@ Built:
   drifts uncontrolled wanderers between rooms, the `death_cry` reaction that
   narrates a destroyed thing's demise from the `Fact` channel, and the sequence
   layer: the `Steps`/`Sequences` components, the `sequence_sweep` system, and a
-  seeded patrolling sentry and burning torch); builds the `Game`
+  seeded patrolling sentry and burning torch); the `offers` affordance-enumeration
+  query (the renderer-side "what can I do to this?" read over the veto model, with a
+  three-way `OfferStatus`; see offers.md); builds the `Game`
   and has `main` plus the end-to-end test. A real game forks this crate.
 - `musce_index`: a generic, type-agnostic secondary index over a component (a key
   function per index, `Multi`/`Unique` policy, exact `get` plus on-request

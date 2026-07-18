@@ -12,6 +12,7 @@ mod exits;
 mod hoard;
 mod kinds;
 mod names;
+pub mod offers;
 mod seed;
 mod sequences;
 pub mod spatial;
