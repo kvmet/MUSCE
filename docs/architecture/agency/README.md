@@ -19,10 +19,10 @@
 > [arbiter.md](arbiter.md) and [execution.md](execution.md)): `musce_agency` carries
 > `Arbiter` (goal selection with commitment/hysteresis) and `Driver` (running a plan
 > with replan-on-veto over `plan_excluding`), exercised with hand-injected goals.
-> A first drive and the live sim wiring now exist: the reference magpie
-> ([drives.md](drives.md)) hoards on the tick. Deferred: movement (`go`),
-> competing/richer drives with cross-tick commitment, and per-beat interleaving. Each
-> doc's `> Status:` marker says how settled that piece is.
+> Two competing drives, the live wiring, and cross-tick commitment now exist: the
+> reference magpie ([drives.md](drives.md)) hoards and admires on the tick, the arbiter
+> holding a persisted commitment so the two do not thrash. Deferred: movement (`go`), a
+> *consume* drive, and per-beat interleaving. Each `> Status:` marker says how settled.
 
 "Agent" here is any entity that acts on its own: an NPC is the obvious case, but
 the same machinery drives a possessed puppet running on autopilot, a summoned
@@ -39,7 +39,7 @@ folder is about generalizing that seam and building the autonomy on top of it.
 
 ## The stack
 
-Four subsystems, top to bottom. Only the bottom one exists today.
+Four subsystems, top to bottom. All four now exist.
 
 1. **Drives** turn the NPC's internal need-state into goals with an urgency.
    `eat-when-hungry` is a standing drive whose urgency is a function of the
@@ -151,12 +151,12 @@ conceptual top layer (drives) last and the bottom of the planner first.
    ([execution.md](execution.md)) runs a committed goal's plan beat by beat and
    replans around a vetoed beat via the planner's `plan_excluding`, the exclusion-set
    seam step 4 left. A **first drive** and the **live sim wiring** followed: the
-   reference magpie ([drives.md](drives.md)) reads a `Hoarder` need, emits a hoard
-   goal, and runs the arbiter/driver loop on the tick through the same `perform` a
-   player hits. What stays deferred is *competing* drives (which alone make the
-   arbiter's commitment observable and motivate cross-tick, persisted commitment), a
-   *consume* drive (which needs the planner's mid-search binding), and per-beat
-   interleaving of the driver on the tick.
+   reference magpie ([drives.md](drives.md)) reads competing `Hoarder` and `Curiosity`
+   needs, emits hoard and admire goals, and runs the arbiter/driver loop on the tick
+   through the same `perform` a player hits, the arbiter holding a persisted commitment
+   (`Arbiter::resume` plus a game-owned tag) so the two do not thrash the bead. What
+   stays deferred is a *consume* drive (which needs the planner's mid-search binding)
+   and per-beat interleaving of the driver on the tick.
 6. **Per-actor cost learning.** An agent keeps a running success statistic per
    affordance (an exponential moving average or a win / loss tally, not a trained
    model), and the game's cost function returns `base + learned_bias(actor,
@@ -199,9 +199,9 @@ conceptual top layer (drives) last and the bottom of the planner first.
 - [execution.md](execution.md): the built execution driver. Running a plan beat by
   beat, replan-on-veto over the exclusion set as the soundness backstop, the generic
   `Beat` boundary, and the deferred one-beat-per-tick sim wiring.
-- [drives.md](drives.md): the built first drive and the live loop. The magpie's
-  `Hoarder` need, why *stow* not *consume*, the loop on the sim tick, and the
-  cross-tick-commitment decision the live wiring surfaced.
+- [drives.md](drives.md): the built drives and the live loop. The magpie's competing
+  `Hoarder` and `Curiosity` needs, symmetric state-based relief, why *stow* and *hold*
+  not *consume*, and the cross-tick commitment that keeps the two from thrashing.
 
 ## Deferred / not yet written
 
@@ -210,10 +210,10 @@ or decay, and the deferred false-belief layer), the planner's remaining pieces (
 cost heuristic and movement/`go`'s derived-location effect), and the per-actor
 learning rule of build step 6 (the stat shape, the update rate, and whether weights
 decay) still want their own doc. Drives now have one ([drives.md](drives.md)) and a
-first instance; what is left there is *competing* and richer drives (multiple urgency
-curves, cross-tick persisted commitment, imperative-goal injection and retirement), a
-*consume* drive (needing the planner's mid-search binding), and per-beat interleaving
-of the driver on the tick. The built core is [planner.md](planner.md),
+first instances, two of them competing under cross-tick commitment; what is left there
+is richer drives (more urgency curves, imperative-goal injection and retirement), a
+*consume* drive (needing the planner's mid-search binding), and per-beat interleaving of
+the driver on the tick. The built core is [planner.md](planner.md),
 [arbiter.md](arbiter.md), [execution.md](execution.md), and [drives.md](drives.md).
 
 One cross-cutting dependency is noted but not owned here, and it is a standing

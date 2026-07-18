@@ -10,7 +10,7 @@ use musce::world::{Controls, Description, EntityId, Locus, Name, World};
 
 use crate::exits::{LeadsFrom, LeadsTo};
 
-use crate::hoard::{Hoarder, Nest};
+use crate::hoard::{Curiosity, Hoarder, Nest};
 use crate::kinds::{Container, Creature, Exit, Item, Player, Shiny};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
@@ -98,11 +98,13 @@ pub fn seed(world: &mut World) {
         .move_entity(journal, hall)
         .expect("seed: place journal");
 
-    // A live autonomous agent: a magpie in the garden that hoards. It grows restless
-    // on its own and stows any shiny thing within reach into its nest, exercising the
-    // agency stack (drive -> arbiter -> planner -> driver) on the sim tick. The nest
-    // is a container it owns via a `Nest` edge; the loose glass bead is the shiny it
-    // will come to covet. See `docs/architecture/agency/drives.md`.
+    // A live autonomous agent: a magpie in the garden with two competing drives. It
+    // hoards (stow a shiny in its nest) and it admires (hold a shiny to turn over), so
+    // the glass bead is pulled toward the nest and toward its claws at once; the
+    // arbiter's commitment is what makes it finish one before the other rather than
+    // yo-yoing the bead. This exercises the whole agency stack (drives -> arbiter ->
+    // planner -> driver) on the sim tick. The nest is a container it owns via a `Nest`
+    // edge. See `docs/architecture/agency/drives.md`.
     let nest = spawn(world, |b| {
         b.add(Container);
         b.add(Name("a twiggy nest".into()));
@@ -126,6 +128,7 @@ pub fn seed(world: &mut World) {
         "A glossy magpie hops along the wall, head cocked at anything that glitters.",
     );
     world.insert(magpie, Hoarder { urge: 0 });
+    world.insert(magpie, Curiosity { itch: 0 });
     world
         .move_entity(magpie, garden)
         .expect("seed: place magpie");

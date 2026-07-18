@@ -42,11 +42,26 @@ pub struct Arbiter {
 }
 
 impl Arbiter {
-    /// An arbiter with the given anti-thrash margin. A larger margin makes an agent
-    /// more stubborn about its current goal; zero disables hysteresis.
+    /// An arbiter with the given anti-thrash margin, committed to nothing yet. A
+    /// larger margin makes an agent more stubborn about its current goal; zero
+    /// disables hysteresis.
     pub fn new(hysteresis: Urgency) -> Self {
+        Self::resume(hysteresis, None)
+    }
+
+    /// An arbiter resuming a prior tick's commitment: `committed` is the incumbent
+    /// goal to hold under hysteresis this tick, or `None` to start uncommitted.
+    ///
+    /// The `Arbiter` is stateful (the commitment is what stops thrashing), but the
+    /// sim's persisted state is the serializable world and agency types deliberately
+    /// do not serialize. So a game that wants commitment to survive across ticks does
+    /// not persist the arbiter; it persists its own record of *which* goal was
+    /// committed to and reconstructs the arbiter each tick, passing that goal here.
+    /// The incumbent is matched into this tick's candidate set by predicate, exactly
+    /// as a within-run commitment is. See `docs/architecture/agency/arbiter.md`.
+    pub fn resume(hysteresis: Urgency, committed: Option<Goal>) -> Self {
         Arbiter {
-            committed: None,
+            committed,
             hysteresis,
         }
     }
@@ -178,6 +193,19 @@ mod tests {
         a.select(&[want("eat", 9)]);
         let next = a.select(&[want("flee", 2), want("rest", 4)]).unwrap();
         assert_eq!(tag_of(&next), "rest");
+    }
+
+    #[test]
+    fn a_resumed_incumbent_is_held_by_a_fresh_arbiter() {
+        // Cross-tick commitment: last tick committed to "eat"; this tick is a brand
+        // new arbiter (agency state does not persist), handed that incumbent via
+        // `resume`. "flee" edges ahead at 6 but the band is 3, so the resumed
+        // commitment holds exactly as an in-run one would. Without `resume` a fresh
+        // arbiter would have no incumbent and take the current max.
+        let incumbent = want("eat", 5);
+        let mut a = Arbiter::resume(3, Some(incumbent));
+        let held = a.select(&[want("eat", 5), want("flee", 6)]).unwrap();
+        assert_eq!(tag_of(&held), "eat");
     }
 
     #[test]
