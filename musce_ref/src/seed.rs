@@ -10,7 +10,8 @@ use musce::world::{Controls, Description, EntityId, Locus, Name, World};
 
 use crate::exits::{LeadsFrom, LeadsTo};
 
-use crate::kinds::{Container, Creature, Exit, Item, Player};
+use crate::hoard::{Hoarder, Nest};
+use crate::kinds::{Container, Creature, Exit, Item, Player, Shiny};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
 use crate::verbs::{Health, Readable, Special, book_key};
@@ -96,6 +97,41 @@ pub fn seed(world: &mut World) {
     world
         .move_entity(journal, hall)
         .expect("seed: place journal");
+
+    // A live autonomous agent: a magpie in the garden that hoards. It grows restless
+    // on its own and stows any shiny thing within reach into its nest, exercising the
+    // agency stack (drive -> arbiter -> planner -> driver) on the sim tick. The nest
+    // is a container it owns via a `Nest` edge; the loose glass bead is the shiny it
+    // will come to covet. See `docs/architecture/agency/drives.md`.
+    let nest = spawn(world, |b| {
+        b.add(Container);
+        b.add(Name("a twiggy nest".into()));
+        b.add(Description(
+            "A ragged nest of twigs and filched wire, wedged in a corner of the wall.".into(),
+        ));
+    });
+    world.move_entity(nest, garden).expect("seed: place nest");
+    let bead = spawn(world, |b| {
+        b.add(Item);
+        b.add(Shiny);
+        b.add(Name("a glass bead".into()));
+        b.add(Description(
+            "A bead of bright blue glass, winking in the light.".into(),
+        ));
+    });
+    world.move_entity(bead, garden).expect("seed: place bead");
+    let magpie = creature(
+        world,
+        "a magpie",
+        "A glossy magpie hops along the wall, head cocked at anything that glitters.",
+    );
+    world.insert(magpie, Hoarder { urge: 0 });
+    world
+        .move_entity(magpie, garden)
+        .expect("seed: place magpie");
+    world
+        .relate::<Nest>(magpie, nest)
+        .expect("seed: wire the magpie's nest");
 
     let avatar = avatar(
         world,

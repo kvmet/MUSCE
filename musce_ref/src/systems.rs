@@ -35,6 +35,7 @@ pub fn register(world: &mut World) {
     world.register_component::<crate::verbs::Readable>();
     crate::kinds::register(world);
     crate::exits::register(world);
+    crate::hoard::register(world);
     crate::names::register(world);
     crate::sequences::register(world);
     crate::spatial::register(world);

@@ -8,6 +8,7 @@
 mod admin;
 pub mod agency;
 mod exits;
+mod hoard;
 mod kinds;
 mod names;
 mod seed;
@@ -41,6 +42,7 @@ pub fn game() -> Game {
             // First, so later systems in the same tick read the updated index.
             spatial::maintain,
             systems::wander,
+            hoard::hoard,
             sequences::sequence_sweep,
             systems::death_cry,
         ],

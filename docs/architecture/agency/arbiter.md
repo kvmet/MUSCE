@@ -1,10 +1,13 @@
 # The Arbiter
 
 > Status: **built (agency build step 5).** Goal selection with commitment lives in
-> `musce_agency` (`arbiter.rs`) as `Arbiter` / `Goal` / `Urgency`. Drives (the
-> component-reading goal *sources* that feed it) are deferred to their own content
-> slice; the arbiter is exercised now with hand-injected goals, which is also how a
-> game injects an imperative order.
+> `musce_agency` (`arbiter.rs`) as `Arbiter` / `Goal` / `Urgency`. A first drive now
+> feeds it live: the reference game's magpie ([drives.md](drives.md)) emits a hoard
+> goal the arbiter selects on the sim tick. With that single drive there is never a
+> challenger, so *commitment* is dormant and each tick news a fresh arbiter (see
+> "cross-tick commitment" in [drives.md](drives.md)); competing drives and a persisted
+> incumbent are the deferred next step. The same injection point takes a hand-authored
+> imperative order.
 
 The arbiter answers "of everything this agent could want, which does it pursue
 right now?" A [`Goal`] is a predicate (the same goal [`Clause`] the planner
@@ -47,8 +50,8 @@ which a naive `holds` pass could not answer without redoing the planner's bindin
   calls `Arbiter::release`, dropping the commitment so the next `select` re-picks.
 
 So the arbiter is pure priority-plus-commitment over whatever candidate set it is
-handed. That set comes from drives (deferred) or, today and for imperative orders,
-from direct injection.
+handed. That set comes from drives (the magpie's hoard drive is the first, see
+[drives.md](drives.md)) or, for imperative orders, from direct injection.
 
 ## The two bypass seams meet here
 

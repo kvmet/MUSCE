@@ -48,6 +48,12 @@ kind!(
      relations) is game vocabulary too, defined in `crate::exits` over the engine's \
      public relation layer; this marks the kind game rules filter on (`go`)."
 );
+kind!(
+    Shiny,
+    "shiny",
+    "A glittering trinket a hoarder covets: the tag the magpie drive's goal filters \
+     on when it seeks something to stow. See `crate::hoard`."
+);
 
 /// Register the game's kind markers so they persist and reload. Called from the
 /// game's `register` hook, before any world loads or seeds. The persisted tags
@@ -59,4 +65,5 @@ pub(crate) fn register(world: &mut World) {
     world.register_component::<Container>();
     world.register_component::<Player>();
     world.register_component::<Exit>();
+    world.register_component::<Shiny>();
 }

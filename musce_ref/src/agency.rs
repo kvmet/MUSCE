@@ -245,7 +245,7 @@ pub fn known_here(world: &World, actor: EntityId) -> Vec<EntityId> {
 /// automation passes [`Verdict::guest`], so a cap-gated act is unavailable until a
 /// game hands the automation a stronger verdict. A gate refusal short-circuits
 /// before the grounded action runs, so nothing commits.
-pub fn perform(
+pub(crate) fn perform(
     world: &mut World,
     affordance: &Affordance,
     frame: &Frame,

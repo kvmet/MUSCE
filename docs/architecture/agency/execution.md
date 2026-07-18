@@ -3,9 +3,10 @@
 > Status: **built (agency build step 5).** The execution driver lives in
 > `musce_agency` (`driver.rs`) as `Driver` / `Beat` / `Progress`, on top of the
 > planner's `plan_excluding`. It runs a committed goal's plan to completion in one
-> call, off any tick loop. Wiring it into the sim thread as a per-agent,
-> one-beat-per-tick system is a deferred, separate concern (it touches scheduling,
-> not this logic).
+> call. It is now wired onto the sim tick by the reference game's magpie (see
+> [drives.md](drives.md)), which runs the whole plan per scheduled tick. Interleaving
+> a plan a *beat* per tick (yielding between beats) is the remaining deferred
+> refinement: a scheduling concern, not a change to this logic.
 
 The driver is the bottom of the agency stack: given a committed goal, it plans,
 runs the plan beat by beat through the game's grounded action, and **replans around
@@ -72,11 +73,12 @@ for each replan within the call.
 
 ## What is deferred
 
-- **The one-beat-per-tick sim wiring.** `pursue` runs a whole plan in one call.
-  Interleaving a plan with the rest of the world (one beat per agent per tick,
-  yielding between beats) is a scheduling concern for the sim thread, built when
-  agency is wired onto a live NPC. The replan logic here does not change; it is
-  re-entered per beat instead of looped internally.
+- **The one-beat-per-tick sim wiring.** `pursue` runs a whole plan in one call, and
+  the magpie ([drives.md](drives.md)) now calls it once per scheduled tick, so the
+  driver is live on a real NPC. What stays deferred is interleaving a plan a *beat*
+  per tick (one beat per agent per tick, yielding between beats), a scheduling concern
+  for the sim thread. The replan logic here does not change; it is re-entered per beat
+  instead of looped internally.
 - **A natural in-game veto trigger.** With deterministic, precondition-gated verbs
   and a single actor, a correctly-planned plan never vetoes at execution; the
   divergence the replan path handles arrives with concurrent agents or a
