@@ -17,7 +17,10 @@
 > [engine-and-game.md](engine-and-game.md)). **Acting on a clicked id
 > (perform-by-id) is built**: a `Perform` frame (affordance name + clicked focus +
 > optional sub-pick) enters the verb/action path through `dispatch_perform` on the
-> game's `perform` seam, grounding the act with no name to resolve. It currently
+> game's `perform` seam, grounding the act with no name to resolve. The game gates
+> the supplied ids through the actor's perceivable set (the scope the reads use), so
+> a click is no more powerful than a typed verb, and refuses an under-bound frame
+> (a missing sub-pick) rather than grounding it. It currently
 > runs the silent grounded action with actor-facing feedback only; full narration
 > (folding verbs, clicks, and NPC acts onto one narrating `perform`) is the next
 > slice. The dispatcher routes bare commands to an embodiment frame through

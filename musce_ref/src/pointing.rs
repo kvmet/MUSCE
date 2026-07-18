@@ -142,6 +142,16 @@ pub fn perform(
     focus: EntityId,
     with: Option<EntityId>,
 ) {
+    // The click carries raw ids, so gate every supplied entity through the actor's
+    // perceivable set before grounding. Without this the click path would be
+    // strictly more powerful than the typed verbs, whose name resolution is
+    // locus-scoped: a client could act on any entity by guessing its id.
+    if !perceivable(ctx.world, ctx.actor, focus)
+        || with.is_some_and(|w| !perceivable(ctx.world, ctx.actor, w))
+    {
+        ctx.emit_self(EventKind::Feedback, "You don't see that here.");
+        return;
+    }
     let (object, target) = match offers::focus_role(name) {
         offers::Role::Object => (Some(focus), with),
         offers::Role::Target => (with, Some(focus)),
@@ -156,6 +166,17 @@ pub fn perform(
         target,
         kind: None,
     };
+    // The client is the enumerator now and can omit a role the affordance needs (a
+    // `put` with no object sub-picked). Refuse cleanly here rather than routing an
+    // under-bound frame into `agency::perform`, whose `bad_frame` invariant assumes a
+    // complete frame and would `debug_assert!` (a debug panic, a wrong release message).
+    if offers::required_roles(&affordance)
+        .into_iter()
+        .any(|role| !offers::filled(&frame, role))
+    {
+        ctx.emit_self(EventKind::Feedback, "You need to choose something first.");
+        return;
+    }
     match agency::perform(ctx.world, &affordance, &frame, verdict) {
         Outcome::Committed => {
             // Name the object where the act binds one, else the focus, so `go` (whose
@@ -166,6 +187,19 @@ pub fn perform(
             ctx.emit_self(EventKind::Feedback, format!("You {name} {thing}."));
         }
         Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+    }
+}
+
+/// Whether `actor` can perceive `id`: it shares the actor's enclosing locus, the
+/// exact subtree [`snapshot`] roots at and exposes to the client (room contents,
+/// nested container contents, and the actor's own inventory all resolve to that
+/// locus). The MVP perception rule, matching `crate::agency::known_here`; a
+/// location-less actor perceives nothing. Assumes loci do not nest, as the reference
+/// world model holds.
+fn perceivable(world: &World, actor: EntityId, id: EntityId) -> bool {
+    match world.enclosing_locus(actor) {
+        Some(locus) => world.enclosing_locus(id) == Some(locus),
+        None => false,
     }
 }
 
@@ -394,5 +428,56 @@ mod tests {
             feedback(&out)
         );
         assert_eq!(f.world.container_of(rock), before);
+    }
+
+    #[test]
+    fn a_clicked_act_on_an_unperceivable_entity_is_refused() {
+        // A takeable item in another room the actor cannot see. Acting on it by id
+        // must be refused, not grounded: the click is no more powerful than the
+        // locus-scoped typed verbs. Without the perceivability gate this pulled the
+        // far item into the actor's hands.
+        let mut f = fixture();
+        let elsewhere = spawn(&mut f.world, |b| {
+            b.add(Locus);
+        });
+        let far_item = spawn(&mut f.world, |b| {
+            b.add(Item);
+            b.add(Name("a distant gem".into()));
+        });
+        f.world.move_entity(far_item, elsewhere).unwrap();
+
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "take", far_item, None);
+        });
+        assert!(
+            feedback(&out)
+                .iter()
+                .any(|t| t == "You don't see that here."),
+            "got: {:?}",
+            feedback(&out)
+        );
+        assert_eq!(f.world.container_of(far_item), Some(elsewhere));
+    }
+
+    #[test]
+    fn a_clicked_put_without_a_sub_pick_is_refused_not_panicked() {
+        // `put` needs an object the client sub-picks; omitting it leaves the object
+        // role unbound. That must be a clean refusal, not the `bad_frame` invariant
+        // inside agency::perform (a debug panic). Nothing moves.
+        let mut f = fixture();
+        let chest = f.chest;
+        let coin = f.coin;
+        let held = f.world.container_of(coin);
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "put", chest, None);
+        });
+        assert!(
+            feedback(&out)
+                .iter()
+                .any(|t| t == "You need to choose something first."),
+            "got: {:?}",
+            feedback(&out)
+        );
+        assert_eq!(f.world.container_of(coin), held);
     }
 }

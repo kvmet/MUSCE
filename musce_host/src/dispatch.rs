@@ -160,6 +160,17 @@ impl Dispatch {
         if !self.floor.is_live(id) {
             return Vec::new();
         }
+        // A connection waiting on an authentication result acts through nothing else,
+        // exactly as a line does mid-auth (the read queries are harmless and skip
+        // this; a perform mutates, so it holds).
+        if self.floor.is_pending(id) {
+            emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                "Still authenticating; one moment.",
+            )));
+            return Vec::new();
+        }
         let Some(character) = self.floor.character_of(id) else {
             emit(Outgoing::Event(Delivery::new(
                 id,
@@ -789,6 +800,25 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("Still authenticating")),
             "a line mid-auth is rejected, got: {out:?}"
+        );
+
+        // A perform mid-auth is rejected the same way: it mutates, so it must not run
+        // before the connection's authority is settled.
+        let acted = perform(
+            &mut d,
+            &mut world,
+            id,
+            Perform {
+                name: "take".into(),
+                focus: 7,
+                with: None,
+            },
+        );
+        assert!(
+            conn_texts(&acted)
+                .iter()
+                .any(|t| t.contains("Still authenticating")),
+            "a perform mid-auth is rejected, got: {acted:?}"
         );
     }
 

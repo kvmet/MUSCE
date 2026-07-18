@@ -132,7 +132,7 @@ pub(crate) fn affordance_named(name: &str) -> Option<Affordance> {
 /// room, never a pick). For the current verb set every user-supplied role is
 /// guard-constrained; an affordance that reads a role `perform` needs but no guard
 /// mentions would want this revisited.
-fn required_roles(aff: &Affordance) -> Vec<Role> {
+pub(crate) fn required_roles(aff: &Affordance) -> Vec<Role> {
     [("object", Role::Object), ("target", Role::Target)]
         .into_iter()
         .filter(|(name, _)| guards_mention(aff, name))
@@ -170,7 +170,7 @@ fn frame_for(actor: EntityId, clicked: EntityId, focus: Role) -> Frame {
     frame
 }
 
-fn filled(frame: &Frame, role: Role) -> bool {
+pub(crate) fn filled(frame: &Frame, role: Role) -> bool {
     match role {
         Role::Object => frame.object.is_some(),
         Role::Target => frame.target.is_some(),
