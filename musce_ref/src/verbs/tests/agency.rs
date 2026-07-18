@@ -438,3 +438,131 @@ fn go_guard_predicts_the_locked_veto() {
     assert_eq!(f.world.enclosing_locus(f.actor), Some(f.hall)); // vetoed, didn't move
     assert!(self_feedback(&out).iter().any(|t| t.contains("locked")));
 }
+
+/// Build step 4: the planner's *own* output, run through the same grounded action
+/// a player hits, satisfies the goal. Reaching "coin in chest" requires the
+/// backward chain the planner exists to find: put's held-precondition is achieved
+/// by take, so the plan is take-then-put, discovered by regression, not authored.
+/// The oracle is an independent check against world state (the goal predicate
+/// became true), not a comparison to a hand-written plan.
+#[test]
+fn a_regressed_plan_run_through_perform_satisfies_the_goal() {
+    use crate::agency::{RefWorldModel, known_here, perform, put as put_aff, take as take_aff};
+    use crate::kinds::{Container, Item};
+    use musce::agency::{Clause, Planner, Predicate, Term, UnitCost};
+
+    let mut f = fixture();
+    // A coin on the floor and a chest, both co-located with the actor in the hall.
+    let chest = spawn(&mut f.world, |b| {
+        b.add(Container);
+        b.add(Description("a wooden chest".into()));
+    });
+    f.world.move_entity(chest, f.hall).unwrap();
+    let coin = spawn(&mut f.world, |b| {
+        b.add(Item);
+        b.add(Description("a gold coin".into()));
+    });
+    f.world.move_entity(coin, f.hall).unwrap();
+
+    // The goal: the coin ends up inside the chest. The coin is not held, so the
+    // planner must insert the take that puts it in hand before the put.
+    let goal = Clause(vec![
+        Predicate::Related {
+            a: Term::Const(coin),
+            b: Term::Const(chest),
+            kind: "contained_by".into(),
+        }
+        .into(),
+    ]);
+
+    let table = [take_aff(), put_aff()];
+    let known = known_here(&f.world, f.actor);
+    let plan = Planner::new(&table, &RefWorldModel, &UnitCost)
+        .plan(f.actor, &goal, &known, &f.world)
+        .expect("the planner finds a take-then-put plan");
+
+    let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
+    assert_eq!(names, ["take", "put"]);
+
+    // Run the plan through the same veto-checked grounded action a typed verb
+    // runs, then assert the world satisfies the goal.
+    for step in &plan {
+        assert!(
+            matches!(
+                perform(
+                    &mut f.world,
+                    &step.affordance,
+                    &step.frame,
+                    &Verdict::guest()
+                ),
+                Outcome::Committed
+            ),
+            "planned {} was refused",
+            step.affordance.name
+        );
+    }
+    assert_eq!(f.world.container_of(coin), Some(chest));
+}
+
+/// Build step 4b: an existential goal ("hold some item") binds its fungible slot
+/// from what the actor knows, then plans for the chosen entity. The item tag
+/// filters the candidates (a co-located creature is rejected), and regression
+/// plans the take. Run through `perform`, the actor ends up holding the item.
+#[test]
+fn a_fungible_goal_binds_a_known_item_and_plans_the_take() {
+    use crate::agency::{RefWorldModel, known_here, perform, put as put_aff, take as take_aff};
+    use crate::kinds::Item;
+    use musce::agency::{Clause, Planner, Predicate, Term, UnitCost};
+
+    let mut f = fixture();
+    // A coin (an item) and a rat (a creature, not an item), both co-located.
+    let coin = spawn(&mut f.world, |b| {
+        b.add(Item);
+        b.add(Description("a gold coin".into()));
+    });
+    f.world.move_entity(coin, f.hall).unwrap();
+    let rat = spawn(&mut f.world, |b| {
+        b.add(Creature);
+        b.add(Description("a sewer rat".into()));
+    });
+    f.world.move_entity(rat, f.hall).unwrap();
+
+    // ∃x. related(x, actor, contained_by) ∧ tag(x, item): hold some item.
+    let goal = Clause(vec![
+        Predicate::Related {
+            a: Term::var("x"),
+            b: Term::var("actor"),
+            kind: "contained_by".into(),
+        }
+        .into(),
+        Predicate::Tag {
+            e: Term::var("x"),
+            comp: "item".into(),
+        }
+        .into(),
+    ]);
+
+    let table = [take_aff(), put_aff()];
+    let known = known_here(&f.world, f.actor);
+    let plan = Planner::new(&table, &RefWorldModel, &UnitCost)
+        .plan(f.actor, &goal, &known, &f.world)
+        .expect("the planner binds the item and plans a take");
+
+    let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
+    assert_eq!(names, ["take"]);
+    assert_eq!(plan[0].frame.object, Some(coin)); // the item, not the rat
+
+    for step in &plan {
+        assert!(matches!(
+            perform(
+                &mut f.world,
+                &step.affordance,
+                &step.frame,
+                &Verdict::guest()
+            ),
+            Outcome::Committed
+        ));
+    }
+    assert_eq!(f.world.container_of(coin), Some(f.actor));
+    assert_eq!(f.world.container_of(rat), Some(f.hall)); // the rat was never chosen
+}

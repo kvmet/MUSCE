@@ -11,9 +11,12 @@
 
 use musce_core::{EntityId, World};
 
+mod planner;
+
 pub use musce_action::{
     Affordance, Clause, Frame, Gate, Guard, Literal, Predicate, Term, Var, WorldModel,
 };
+pub use planner::{Plan, Planner, Step};
 
 /// A plan cost the planner minimizes. Integer for MVP; widening to a fractional
 /// type for scaled costs (distance, effort) is a localized change to this alias

@@ -148,10 +148,13 @@ pub fn put() -> Affordance {
 /// direction), and `RefWorldModel` reads the `Locked` marker by name; negation is
 /// evaluated engine-side, so the reading stays the plain tag test.
 ///
-/// No effect is declared yet: `go`'s effect is "actor is now at the exit's
+/// No effect is declared: `go`'s effect is "actor is now at the exit's
 /// destination", but the destination is *derived* from the exit (the `target`
-/// role) rather than a frame role of its own, so it awaits the planner's
-/// derived-location handling (step 4). Nothing reads effects until then.
+/// role) rather than a frame role of its own, which needs a derived/functional
+/// term the vocabulary does not have. The built planner deliberately leaves `go`
+/// out (co-located-only `Known` makes no cross-room goal formable, so nothing
+/// exercises this effect); its derived-location handling lands with multi-room
+/// perception. See `docs/architecture/agency/planner.md`.
 pub fn go() -> Affordance {
     Affordance {
         name: "go".into(),

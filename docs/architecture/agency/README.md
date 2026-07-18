@@ -1,19 +1,22 @@
 # Agency
 
-> Status: **proposed; vocabulary, guards, binding, and manual plan execution
-> built.** The affordance vocabulary (`Term`, `Predicate`, `Literal` with engine
-> negation, `Clause`, `Affordance`, the case `Frame`), the `WorldModel` seam, and
-> `Guard { clause, reason }` with `Affordance::veto` are **promoted into the
-> engine**, non-optional, in `musce_action` (see [../affordances.md](../affordances.md));
+> Status: **proposed; vocabulary, guards, binding, and the planner built.** The
+> affordance vocabulary (`Term`, `Predicate`, `Literal` with engine negation,
+> `Clause`, `Affordance`, the case `Frame`), the `WorldModel` seam, and `Guard {
+> clause, reason }` with `Affordance::veto` are **promoted into the engine**,
+> non-optional, in `musce_action` (see [../affordances.md](../affordances.md));
 > `musce_agency` re-exports them and keeps the optional planner side, the
 > `CostModel` seam and the `bind_var` enumeration primitive (build steps 1 and 3).
 > `musce_ref` grounds the `take`/`drop`/`put`/`go` verbs and carries their
 > affordances, `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
 > grounded-action dispatch a plan step lowers to). `put`'s container check and
-> `go`'s locked-exit check are guards the handler and planner share; a hand-authored
-> plan runs end to end (a candidate is bound by enumeration and executed through the
-> same veto a player hits). The planner (regression), arbiter, and drives remain
-> proposed. The `> Status:` markers on each doc say how settled each piece is.
+> `go`'s locked-exit check are guards the handler and planner share. The **planner
+> (backward regression) is built** (build step 4, see [planner.md](planner.md)):
+> `musce_agency` carries `Planner`/`plan`, and `musce_ref`'s executable oracle runs
+> a regressed plan through the same `perform` a player hits to satisfy a goal.
+> Movement (`go`) and the replan-on-veto loop are deferred within step 4; the
+> arbiter and drives remain proposed. The `> Status:` markers on each doc say how
+> settled each piece is.
 
 "Agent" here is any entity that acts on its own: an NPC is the obvious case, but
 the same machinery drives a possessed puppet running on autopilot, a summoned
@@ -120,15 +123,20 @@ conceptual top layer (drives) last and the bottom of the planner first.
    `known_here`); perception / sense-propagation is a deferred layer, deliberately
    not coupled in. What is absent is **regression** (chaining affordances by
    precondition): that is the planner proper, step 4.
-4. **The planner.** Regression over the affordance table on top of the step-3
-   binding primitive, now falsifiable by the same executable oracle step 3 uses:
-   run the planner's *own* output through the sweep and assert the goal predicate
-   became true. That is an independent check against world state, not a comparison
-   to a hand-authored plan (many chains satisfy a goal; the planner may pick a
-   different correct one), and it covers goals no hand-plan was written for. Cost
-   *value* and heuristic start trivial (unit cost, no heuristic) and sharpen
-   later; both are additions (the cost *representation*, by contrast, was pinned
-   in step 1).
+4. **The planner. (Built.)** Backward regression over the affordance table on top
+   of the step-3 binding primitive, falsifiable by the same executable oracle step
+   3 uses: run the planner's *own* output through the sweep and assert the goal
+   predicate became true. That is an independent check against world state, not a
+   comparison to a hand-authored plan (many chains satisfy a goal; the planner may
+   pick a different correct one), and it covers goals no hand-plan was written for.
+   Cost *value* and heuristic start trivial (unit cost, no heuristic) and sharpen
+   later; both are additions (the cost *representation*, by contrast, was pinned in
+   step 1). Two cuts are deferred within the step and documented in
+   [planner.md](planner.md): movement (`go`), because co-located-only `Known` makes
+   no cross-room goal formable (so nothing exercises `go`'s derived-location
+   effect), and the replan-on-veto loop, which belongs with the arbiter (step 5).
+   The planner therefore plans within-room manipulation, add-only effects, uniform
+   cost, ground and existential goals.
 5. **Drives, then the arbiter.** These are policy over a working planner and
    are the textbook deferral: an imperative goal is a one-line injection at the
    arbiter, so the planner is fully testable with hand-injected goals long before
@@ -167,16 +175,21 @@ conceptual top layer (drives) last and the bottom of the planner first.
   goal is written in. The predicate set (`related`/`tag` plus content filters) as
   a view over the relation graph, why objects are identified by constraint rather
   than by id, and how a variable binds lazily against what an agent knows.
+- [planner.md](planner.md): the built GOAP core. Backward regression over the
+  affordance table, uniform-cost search, ground and existential goal binding, the
+  add-only effect model with replan-on-veto as the soundness backstop, why `go`
+  is deferred, and the executable oracle.
 
 ## Deferred / not yet written
 
 The arbiter (commitment and hysteresis), perception and the `Known` relation (how
 edges are acquired and whether they persist or decay, and the deferred false-belief
-layer), the planner (regression, argument binding against known entities, the cost
-model and heuristic, and the per-actor learning rule of build step 6: the stat
-shape, the update rate, and whether weights decay), and drives (the urgency curves
-and how imperative goals are injected and retired) each want their own doc once the
-affordance shape settles.
+layer), the planner's remaining pieces (a cost heuristic, movement/`go`'s
+derived-location effect, the replan-on-veto loop, and the per-actor learning rule
+of build step 6: the stat shape, the update rate, and whether weights decay), and
+drives (the urgency curves and how imperative goals are injected and retired) each
+want their own doc once the affordance shape settles. The planner's built core is
+[planner.md](planner.md).
 This is the list of subsystems still to design; the order they get *built* in
 (and why it inverts the stack numbering) is the Build order section above.
 
