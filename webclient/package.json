@@ -1,0 +1,22 @@
+{
+  "name": "webclient",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A thin, pointing client graybox: a containment tree, an offers panel driven by the `musce_ref::offers` semantics (the three-way status and the `NeedsRole` sub-pick), and a command bar, all in semantic DOM. It runs against an in-browser mock connection, so it works before the WebSocket transport exists; swapping to the real server is one file (`src/lib/connection.ts`).",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "svelte": "^5.56.6"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tsconfig/svelte": "^5.0.8",
+    "svelte-check": "^4.7.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}
