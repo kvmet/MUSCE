@@ -1,7 +1,8 @@
 //! The WebSocket transport speaks the JSON envelope both ways: a client text
-//! command (`{"t":"line",...}`) and a read query (`{"t":"query",...}`) arrive as
-//! typed `Input` on the sim inbox, and a sim `Delivery`/`Reply` arrives as one
-//! `{"t":"event"|"snapshot",...}` frame. Connect and disconnect ride the same
+//! command (`{"t":"line",...}`), a read query (`{"t":"query",...}`), and a grounded
+//! act (`{"t":"perform",...}`) arrive as typed `Input` on the sim inbox, and a sim
+//! `Delivery`/`Reply` arrives as one `{"t":"event"|"snapshot",...}` frame. Connect
+//! and disconnect ride the same
 //! channel as `Input::Connected`/`Disconnected`. This exercises the real
 //! `start` -> accept -> handshake -> serve -> codec path against a tungstenite
 //! client, so it is the falsifying test for the wire contract end to end.
@@ -11,7 +12,7 @@ use std::time::Duration;
 use crossbeam_channel::Receiver;
 use futures_util::{SinkExt, StreamExt};
 use musce_proto::{
-    Command, Delivery, EventKind, Input, Offer, OfferStatus, Outgoing, Query, ServerMsg,
+    Command, Delivery, EventKind, Input, Offer, OfferStatus, Outgoing, Perform, Query, ServerMsg,
 };
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
@@ -79,6 +80,20 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
     assert!(matches!(
         query.input,
         Input::Query(Query::Offers { clicked: 42 })
+    ));
+
+    // A perform envelope arrives as a typed `Input::Perform`, its optional second
+    // role carried through.
+    client
+        .send(Message::text(
+            r#"{"t":"perform","name":"put","focus":9,"with":42}"#,
+        ))
+        .await
+        .unwrap();
+    let perform = next_cmd(&cmd_rx).await;
+    assert!(matches!(
+        perform.input,
+        Input::Perform(Perform { name, focus: 9, with: Some(42) }) if name == "put"
     ));
 
     // A sim event arrives as one `{"t":"event",...}` frame.

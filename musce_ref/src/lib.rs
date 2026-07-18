@@ -62,10 +62,11 @@ pub fn game() -> Game {
         decode_cold: |bytes| {
             String::from_utf8(bytes.to_vec()).map_err(|_| "The text is unreadable.".to_string())
         },
-        // The pointing web client's reads: the containment snapshot and the
-        // affordance offers, both game vocabulary projected to the wire.
+        // The pointing web client's seams: the containment snapshot and the
+        // affordance offers (reads), and perform (the act on a clicked entity).
         snapshot: pointing::snapshot,
         offers: pointing::offers,
+        perform: pointing::perform,
     }
 }
 

@@ -24,7 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 
 mod web;
-pub use web::{ClientMsg, Entity, Offer, OfferStatus, Query, Role, ServerMsg, SnapshotData};
+pub use web::{
+    ClientMsg, Entity, Offer, OfferStatus, Perform, Query, Role, ServerMsg, SnapshotData,
+};
 
 /// Net-local identity for one live connection. Monotonic and never reused, so a
 /// stale reference can never resolve to a different connection.
@@ -81,6 +83,10 @@ pub enum Input {
     /// JSON envelope by the transport). Answered by an `Outgoing::Reply`; the sim
     /// runs it as a pure read, never through the verb/action path.
     Query(Query),
+    /// A grounded act from a pointing client: perform an affordance on a clicked
+    /// entity by id, skipping name resolution. Enters the verb/action path (it
+    /// mutates and narrates), unlike a `Query`.
+    Perform(Perform),
     /// Net lost the connection (client closed, or net closed it after `Close`).
     Disconnected,
 }

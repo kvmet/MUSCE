@@ -14,8 +14,13 @@
 > `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
 > dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
 > by the game's `snapshot`/`offers` seams (see
-> [engine-and-game.md](engine-and-game.md)). Acting on a clicked id (perform-by-id)
-> is the remaining slice. The dispatcher routes bare commands to an embodiment frame through
+> [engine-and-game.md](engine-and-game.md)). **Acting on a clicked id
+> (perform-by-id) is built**: a `Perform` frame (affordance name + clicked focus +
+> optional sub-pick) enters the verb/action path through `dispatch_perform` on the
+> game's `perform` seam, grounding the act with no name to resolve. It currently
+> runs the silent grounded action with actor-facing feedback only; full narration
+> (folding verbs, clicks, and NPC acts onto one narrating `perform`) is the next
+> slice. The dispatcher routes bare commands to an embodiment frame through
 > the connection's **session attachment**: `@play` records which *character* the
 > connection drives as session state on the floor, and the driven actor is
 > resolved live from that character's `Focus` (`actor =
@@ -174,8 +179,10 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 
 1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
 2. **WebSocket built; SSH proposed.** Both behind the same `Connection`
-   abstraction. WebSocket also carries the structured JSON envelope and the
-   snapshot/offers read pair; perform-by-id is the next slice on it.
+   abstraction. WebSocket also carries the structured JSON envelope, the
+   snapshot/offers read pair, and perform-by-id (a `Perform` frame grounds a clicked
+   act through `dispatch_perform`, silent grounded action with actor feedback for
+   now; the narration unification is the next slice).
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
 4. **Embodiment**, in sub-steps (the model is spelled out under "Sessions and
    control" above):

@@ -1,9 +1,11 @@
-//! The pointing web client's read projections: the world into a wire snapshot,
-//! and a clicked entity into its affordance offers, both as `musce_proto` DTOs the
-//! read query replies carry. These are the game side of the `Game.snapshot` and
-//! `Game.offers` seams: the engine routes a read query to them and serializes the
-//! result, holding no game vocabulary itself. Names, kinds, and the affordance set
-//! are all game knowledge, which is why the projection lives here.
+//! The pointing web client's Game seams: two reads and one act. [`snapshot`]
+//! projects the world into a wire containment tree and [`offers`] a clicked entity
+//! into its affordance list, both as `musce_proto` DTOs the read replies carry;
+//! [`perform`] is the act, running a clicked affordance on already-bound entities.
+//! These are the game side of the `Game.snapshot`/`Game.offers`/`Game.perform`
+//! seams: the engine routes to them and (for the reads) serializes the result,
+//! holding no game vocabulary itself. Names, kinds, the affordance set, and which
+//! role a clicked entity fills are all game knowledge, which is why they live here.
 //!
 //! Perception is the MVP rule the rest of the reference game already uses: an actor
 //! sees its enclosing room and everything nested within (co-located implies known,
@@ -13,12 +15,16 @@
 //! See `docs/architecture/networking-and-sessions.md` and
 //! `docs/architecture/offers.md`.
 
-use musce::wire::{Entity, Offer, OfferStatus, Role, SnapshotData};
+use musce::action::{Ctx, Verdict};
+use musce::agency::Frame;
+use musce::wire::{Entity, EventKind, Offer, OfferStatus, Role, SnapshotData};
 use musce::world::{Description, EntityId, Locus, World};
 
+use crate::agency;
 use crate::kinds::{Container, Creature, Edible, Exit, Item, Player};
+use crate::names::display_name;
 use crate::offers::{self, affordances_on};
-use crate::verbs::Locked;
+use crate::verbs::{Locked, Outcome};
 
 /// Project the perceivable containment tree for `actor`: rooted at its enclosing
 /// room, every entity nested within (including, as the actor's own contents, its
@@ -115,13 +121,82 @@ fn to_wire_role(role: offers::Role) -> Role {
     }
 }
 
+/// Perform a clicked affordance for `actor`, entities already bound: `focus` is the
+/// clicked entity and `with` an optional sub-pick, mapped onto the affordance's
+/// roles by the same [`focus_role`](offers::focus_role) convention enumeration
+/// uses. It then runs the identical guarded, gate-checked action a verb or a plan
+/// step resolves to (`crate::agency::perform`); the click supplies the ground the
+/// name resolver would otherwise recover.
+///
+/// The third pointing seam, but an act, not a read: it mutates and acknowledges the
+/// actor. Full narration (first- and third-person, to actor and room, as a typed
+/// verb narrates) is deferred to the slice that makes `perform` the single
+/// narration owner for verbs, clicks, and NPC acts alike; for now a click reports a
+/// refusal's reason or a minimal confirmation, and co-located observers see the
+/// world change on their next snapshot. See
+/// `docs/architecture/networking-and-sessions.md`.
+pub fn perform(
+    ctx: &mut Ctx,
+    verdict: &Verdict,
+    name: &str,
+    focus: EntityId,
+    with: Option<EntityId>,
+) {
+    let (object, target) = match offers::focus_role(name) {
+        offers::Role::Object => (Some(focus), with),
+        offers::Role::Target => (with, Some(focus)),
+    };
+    let Some(affordance) = offers::affordance_named(name) else {
+        ctx.emit_self(EventKind::Feedback, "You can't do that.");
+        return;
+    };
+    let frame = Frame {
+        actor: ctx.actor,
+        object,
+        target,
+        kind: None,
+    };
+    match agency::perform(ctx.world, &affordance, &frame, verdict) {
+        Outcome::Committed => {
+            // Name the object where the act binds one, else the focus, so `go` (whose
+            // object is unset) still names the exit. A placeholder acknowledgement;
+            // per-verb prose lands with the narration-owner slice.
+            let subject = object.unwrap_or(focus);
+            let thing = display_name(ctx.world, subject);
+            ctx.emit_self(EventKind::Feedback, format!("You {name} {thing}."));
+        }
+        Outcome::Refused(reason) => ctx.emit_self(EventKind::Feedback, reason),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use musce::action::{Audience, Outbound};
+    use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, Name};
 
     use crate::kinds::{Container, Item};
+
+    /// Run a Ctx closure and return its emitted (pre-resolution) outbound buffer, so
+    /// a perform test reads the actor feedback the seam emits. A guest verdict, which
+    /// passes the `Gate::Open` affordances a client can click.
+    fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
+        let mut out = Vec::new();
+        let verdict = Verdict::guest();
+        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+        f(&mut ctx);
+        out
+    }
+
+    /// The first-person feedback lines an outbound buffer carries.
+    fn feedback(out: &[Outbound]) -> Vec<String> {
+        out.iter()
+            .filter(|o| matches!(o.event.to, Audience::Connection(_)))
+            .map(|o| o.event.text.clone())
+            .collect()
+    }
 
     struct Fixture {
         world: World,
@@ -279,5 +354,45 @@ mod tests {
             .find(|o| o.name == "go")
             .unwrap();
         assert!(matches!(go.status, OfferStatus::Vetoed { reason } if reason == "It's locked."));
+    }
+
+    #[test]
+    fn a_clicked_take_commits_and_acknowledges() {
+        // The click grounds the take on the rock's id (no name resolved): it ends up
+        // held, and the actor is told so.
+        let mut f = fixture();
+        let rock = f.rock;
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "take", rock, None);
+        });
+        assert_eq!(f.world.container_of(rock), Some(f.actor));
+        assert!(
+            feedback(&out)
+                .iter()
+                .any(|t| t == "You take a smooth rock."),
+            "got: {:?}",
+            feedback(&out)
+        );
+    }
+
+    #[test]
+    fn a_clicked_act_surfaces_its_refusal_and_changes_nothing() {
+        // Dropping the rock the actor is not carrying: the drop guard vetoes exactly
+        // as it does for the typed verb, the reason reaches the actor, and the rock
+        // stays where it was.
+        let mut f = fixture();
+        let rock = f.rock;
+        let before = f.world.container_of(rock);
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "drop", rock, None);
+        });
+        assert!(
+            feedback(&out)
+                .iter()
+                .any(|t| t == "You aren't carrying that."),
+            "got: {:?}",
+            feedback(&out)
+        );
+        assert_eq!(f.world.container_of(rock), before);
     }
 }

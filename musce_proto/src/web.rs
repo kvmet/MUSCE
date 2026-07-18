@@ -26,6 +26,10 @@ pub enum ClientMsg {
     Line { line: String },
     /// A read query: pure, no world mutation, no narration.
     Query(Query),
+    /// Act on a clicked entity by id, skipping name resolution: the affordance
+    /// the client picked, the entity it clicked, and any second entity a
+    /// role sub-pick supplied.
+    Perform(Perform),
 }
 
 impl ClientMsg {
@@ -34,8 +38,23 @@ impl ClientMsg {
         match self {
             ClientMsg::Line { line } => Input::Line(line),
             ClientMsg::Query(query) => Input::Query(query),
+            ClientMsg::Perform(perform) => Input::Perform(perform),
         }
     }
+}
+
+/// A grounded act request: the client already holds the entity id, so this carries
+/// the affordance name and its bound entities directly, with no noun to resolve.
+/// `focus` is the clicked entity; `with` is the optional second entity a role
+/// sub-pick supplied (the object to `put`, once the container is the focus). Which
+/// role `focus` fills is game policy, so the game maps `focus`/`with` onto the
+/// affordance's roles.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Perform {
+    pub name: String,
+    pub focus: u64,
+    #[serde(default)]
+    pub with: Option<u64>,
 }
 
 /// A read the client asks of the world, answered by a [`ServerMsg`] reply; it never
@@ -140,6 +159,30 @@ mod tests {
 
         let line: ClientMsg = serde_json::from_str(r#"{"t":"line","line":"look"}"#).unwrap();
         assert!(matches!(line.into_input(), Input::Line(l) if l == "look"));
+    }
+
+    /// A perform frame flattens its fields under the `t` tag, and `with` is optional
+    /// (a single-role act omits it, a sub-pick supplies it).
+    #[test]
+    fn perform_frame_parses_with_an_optional_second_role() {
+        let take: ClientMsg = serde_json::from_str(r#"{"t":"perform","name":"take","focus":5}"#)
+            .expect("take frame parses");
+        assert!(matches!(
+            take.into_input(),
+            Input::Perform(Perform { name, focus: 5, with: None }) if name == "take"
+        ));
+
+        let put: ClientMsg =
+            serde_json::from_str(r#"{"t":"perform","name":"put","focus":9,"with":5}"#)
+                .expect("put frame parses");
+        assert!(matches!(
+            put.into_input(),
+            Input::Perform(Perform {
+                name,
+                focus: 9,
+                with: Some(5)
+            }) if name == "put"
+        ));
     }
 
     /// The reply envelope inlines its payload under the `t` tag, and the status

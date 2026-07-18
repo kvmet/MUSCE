@@ -6,9 +6,13 @@
 //! command knowledge: it drains the inbox and calls `handle`. See
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
 
-use musce_action::{Caller, ColdOp, CommandTable, dispatch_command, run_systems};
+use musce_action::{
+    Caller, ColdOp, CommandTable, Grounded, dispatch_command, dispatch_perform, run_systems,
+};
 use musce_core::{EntityId, World};
-use musce_proto::{Command, ConnectionId, Delivery, EventKind, Input, Outgoing, Query, ServerMsg};
+use musce_proto::{
+    Command, ConnectionId, Delivery, EventKind, Input, Outgoing, Perform, Query, ServerMsg,
+};
 
 use crate::accounts::{AccountOp, AccountOutcome};
 use crate::session::{Sessions, resolve_actor};
@@ -67,6 +71,7 @@ impl Dispatch {
                 self.handle_query(id, query, world, emit);
                 Vec::new()
             }
+            Input::Perform(perform) => self.handle_perform(id, perform, world, emit),
         }
     }
 
@@ -137,6 +142,54 @@ impl Dispatch {
             },
         };
         emit(Outgoing::Reply(id, reply));
+    }
+
+    /// Perform a grounded act for the connection's actor: resolve its character to
+    /// the live actor, then route the click through the game's `perform` seam on the
+    /// same Ctx-and-audience path a verb runs (it mutates and narrates, unlike a
+    /// read query). A connection with no character is told to `@play`, exactly as a
+    /// bare command is. The verdict is the connection's cached authorization, never
+    /// the resolved body, so the affordance gate the seam checks cannot be borrowed.
+    fn handle_perform(
+        &mut self,
+        id: ConnectionId,
+        perform: Perform,
+        world: &mut World,
+        emit: &mut impl FnMut(Outgoing),
+    ) -> Vec<HostOp> {
+        if !self.floor.is_live(id) {
+            return Vec::new();
+        }
+        let Some(character) = self.floor.character_of(id) else {
+            emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                "You have no character. Use @play to enter the world.",
+            )));
+            return Vec::new();
+        };
+        let actor = resolve_actor(world, character);
+        let verdict = self.floor.verdict_of(id);
+        let actors = self.floor.audience_index(world);
+        dispatch_perform(
+            world,
+            &actors,
+            Caller {
+                actor,
+                conn: id,
+                verdict: &verdict,
+            },
+            self.game.perform,
+            Grounded {
+                affordance: &perform.name,
+                focus: EntityId(perform.focus),
+                with: perform.with.map(EntityId),
+            },
+            emit,
+        )
+        .into_iter()
+        .map(HostOp::Cold)
+        .collect()
     }
 
     fn handle_line(
@@ -315,6 +368,11 @@ mod tests {
                     status: musce_proto::OfferStatus::Available,
                 }]
             },
+            // Echo the affordance name back to the actor so a routing test can
+            // observe the seam ran on the resolved actor's Ctx.
+            perform: |ctx, _, name, _, _| {
+                ctx.emit_self(EventKind::Feedback, format!("performed {name}"))
+            },
         }
     }
 
@@ -374,6 +432,20 @@ mod tests {
             Command {
                 connection: id,
                 input: Input::Query(q),
+            },
+            world,
+            &mut |o| out.push(o),
+        );
+        out
+    }
+
+    /// Drive one perform frame and collect the connection-facing output.
+    fn perform(d: &mut Dispatch, world: &mut World, id: ConnectionId, p: Perform) -> Vec<Outgoing> {
+        let mut out = Vec::new();
+        d.handle(
+            Command {
+                connection: id,
+                input: Input::Perform(p),
             },
             world,
             &mut |o| out.push(o),
@@ -552,6 +624,56 @@ mod tests {
         assert_eq!(clicked, 42);
         assert_eq!(offers.len(), 1);
         assert_eq!(offers[0].name, "take");
+    }
+
+    /// A perform frame before `@play` has no actor to act through: the same `@play`
+    /// hint a bare command gets, and nothing routed to the seam.
+    #[test]
+    fn a_perform_without_a_character_is_refused_with_a_play_hint() {
+        let mut world = World::new();
+        let mut d = Dispatch::new(test_game());
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+
+        let out = perform(
+            &mut d,
+            &mut world,
+            id,
+            Perform {
+                name: "take".into(),
+                focus: 1,
+                with: None,
+            },
+        );
+        assert!(conn_texts(&out).iter().any(|t| t.contains("@play")));
+    }
+
+    /// A perform frame after `@play` routes to the game's perform seam on the
+    /// resolved actor's Ctx: the stub echoes the affordance name back as feedback.
+    #[test]
+    fn a_perform_routes_to_the_game_seam() {
+        let game = test_game();
+        let mut world = World::new();
+        (game.seed)(&mut world);
+        let mut d = Dispatch::new(game);
+        let id = ConnectionId(1);
+        connect(&mut d, &mut world, id);
+        line(&mut d, &mut world, id, "@play");
+
+        let out = perform(
+            &mut d,
+            &mut world,
+            id,
+            Perform {
+                name: "take".into(),
+                focus: 7,
+                with: None,
+            },
+        );
+        assert!(
+            conn_texts(&out).iter().any(|t| t == "performed take"),
+            "got: {out:?}"
+        );
     }
 
     /// A superuser session passes a capability-gated admin verb by su bypass.
@@ -770,6 +892,7 @@ mod tests {
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
             offers: |_, _, _| Vec::new(),
+            perform: |_, _, _, _, _| {},
         };
         let dispatch = Dispatch::new(game);
         let mut world = World::new();

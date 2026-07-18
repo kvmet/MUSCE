@@ -138,6 +138,13 @@ pub struct Game {
     /// list. Game content, the same affordance set `perform` dispatches. See
     /// `docs/architecture/offers.md`.
     pub offers: fn(&World, EntityId, EntityId) -> Vec<musce_proto::Offer>,
+    /// Perform a grounded act a pointing client clicked: the affordance name, the
+    /// clicked focus entity, and any second entity a role sub-pick supplied. Game
+    /// content, because the affordance set and its roles are game vocabulary; the
+    /// engine only routes the act through `dispatch_perform` (a Ctx and audience,
+    /// the same path a verb narrates through). See
+    /// `docs/architecture/networking-and-sessions.md`.
+    pub perform: musce_action::PerformHandler,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -554,6 +561,7 @@ mod tests {
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
             offers: |_, _, _| Vec::new(),
+            perform: |_, _, _, _, _| {},
         }
     }
 

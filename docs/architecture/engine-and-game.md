@@ -109,6 +109,13 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   routes a read `Query` to them and serializes the wire result (see
   [networking-and-sessions.md](networking-and-sessions.md) and
   [offers.md](offers.md)). A game with no pointing client returns empty projections.
+- **`perform: PerformHandler`** the pointing client's *act*: run a clicked
+  affordance on entities already bound (the clicked focus and any sub-pick), with no
+  name to resolve. Game policy because the affordance set and which role the focus
+  fills are game vocabulary; the engine routes the act through `dispatch_perform`
+  (the same `Ctx`-and-audience path a verb narrates through), holding no affordance
+  knowledge. Distinct from the two reads: it mutates and narrates. A game with no
+  pointing client supplies a no-op.
 
 ### The component boundary
 

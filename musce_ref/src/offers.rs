@@ -79,7 +79,7 @@ pub fn affordances_on(world: &World, actor: EntityId, clicked: EntityId) -> Vec<
     affordances()
         .into_iter()
         .map(|aff| {
-            let frame = frame_for(actor, clicked, focus_role(&aff));
+            let frame = frame_for(actor, clicked, focus_role(&aff.name));
             let status = classify(&aff, &frame, world, &RefWorldModel);
             Offer {
                 name: aff.name,
@@ -107,12 +107,21 @@ fn classify(aff: &Affordance, frame: &Frame, world: &World, model: &dyn WorldMod
 }
 
 /// Which role the pointed-at entity fills. `put`/`go` act *on* a target (a
-/// container, an exit); the rest act on an object.
-fn focus_role(aff: &Affordance) -> Role {
-    match aff.name.as_str() {
+/// container, an exit); the rest act on an object. Keyed by name so both
+/// enumeration and a grounded click (`crate::pointing::perform`) map the focus the
+/// same way.
+pub(crate) fn focus_role(name: &str) -> Role {
+    match name {
         "put" | "go" => Role::Target,
         _ => Role::Object,
     }
+}
+
+/// The affordance this game exposes under `name`, or `None` if there is none. The
+/// by-name lookup a grounded click resolves through, drawn from the same
+/// [`affordances`] set enumeration reports.
+pub(crate) fn affordance_named(name: &str) -> Option<Affordance> {
+    affordances().into_iter().find(|a| a.name == name)
 }
 
 /// The roles a client must supply, recovered from the roles the affordance's
