@@ -17,9 +17,11 @@
 ;; Directories and files to skip entirely.
 ;; A name here ignores the file, or everything nested inside the directory.
 (def ignored
-  #{"target"       ; build artefacts
+  #{"target"         ; build artefacts
     ".git"
-    "Cargo.lock"}) ; generated, not authored
+    "node_modules"   ; vendored JS deps, not authored
+    "dist"           ; JS build output
+    "Cargo.lock"})   ; generated, not authored
 
 ;; Length rules, tried top to bottom; the first match wins.
 ;; :ext   - required file extension (no leading dot)
