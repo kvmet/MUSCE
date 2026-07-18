@@ -36,6 +36,7 @@ pub fn register(world: &mut World) {
     crate::kinds::register(world);
     crate::exits::register(world);
     crate::hoard::register(world);
+    crate::consume::register(world);
     crate::names::register(world);
     crate::sequences::register(world);
     crate::spatial::register(world);

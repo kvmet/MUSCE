@@ -1,13 +1,15 @@
 # The Planner
 
 > Status: **built (agency build step 4).** Backward goal-regression over the
-> affordance table, with ground goals (4a) and existential goal binding (4b),
-> lives in `musce_agency` (`planner.rs`) as `Planner` / `plan` / `Plan` / `Step`.
-> `musce_ref` carries the executable oracle: a regressed plan, run through
-> `perform`, makes the goal hold. The replan-on-veto loop that consumes
-> `plan_excluding` is now built as the [execution driver](execution.md) (step 5).
-> Still deferred within step 4: movement (`go`, see below). The arbiter and drives
-> (step 5) and per-actor cost learning (step 6) sit on top.
+> affordance table, with ground goals (4a), existential goal binding (4b), and
+> **mid-search existential binding** (a guard role the effect leaves free, bound
+> during regression), lives in `musce_agency` (`planner.rs`) as `Planner` / `plan` /
+> `Plan` / `Step`. `musce_ref` carries the executable oracles: a regressed plan run
+> through `perform` makes the goal hold, and the consume drive's `take -> eat` chain
+> exercises mid-search binding live. The replan-on-veto loop that consumes
+> `plan_excluding` is built as the [execution driver](execution.md) (step 5). Still
+> deferred within step 4: movement (`go`, see below). The arbiter and drives (step
+> 5) and per-actor cost learning (step 6) sit on top.
 
 The planner is the GOAP core: given a goal, it finds a minimum-cost sequence of
 affordances whose execution makes the goal true. It reads the same affordance
@@ -72,12 +74,25 @@ it can never hide a plan. An empty candidate set is a meaningful "nothing known
 fits", not an error; enriching it with a find/search step is the deferred
 perception layer.
 
-The current verb set introduces no *mid-search* existential: every precondition of
-`take`/`drop`/`put` names only frame roles that effect-unification already binds.
-So `bind_var` is used only for the goal slot today. A future affordance whose
-precondition carries a fresh variable (`cook` needing `∃y. tag(y, fuel)`) reuses
-the same primitive during regression; multiple free vars in one goal is a
-combinatorial product no current goal needs and is deferred.
+### Mid-search binding: the same primitive, during regression
+
+The chaining verbs `take`/`drop`/`put` name only frame roles that
+effect-unification already binds, so their guards are ground the moment a step is
+formed. `eat` breaks that: its effect is `fed(actor)` (eating consumes the food, so
+there is no lasting edge to name), so unifying the effect binds only the actor and
+the food stays a **free role in the guard** (`∃food. related(food, actor,
+contained_by) ∧ tag(food, edible)`). That free role surfaces *mid-search*, after
+the `eat` step is regressed, not in the goal.
+
+`guard_bindings` grounds it there, one successor per candidate, reusing the exact
+machinery the goal slot uses: the guard's literals split into a static part
+(`tag(food, edible)`, no affordance grants it) that filters candidates through
+`bind_var`, and an achievable part (`related(food, actor, contained_by)`) left for
+regression (a `take` plans it). So the plan is `take -> eat`, with the food bound
+against `known` and every recorded step ground. The knowledge gate holds identically
+to the goal case: binding draws only from `known`, so the planner never invents an
+entity it cannot see. Multiple free roles in one guard is the same combinatorial
+product the goal binder defers; one is what the reference consume drive needs.
 
 ## Unification is a small positional match
 

@@ -1,13 +1,14 @@
 # Drives, and the live agency loop
 
-> Status: **built (two competing drives, live wiring, cross-tick commitment).** The
-> reference game's magpie (`musce_ref`, `hoard.rs`) is the first autonomous agent, and
-> it runs *two* competing drives: a `Hoarder` need it relieves by stowing a shiny in
-> its nest, and a `Curiosity` need it relieves by holding one. They pull the same bead
-> in opposite directions, so the arbiter must commit to one and hold it, which is what
-> makes hysteresis observable and what motivated **cross-tick commitment**
-> (`Arbiter::resume` plus a serializable `Committed` tag). A *consume* drive and
-> per-beat interleaving remain deferred, below.
+> Status: **built (competing drives, cross-tick commitment, and a consume drive).**
+> The reference game's magpie (`musce_ref`, `hoard.rs`) runs *two* competing drives:
+> a `Hoarder` need it relieves by stowing a shiny in its nest, and a `Curiosity` need
+> it relieves by holding one. They pull the same bead in opposite directions, so the
+> arbiter must commit to one and hold it, which is what makes hysteresis observable
+> and what motivated **cross-tick commitment** (`Arbiter::resume` plus a serializable
+> `Committed` tag). A second agent, a hungry field mouse (`consume.rs`), runs a
+> **consume** drive that exercises the planner's mid-search binding. Per-beat
+> interleaving remains deferred, below.
 
 A **drive** turns an NPC's internal need-state into a goal with an urgency. It reads
 the NPC's *own* components, never the world or its beliefs: "am I hungry / restless /
@@ -82,24 +83,37 @@ knows its *own* claws and its *own* nest because those are its own state. Genera
 perception into arbitrary containers, and sense-propagation at range, stay a deferred
 layer.
 
-## Why *stow* and *hold*, not *consume*
+## The consume drive, and why it needed mid-search binding
 
-The reference verb set (`take`/`drop`/`put`, no `go`) supports drives that acquire and
-*place* a thing, where the placing relieves the need. It does not yet support a
-**consume** drive (hunger → eat), where a new consumer verb destroys the thing: routing
-that through the planner needs mid-search existential binding (the consumer's effect is
-about the actor being fed, so the food role stays free after effect-unification), a
-deferred planner capability. Both magpie drives are place-drives:
+The magpie's two drives are *place*-drives: their relief is a thing's location (a
+shiny in the nest, a shiny in hand), and the fungible thing appears **in the goal**
+(`∃x. related(x, nest, contained_by) ∧ tag(x, shiny)`), so the planner binds it
+before search. A **consume** drive (hunger → eat) cannot be shaped that way, and
+that difference is exactly what it exists to exercise.
 
-- **Their relieving acts, `put` and `take`, are already in the affordance table.** The
-  whole loop routes through `perform` with no new verb and no mid-search binding.
-- The hoard goal is a genuine **two-step plan** (`take → put`), so replan-on-veto is
-  reachable (smash the nest mid-plan and the container guard vetoes for real).
-- They are **non-destructive**: the bead's location is visible world state, a cleaner
-  assertion than "the food vanished."
+The mouse's need is `Hunger { pang }`; its goal is `fed(actor)`. Eating *consumes*
+the food, so the effect the drive chains toward is a fact about the **eater** (a
+`Fed` marker), not about the food's location. The food therefore never appears in
+the goal at all: it surfaces only inside `eat`'s guard (`∃food. related(food, actor,
+contained_by) ∧ tag(food, edible)`), *after* the planner regresses the `eat` step.
+Binding it there is the planner's **mid-search binding** (see
+[planner.md](planner.md)); the plan is `take -> eat`, a genuine two-step chain like
+the hoard's.
 
-When a future drive genuinely wants a consumed resource, that is the step that motivates
-mid-search binding, on its own falsifiable footing.
+- **`eat` is a new affordance** (`agency.rs`) whose grounded action `do_eat`
+  (`verbs/eat.rs`) both a player's `eat` verb and the drive's plan resolve to, so a
+  scripted eat is vetoed exactly as a typed one, the same shared-rule guarantee
+  `take`/`put` have.
+- **Consuming is non-destructive**: eating sets `Fed` on the eater and strips the
+  food's `Edible` tag (the crust is eaten down, not re-eatable). The reference drives
+  change component and containment state and never despawn, so the drive layer stays
+  clear of the structural destruction reaction (`death_cry`), a separate concern; the
+  world-effect stays plain, asserted state rather than "the food vanished."
+- **One drive, no arbiter.** The mouse has nothing to contend with, so `consume`
+  reads the drive, plans, and pursues with no arbiter or commitment (those earn their
+  keep on the magpie's two drives). Relief is the same slow symmetric curve: the pang
+  cools while `Fed`, warms while hungry, floored below threshold so a fed mouse
+  retires.
 
 ## The loop, on the sim tick
 
@@ -177,6 +191,19 @@ The oracles are in `hoard.rs`, against a real world through the real `perform`:
 Nothing moves the bead but the arbiter/driver loop and nothing moves a need but the
 metabolism, so a break in any link fails a test.
 
+The consume drive's oracles are in `consume.rs`, plus the mid-search binding it needs
+in `planner.rs` (`binds_a_guard_existential_mid_search`,
+`no_edible_known_yields_no_consume_plan`):
+
+- **The consume drive, live** (`a_hungry_mouse_finds_and_eats_the_bread`): an idle
+  mouse's pang climbs sub-threshold, then at the threshold the loop grounds the unnamed
+  food in `eat`'s guard against what the mouse knows and runs `take -> eat`; the mouse
+  ends fed, the bread ends spent (no longer edible), and the pang cools. Its halts
+  (`a_controller_halts_it`, `nothing_edible_leaves_it_hungry`) mirror the magpie's.
+- **The wiring, end to end** (`a_hungry_creature_finds_and_eats_food_with_no_input`, in
+  `tests/play_session.rs`): a `@create`d hungry mouse eats a `@create`d crust on its
+  own and the narration reaches an idle connection.
+
 ## Relation to the other docs
 
 - [README](README.md): the agency stack and build order; drives are stack layer 1,
@@ -185,7 +212,7 @@ metabolism, so a break in any link fails a test.
   candidate set `select` ranks, and `resume` is the cross-tick-commitment seam.
 - [execution.md](execution.md): the driver this loop runs, and the one-beat-per-tick
   interleaving still deferred.
-- [planner.md](planner.md): the single-existential goal binding both drives rely on, and
-  the mid-search binding a future *consume* drive would need.
+- [planner.md](planner.md): the single-existential goal binding the magpie drives rely
+  on, and the mid-search binding the consume drive exercises.
 - [../concurrency.md](../concurrency.md): the tick and the system pipeline this loop is
   a system on, beside `wander`.

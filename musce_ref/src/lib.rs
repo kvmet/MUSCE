@@ -7,6 +7,7 @@
 
 mod admin;
 pub mod agency;
+mod consume;
 mod exits;
 mod hoard;
 mod kinds;
@@ -43,6 +44,7 @@ pub fn game() -> Game {
             spatial::maintain,
             systems::wander,
             hoard::hoard,
+            consume::consume,
             sequences::sequence_sweep,
             systems::death_cry,
         ],

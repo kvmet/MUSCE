@@ -19,13 +19,14 @@ use musce::action::CapRegistry;
 use musce::wire::EventKind;
 
 use crate::commit_or_log;
-use crate::kinds::{Container, Creature, Exit, Item};
+use crate::consume::Hunger;
+use crate::kinds::{Container, Creature, Edible, Exit, Item};
 use crate::names::display_name;
 use crate::spatial::{CELL, Xyz, coords, near};
 use crate::systems::Wander;
 
 /// Known `@create` kinds, listed in the error when an unknown one is asked for.
-const KINDS: &str = "torch, rock, goblin, box, rat";
+const KINDS: &str = "torch, rock, goblin, box, rat, mouse, bread";
 
 /// Build the reference game's admin command table, interning its capability
 /// vocabulary into `caps`: the world-building verbs gate on `build`, the possession
@@ -596,6 +597,22 @@ fn kind_blob(kind: &str) -> Option<Value> {
             .with(Creature)
             .with(Wander)
             .with(Description("a twitching sewer rat".into())),
+        // A hungry field mouse: it seeks and eats something edible on its own. Seeded
+        // already peckish (a high pang) so a builder or an e2e sees it act on its
+        // first scheduled consume tick rather than after the metabolism climbs.
+        "mouse" => blob
+            .with(Creature)
+            .with(Hunger { pang: 5 })
+            .with(Name("a field mouse".into()))
+            .with(Description(
+                "a small brown field mouse, whiskers twitching".into(),
+            )),
+        // Food for a mouse: an edible crust the consume drive can bind and eat.
+        "bread" => blob
+            .with(Item)
+            .with(Edible)
+            .with(Name("a crust of bread".into()))
+            .with(Description("a dry crust of bread".into())),
         _ => return None,
     };
     Some(blob.build())

@@ -54,6 +54,13 @@ kind!(
     "A glittering trinket a hoarder covets: the tag the magpie drive's goal filters \
      on when it seeks something to stow. See `crate::hoard`."
 );
+kind!(
+    Edible,
+    "edible",
+    "Something a hungry creature can eat: the tag `eat`'s guard filters a held thing \
+     on, and the consume drive seeks to sate its hunger. Eating consumes it (the tag \
+     comes off). See `crate::consume`."
+);
 
 /// Register the game's kind markers so they persist and reload. Called from the
 /// game's `register` hook, before any world loads or seeds. The persisted tags
@@ -66,4 +73,5 @@ pub(crate) fn register(world: &mut World) {
     world.register_component::<Player>();
     world.register_component::<Exit>();
     world.register_component::<Shiny>();
+    world.register_component::<Edible>();
 }

@@ -10,8 +10,9 @@ use musce::world::{Controls, Description, EntityId, Locus, Name, World};
 
 use crate::exits::{LeadsFrom, LeadsTo};
 
+use crate::consume::Hunger;
 use crate::hoard::{Curiosity, Hoarder, Nest};
-use crate::kinds::{Container, Creature, Exit, Item, Player, Shiny};
+use crate::kinds::{Container, Creature, Edible, Exit, Item, Player, Shiny};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
 use crate::verbs::{Health, Readable, Special, book_key};
@@ -135,6 +136,29 @@ pub fn seed(world: &mut World) {
     world
         .relate::<Nest>(magpie, nest)
         .expect("seed: wire the magpie's nest");
+
+    // A second live agent sharing the garden: a hungry field mouse with a crust of
+    // bread. Its single drive is hunger, and it exercises the planner's mid-search
+    // binding: the consume goal is `fed(actor)`, about the mouse, so the food it
+    // must find never appears in the goal; the planner grounds it in `eat`'s guard
+    // against what the mouse knows, then plans `take -> eat`. Once it eats, the crust
+    // is spent and the mouse rests fed. See `docs/architecture/agency/drives.md`.
+    let bread = spawn(world, |b| {
+        b.add(Item);
+        b.add(Edible);
+        b.add(Name("a crust of bread".into()));
+        b.add(Description(
+            "A dry crust of bread, dropped and forgotten among the weeds.".into(),
+        ));
+    });
+    world.move_entity(bread, garden).expect("seed: place bread");
+    let mouse = creature(
+        world,
+        "a field mouse",
+        "A small brown field mouse, whiskers twitching as it noses about the garden.",
+    );
+    world.insert(mouse, Hunger { pang: 0 });
+    world.move_entity(mouse, garden).expect("seed: place mouse");
 
     let avatar = avatar(
         world,

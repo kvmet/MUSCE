@@ -3,12 +3,12 @@
 > Status: **partially built.** The `Affordance` struct, the case `Frame`, and
 > `Guard { clause, reason }` with the `Affordance::veto` evaluator are built in the
 > engine (`musce_action`, non-optional; see [../affordances.md](../affordances.md)).
-> `musce_ref` carries the first affordances (`take` / `drop` / `put` / `go`),
+> `musce_ref` carries the affordances (`take` / `drop` / `put` / `go` / `eat`),
 > `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
-> grounded-action dispatch). All four are grounded as `Ctx`-free actions
-> (`do_take` / `do_drop` / `do_put` / `do_move`) that fold in their own veto, so a
-> player verb and `perform` share one rule per verb; `perform` dispatches every one
-> and returns a uniform committed/refused `Outcome` (movement's richer
+> grounded-action dispatch). All five are grounded as `Ctx`-free actions
+> (`do_take` / `do_drop` / `do_put` / `do_move` / `do_eat`) that fold in their own
+> veto, so a player verb and `perform` share one rule per verb; `perform` dispatches
+> every one and returns a uniform committed/refused `Outcome` (movement's richer
 > `MoveOutcome` is collapsed to it). The engine `Affordance` also carries an
 > authority `gate`, which `perform` enforces against the acting verdict (guest by
 > default) before committing. The affordance *table* and its two indexes,

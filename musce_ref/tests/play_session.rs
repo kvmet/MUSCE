@@ -398,6 +398,64 @@ async fn a_wandering_creature_moves_with_no_input() {
     let _ = handle.await.unwrap();
 }
 
+/// The consume drive on the tick pipeline, end to end with zero player input: a
+/// `@create`d hungry mouse finds and eats a `@create`d crust of bread on its own,
+/// and the narration reaches a connection that sent no command. This is the
+/// planner's mid-search binding running live: the mouse's goal is `fed(actor)`, so
+/// the food it eats is bound inside `eat`'s guard, never named in the goal. The
+/// mouse is created already peckish, so it acts on its first scheduled consume tick.
+#[tokio::test]
+async fn a_hungry_creature_finds_and_eats_food_with_no_input() {
+    let addr = free_port().await;
+    let store = WorldStore::connect("sqlite::memory:").await.unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let config = Config {
+        tick_interval: Duration::from_millis(10),
+        save_every: 10_000,
+        listen_addr: Some(addr),
+    };
+    let handle = tokio::spawn(run(
+        store.clone(),
+        config,
+        shutdown.clone(),
+        musce_ref::game(),
+    ));
+
+    let (mut reader, mut writer) = connect(addr).await;
+    let _welcome = read_burst(&mut reader).await;
+    send(&mut writer, "@operator").await;
+    let _op = read_burst(&mut reader).await;
+    send(&mut writer, "@play").await;
+    let _played = read_burst(&mut reader).await;
+
+    // A crust of bread and a hungry mouse in the hall (where the avatar stands), then
+    // send nothing more: the mouse plans take -> eat and consumes the bread itself.
+    send(&mut writer, "@create bread").await;
+    let _bread = read_burst(&mut reader).await;
+    send(&mut writer, "@create mouse").await;
+
+    // Bounded-poll for the mouse's autonomous meal, checking every burst (the meal
+    // may arrive bundled with the `@create` acknowledgement or in a later burst).
+    let mut saw_eat = false;
+    for _ in 0..30 {
+        if read_burst(&mut reader)
+            .await
+            .contains("a field mouse eats a crust of bread")
+        {
+            saw_eat = true;
+            break;
+        }
+    }
+    assert!(
+        saw_eat,
+        "the mouse should find and eat the bread with no command driving it"
+    );
+
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = handle.await.unwrap();
+}
+
 /// A game system reacting to a structural fact, end to end: `@create` a goblin in
 /// the actor's room, `@destroy` it, and the `death_cry` system narrates its demise
 /// in the SAME response burst as the destroy feedback. The destroy is command-

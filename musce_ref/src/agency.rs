@@ -8,7 +8,7 @@ use musce::action::Verdict;
 use musce::agency::{Affordance, Clause, Frame, Gate, Guard, Predicate, Term, WorldModel};
 use musce::world::{EntityId, World};
 
-use crate::verbs::{MoveOutcome, Outcome, do_drop, do_move, do_put, do_take};
+use crate::verbs::{MoveOutcome, Outcome, do_drop, do_eat, do_move, do_put, do_take};
 
 /// `take <item>`: the item ends up held by the actor. Its declared effect is the
 /// stored containment edge (`object` `contained_by` `actor`), the same edge the
@@ -142,6 +142,50 @@ pub fn put() -> Affordance {
     }
 }
 
+/// `eat <food>`: the actor consumes a held edible thing and is sated. Its declared
+/// effect is `fed(actor)`, a marker on the *eater*, not the food, because eating
+/// consumes the thing rather than placing it: there is no lasting containment edge
+/// to name as the effect. That is what makes this a mid-search binding for the
+/// planner: the `fed(actor)` effect binds only the actor, so the food role stays
+/// free in the guard and the planner grounds it against what the eater knows (see
+/// `docs/architecture/agency/planner.md`).
+///
+/// Its two-literal guard, shared under one "nothing edible" message, is that the
+/// object is held (`related(object, actor, contained_by)`) and edible
+/// (`tag(object, edible)`). Held is what forces the two-step `take -> eat` plan a
+/// loose berry needs; edible is the static property the planner filters candidate
+/// food on. `do_eat` reads the same guard through `RefWorldModel`, so a scripted
+/// eat is vetoed exactly as a typed one.
+pub fn eat() -> Affordance {
+    Affordance {
+        name: "eat".into(),
+        gate: Gate::Open,
+        guards: vec![Guard {
+            clause: Clause(vec![
+                Predicate::Related {
+                    a: Term::var("object"),
+                    b: Term::var("actor"),
+                    kind: "contained_by".into(),
+                }
+                .into(),
+                Predicate::Tag {
+                    e: Term::var("object"),
+                    comp: "edible".into(),
+                }
+                .into(),
+            ]),
+            reason: "You have nothing edible to eat.",
+        }],
+        effect: Clause(vec![
+            Predicate::Tag {
+                e: Term::var("actor"),
+                comp: "fed".into(),
+            }
+            .into(),
+        ]),
+    }
+}
+
 /// `go <dir>`: the actor traverses an exit. Its one gameplay veto, a locked exit,
 /// is the first *negated* guard: `¬ tag(target, "locked")` with the `can_traverse`
 /// message. The exit fills the `target` role (the thing resolved from the
@@ -266,6 +310,10 @@ pub(crate) fn perform(
         "put" => match (frame.object, frame.target) {
             (Some(item), Some(container)) => do_put(world, frame.actor, item, container),
             _ => bad_frame("put", "an object and a target"),
+        },
+        "eat" => match frame.object {
+            Some(food) => do_eat(world, frame.actor, food),
+            None => bad_frame("eat", "an object"),
         },
         "go" => match frame.target {
             Some(exit) => match do_move(world, frame.actor, exit) {

@@ -166,8 +166,8 @@ Built:
   `Focus`), and the sim-side audience resolver.
 - `musce_ref`: the reference game and the worked example of standing a game up on
   the engine. Owns the bare verbs (`look`, `examine`/`x`, `read`, `inscribe`,
-  `inventory`/`i`, `go`/bare direction, `take`, `drop`, `put`, `give`, `pilot`,
-  `release`, `say`, `tell`, `wave`, `attack`/`kill`, `help`) and the
+  `inventory`/`i`, `go`/bare direction, `take`, `drop`, `put`, `eat`, `give`,
+  `pilot`, `release`, `say`, `tell`, `wave`, `attack`/`kill`, `help`) and the
   admin/builder verbs
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   and their parsing (gated on the game's own `build`/`possess` capabilities), the

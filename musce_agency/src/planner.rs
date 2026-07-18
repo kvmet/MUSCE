@@ -117,7 +117,7 @@ impl<'a> Planner<'a> {
 
         let free = free_vars(&goal);
         let result = match free.as_slice() {
-            [] => self.regress(actor, &goal, world, excluded),
+            [] => self.regress(actor, &goal, known, world, excluded),
             [var] => {
                 // Bind the fungible slot: candidates are the known entities the
                 // *static* part of the goal admits (the properties no affordance can
@@ -127,7 +127,9 @@ impl<'a> Planner<'a> {
                 let filter = self.static_filter(var, &goal);
                 bind_var(var, &filter, known, world, self.model)
                     .into_iter()
-                    .filter_map(|c| self.regress(actor, &goal.substitute(var, c), world, excluded))
+                    .filter_map(|c| {
+                        self.regress(actor, &goal.substitute(var, c), known, world, excluded)
+                    })
                     .min_by_key(|(cost, _)| *cost)
             }
             // Multiple free vars is a combinatorial product no current goal needs;
@@ -165,6 +167,46 @@ impl<'a> Planner<'a> {
                 .any(|e| same_shape(&e.predicate, &literal.predicate))
     }
 
+    /// The frames grounding `affordance`'s guard for this step: one per way to bind
+    /// a role the effect left free, or `[frame]` when the guard names no free role.
+    ///
+    /// After effect-unification produces `frame`, an affordance whose guard names a
+    /// role its effect does not (eat's food: its effect is `fed(actor)`, so
+    /// unification binds only `actor`) still carries that role as a free variable.
+    /// It is bound against `known`, filtered by the *static* part of the guard (the
+    /// properties no affordance can grant, e.g. `tag(food, edible)`), through the
+    /// same `bind_var` the goal slot uses: a mid-search existential is grounded
+    /// exactly as a goal one and never reaches outside the actor's knowledge. Every
+    /// take/drop/put step has no free guard role, so this returns the frame
+    /// unchanged there. One free role yields a frame per candidate; more than one is
+    /// the same combinatorial product the goal binder defers.
+    fn guard_bindings(
+        &self,
+        affordance: &Affordance,
+        frame: Frame,
+        known: &[EntityId],
+        world: &World,
+    ) -> Vec<Frame> {
+        let guard = Clause(
+            affordance
+                .guards
+                .iter()
+                .flat_map(|g| g.clause.bind(&frame).0)
+                .collect(),
+        );
+        match free_vars(&guard).as_slice() {
+            [] => vec![frame],
+            [var] => {
+                let filter = self.static_filter(var, &guard);
+                bind_var(var, &filter, known, world, self.model)
+                    .into_iter()
+                    .filter_map(|cand| bind_role(&frame, var, cand))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Uniform-cost backward search from `goal`. Nodes are settled cheapest-first,
     /// so the first node whose every literal holds yields an optimal plan, returned
     /// with its total cost.
@@ -172,6 +214,7 @@ impl<'a> Planner<'a> {
         &self,
         actor: EntityId,
         goal: &Clause,
+        known: &[EntityId],
         world: &World,
         excluded: &[Step],
     ) -> Option<(Cost, Plan)> {
@@ -225,27 +268,35 @@ impl<'a> Planner<'a> {
                     let Some(frame) = unify(&effect.predicate, &target, actor) else {
                         continue;
                     };
-                    // Skip a step the replan loop has excluded (a beat that vetoed):
-                    // same affordance, same bound frame. A different binding survives.
-                    if is_excluded(affordance, &frame, excluded) {
-                        continue;
+                    // Ground any guard role the effect left free (a mid-search
+                    // existential, e.g. eat's food) against `known`, one successor per
+                    // candidate, so every recorded step's frame is bound. A guard with
+                    // no free role yields the frame unchanged, the case every current
+                    // chaining verb hits.
+                    for frame in self.guard_bindings(affordance, frame, known, world) {
+                        // Skip a step the replan loop has excluded (a beat that
+                        // vetoed): same affordance, same bound frame. A different
+                        // binding survives.
+                        if is_excluded(affordance, &frame, excluded) {
+                            continue;
+                        }
+                        let subgoal = successor(&node.subgoal, affordance, &frame);
+                        if visited.contains(&canonical(&subgoal)) {
+                            continue;
+                        }
+                        seq += 1;
+                        let mut steps = node.steps.clone();
+                        steps.push(Step {
+                            affordance: affordance.clone(),
+                            frame,
+                        });
+                        heap.push(Frontier {
+                            cost: node.cost + self.cost.cost(actor, affordance, world),
+                            seq,
+                            subgoal,
+                            steps,
+                        });
                     }
-                    let subgoal = successor(&node.subgoal, affordance, &frame);
-                    if visited.contains(&canonical(&subgoal)) {
-                        continue;
-                    }
-                    seq += 1;
-                    let mut steps = node.steps.clone();
-                    steps.push(Step {
-                        affordance: affordance.clone(),
-                        frame,
-                    });
-                    heap.push(Frontier {
-                        cost: node.cost + self.cost.cost(actor, affordance, world),
-                        seq,
-                        subgoal,
-                        steps,
-                    });
                 }
             }
         }
@@ -274,6 +325,21 @@ fn free_vars(clause: &Clause) -> Vec<Var> {
         }
     }
     vars
+}
+
+/// A copy of `frame` with the entity role named by `var` bound to `id`, or `None`
+/// if `var` names no fillable entity role. A guard existential is always written
+/// over a frame role (`object`/`target`), so this is total for the vars
+/// [`guard_bindings`](Planner::guard_bindings) passes; the `None` guards a var that
+/// named some other role, which simply contributes no binding.
+fn bind_role(frame: &Frame, var: &Var, id: EntityId) -> Option<Frame> {
+    let mut bound = frame.clone();
+    match var.0.as_str() {
+        "object" => bound.object = Some(id),
+        "target" => bound.target = Some(id),
+        _ => return None,
+    }
+    Some(bound)
 }
 
 /// Whether the replan loop has excluded this bound step: an excluded entry names
@@ -540,9 +606,45 @@ mod tests {
         }
     }
 
+    // A consumer verb whose effect is about the *actor*, not the object: eating
+    // makes the actor fed. Its guard names the food (`object`), which the fed(actor)
+    // effect never binds, so the food stays a free role after unification and must
+    // be bound mid-search. This is the shape the reference `eat` affordance has.
+    fn eat() -> Affordance {
+        Affordance {
+            name: "eat".into(),
+            gate: Gate::Open,
+            guards: vec![Guard {
+                clause: Clause(vec![
+                    Predicate::Related {
+                        a: Term::var("object"),
+                        b: Term::var("actor"),
+                        kind: "contained_by".into(),
+                    }
+                    .into(),
+                    Predicate::Tag {
+                        e: Term::var("object"),
+                        comp: "edible".into(),
+                    }
+                    .into(),
+                ]),
+                reason: "You have nothing edible to eat.",
+            }],
+            effect: Clause(vec![
+                Predicate::Tag {
+                    e: Term::var("actor"),
+                    comp: "fed".into(),
+                }
+                .into(),
+            ]),
+        }
+    }
+
     const ACTOR: EntityId = EntityId(1);
     const COIN: EntityId = EntityId(2);
     const CHEST: EntityId = EntityId(3);
+    const BERRY: EntityId = EntityId(6);
+    const PEBBLE: EntityId = EntityId(7);
 
     fn coin_in_chest_goal() -> Clause {
         Clause(vec![
@@ -652,6 +754,56 @@ mod tests {
         let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
         assert_eq!(names, ["take"]);
         assert_eq!(plan[0].frame.object, Some(COIN)); // the item, not the rat
+    }
+
+    // The consume goal: fed(actor). Ground once the actor role is substituted, with
+    // no fungible slot of its own; the food only surfaces mid-search, in eat's guard.
+    fn fed_goal() -> Clause {
+        Clause(vec![
+            Predicate::Tag {
+                e: Term::var("actor"),
+                comp: "fed".into(),
+            }
+            .into(),
+        ])
+    }
+
+    #[test]
+    fn binds_a_guard_existential_mid_search() {
+        // Goal fed(actor) has no free var, so it regresses directly through eat.
+        // eat's fed(actor) effect binds only the actor, so its guard's food role is
+        // free *after* unification and must be bound mid-search against `known`,
+        // filtered by `edible`. The plan is take-the-berry then eat it, and the eat
+        // step is ground (its object is the berry, not a dangling role). A known
+        // non-edible (a pebble) is rejected.
+        let mut facts = Facts::default();
+        facts.tags.insert((BERRY, "edible".into()));
+        // PEBBLE is known but not edible, so the guard filter rejects it.
+        let table = [take(), eat()];
+        let known = [BERRY, PEBBLE];
+        let plan = Planner::new(&table, &facts, &UnitCost)
+            .plan(ACTOR, &fed_goal(), &known, &World::new())
+            .expect("a plan that eats the one edible thing");
+
+        let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
+        assert_eq!(names, ["take", "eat"]);
+        assert_eq!(plan[0].frame.object, Some(BERRY));
+        assert_eq!(plan[1].frame.object, Some(BERRY)); // the eat step is ground
+    }
+
+    #[test]
+    fn no_edible_known_yields_no_consume_plan() {
+        // Nothing edible is within reach, so eat's guard existential binds nothing
+        // and fed(actor) has no plan: the "nothing known fits" answer, mid-search.
+        let facts = Facts::default(); // BERRY not tagged edible
+        let table = [take(), eat()];
+        let plan = Planner::new(&table, &facts, &UnitCost).plan(
+            ACTOR,
+            &fed_goal(),
+            &[BERRY],
+            &World::new(),
+        );
+        assert!(plan.is_none());
     }
 
     #[test]

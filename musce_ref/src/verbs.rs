@@ -18,6 +18,7 @@ mod books;
 mod combat;
 mod containers;
 mod control;
+mod eat;
 mod manipulate;
 mod movement;
 mod observe;
@@ -29,6 +30,7 @@ pub use books::{inscribe, read};
 pub use combat::attack;
 pub use containers::{give, put};
 pub use control::{pilot, release};
+pub use eat::eat;
 pub use manipulate::{drop, take};
 pub use movement::go;
 pub use observe::{examine, inventory, look};
@@ -41,6 +43,7 @@ pub(crate) use movement::{Locked, MoveOutcome, do_move};
 // execution so a planned take/drop/put is vetoed by the same rule the typed verb
 // runs.
 pub(crate) use containers::do_put;
+pub(crate) use eat::do_eat;
 pub(crate) use manipulate::{do_drop, do_take};
 
 /// The result of a grounded game action (`do_take`, `do_put`, `do_drop`): the
@@ -81,6 +84,7 @@ pub fn commands() -> CommandTable {
     t.register("take", Gate::Open, take);
     t.register("drop", Gate::Open, drop);
     t.register("put", Gate::Open, put);
+    t.register("eat", Gate::Open, eat);
     t.register("give", Gate::Open, give);
     t.register("pilot", Gate::Open, pilot);
     t.register("release", Gate::Open, release);
@@ -101,7 +105,7 @@ pub fn help(ctx: &mut Ctx, _args: &str) {
         "You can: look, examine <thing> (or x), read <thing>, \
          inscribe <thing> <words>, inventory (or i), \
          go <direction> (or just a direction), take <item>, drop <item>, \
-         put <item> in <container>, give <item> to <someone>, \
+         put <item> in <container>, eat <food>, give <item> to <someone>, \
          pilot <thing>, release, say <message>, tell <someone> <message>, \
          wave (or wave at <someone>), attack <thing> (or kill), help.",
     );
