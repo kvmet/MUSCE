@@ -1,18 +1,23 @@
-//! `musce_agency`: the optional planner side of the agency subsystem (the
-//! `CostModel` seam and the `bind_var` binding primitive now; the planner and
-//! arbiter later) that a game consumes. The affordance vocabulary it plans over
-//! (`Term` / `Predicate` / `Clause` / `Affordance` / `Frame` / `WorldModel`)
-//! lives in the engine, non-optional, in `musce_action`, because a verb-gate is a
-//! dispatch concern independent of planning; this crate re-exports it for
-//! planner-facing consumers. Game content, the concrete affordances and the
-//! relation/component vocabulary their predicates name, lives in the consumer
-//! crate, never here. See `docs/architecture/agency/` and
-//! `docs/architecture/affordances.md`.
+//! `musce_agency`: the optional planner side of the agency subsystem that a game
+//! consumes: the `CostModel` seam, the `bind_var` binding primitive, the backward
+//! `Planner`, the `Arbiter` (goal selection and commitment), and the execution
+//! `Driver` (running a plan with replan-on-veto). The affordance vocabulary it
+//! plans over (`Term` / `Predicate` / `Clause` / `Affordance` / `Frame` /
+//! `WorldModel`) lives in the engine, non-optional, in `musce_action`, because a
+//! verb-gate is a dispatch concern independent of planning; this crate re-exports
+//! it for planner-facing consumers. Game content, the concrete affordances, the
+//! relation/component vocabulary their predicates name, and the drives that emit
+//! goals, lives in the consumer crate, never here. See `docs/architecture/agency/`
+//! and `docs/architecture/affordances.md`.
 
 use musce_core::{EntityId, World};
 
+mod arbiter;
+mod driver;
 mod planner;
 
+pub use arbiter::{Arbiter, Goal, Urgency};
+pub use driver::{Beat, Driver, Progress};
 pub use musce_action::{
     Affordance, Clause, Frame, Gate, Guard, Literal, Predicate, Term, Var, WorldModel,
 };

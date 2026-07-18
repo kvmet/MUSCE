@@ -1,6 +1,7 @@
 # Agency
 
-> Status: **proposed; vocabulary, guards, binding, and the planner built.** The
+> Status: **proposed; vocabulary, guards, binding, planner, arbiter, and driver
+> built.** The
 > affordance vocabulary (`Term`, `Predicate`, `Literal` with engine negation,
 > `Clause`, `Affordance`, the case `Frame`), the `WorldModel` seam, and `Guard {
 > clause, reason }` with `Affordance::veto` are **promoted into the engine**,
@@ -13,10 +14,14 @@
 > `go`'s locked-exit check are guards the handler and planner share. The **planner
 > (backward regression) is built** (build step 4, see [planner.md](planner.md)):
 > `musce_agency` carries `Planner`/`plan`, and `musce_ref`'s executable oracle runs
-> a regressed plan through the same `perform` a player hits to satisfy a goal.
-> Movement (`go`) and the replan-on-veto loop are deferred within step 4; the
-> arbiter and drives remain proposed. The `> Status:` markers on each doc say how
-> settled each piece is.
+> a regressed plan through the same `perform` a player hits to satisfy a goal. The
+> **arbiter and the execution driver are built** (build step 5, see
+> [arbiter.md](arbiter.md) and [execution.md](execution.md)): `musce_agency` carries
+> `Arbiter` (goal selection with commitment/hysteresis) and `Driver` (running a plan
+> with replan-on-veto over `plan_excluding`), exercised with hand-injected goals.
+> Deferred: movement (`go`), component-reading **drives** (the goal *sources*, a
+> content slice), and the one-beat-per-tick sim wiring. The `> Status:` markers on
+> each doc say how settled each piece is.
 
 "Agent" here is any entity that acts on its own: an NPC is the obvious case, but
 the same machinery drives a possessed puppet running on autopilot, a summoned
@@ -137,12 +142,21 @@ conceptual top layer (drives) last and the bottom of the planner first.
    effect), and the replan-on-veto loop, which belongs with the arbiter (step 5).
    The planner therefore plans within-room manipulation, add-only effects, uniform
    cost, ground and existential goals.
-5. **Drives, then the arbiter.** These are policy over a working planner and
-   are the textbook deferral: an imperative goal is a one-line injection at the
-   arbiter, so the planner is fully testable with hand-injected goals long before
-   drives exist. The arbiter's commitment / hysteresis only becomes observable
-   once something is selecting goals, so it follows a real planner rather than
-   preceding it.
+5. **The arbiter and the execution driver. (Built.)** Policy over a working
+   planner, the textbook deferral: they land once it exists. The **arbiter**
+   ([arbiter.md](arbiter.md)) selects the highest-urgency goal and commits with
+   hysteresis so it does not thrash; commitment is only observable once something
+   selects goals, which is why it follows a real planner. The **execution driver**
+   ([execution.md](execution.md)) runs a committed goal's plan beat by beat and
+   replans around a vetoed beat via the planner's `plan_excluding`, the exclusion-set
+   seam step 4 left. Both run on hand-injected goals through the same `perform` a
+   player hits. Two cuts stay deferred. **Component-reading drives** (goal *sources*
+   like `eat-when-hungry` reading `Hunger`) are a content slice: a drive is
+   unfalsifiable until a component *changes* (a metabolism) and an affordance
+   *consumes* it (an `eat` verb), the discipline that put drives last; the
+   imperative-goal path needs no such content and is covered now. And the
+   **one-beat-per-tick sim wiring** that makes the off-thread driver a live NPC is a
+   scheduling concern for when agency meets the sim thread.
 6. **Per-actor cost learning.** An agent keeps a running success statistic per
    affordance (an exponential moving average or a win / loss tally, not a trained
    model), and the game's cost function returns `base + learned_bias(actor,
@@ -179,17 +193,25 @@ conceptual top layer (drives) last and the bottom of the planner first.
   affordance table, uniform-cost search, ground and existential goal binding, the
   add-only effect model with replan-on-veto as the soundness backstop, why `go`
   is deferred, and the executable oracle.
+- [arbiter.md](arbiter.md): the built goal selection. Urgency ranking, the
+  commitment/hysteresis that stops thrashing, why the arbiter never reads the world,
+  and the imperative-goal injection seam.
+- [execution.md](execution.md): the built execution driver. Running a plan beat by
+  beat, replan-on-veto over the exclusion set as the soundness backstop, the generic
+  `Beat` boundary, and the deferred one-beat-per-tick sim wiring.
 
 ## Deferred / not yet written
 
-The arbiter (commitment and hysteresis), perception and the `Known` relation (how
-edges are acquired and whether they persist or decay, and the deferred false-belief
-layer), the planner's remaining pieces (a cost heuristic, movement/`go`'s
-derived-location effect, the replan-on-veto loop, and the per-actor learning rule
-of build step 6: the stat shape, the update rate, and whether weights decay), and
-drives (the urgency curves and how imperative goals are injected and retired) each
-want their own doc once the affordance shape settles. The planner's built core is
-[planner.md](planner.md).
+Perception and the `Known` relation (how edges are acquired and whether they persist
+or decay, and the deferred false-belief layer), the planner's remaining pieces (a
+cost heuristic and movement/`go`'s derived-location effect), the per-actor learning
+rule of build step 6 (the stat shape, the update rate, and whether weights decay),
+component-reading **drives** (the urgency curves, the metabolism-and-consumer content
+slice that makes a drive falsifiable, and how imperative goals are injected and
+retired), and the **one-beat-per-tick sim wiring** of the execution driver each want
+their own doc (or a scheduling change) once the pieces they sit on exist. The built
+core is [planner.md](planner.md), [arbiter.md](arbiter.md), and
+[execution.md](execution.md).
 This is the list of subsystems still to design; the order they get *built* in
 (and why it inverts the stack numbering) is the Build order section above.
 

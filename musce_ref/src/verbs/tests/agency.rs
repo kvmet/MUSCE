@@ -566,3 +566,162 @@ fn a_fungible_goal_binds_a_known_item_and_plans_the_take() {
     assert_eq!(f.world.container_of(coin), Some(f.actor));
     assert_eq!(f.world.container_of(rat), Some(f.hall)); // the rat was never chosen
 }
+
+/// Build step 5, the execution driver: replan-on-veto against live world state. A
+/// plan's put beat is made to veto for real (a chest is smashed mid-plan, standing
+/// in for another actor), and the driver must exclude that step and replan from the
+/// now-current world onto the surviving container. The take already committed, so
+/// the coin is genuinely held; the replan does *not* redo it, proving the driver
+/// reads live state, not the state it planned against. The goal ends true.
+#[test]
+fn the_driver_replans_around_a_vetoed_beat_and_finishes_the_goal() {
+    use crate::agency::{RefWorldModel, known_here, perform, put as put_aff, take as take_aff};
+    use crate::kinds::{Container, Item};
+    use musce::agency::{Beat, Clause, Driver, Planner, Predicate, Progress, Term, UnitCost};
+    use std::cell::RefCell;
+
+    let mut f = fixture();
+    // Two chests and a loose coin, all co-located with the actor in the hall.
+    let chest_a = spawn(&mut f.world, |b| {
+        b.add(Container);
+        b.add(Description("an oak chest".into()));
+    });
+    let chest_b = spawn(&mut f.world, |b| {
+        b.add(Container);
+        b.add(Description("an iron chest".into()));
+    });
+    f.world.move_entity(chest_a, f.hall).unwrap();
+    f.world.move_entity(chest_b, f.hall).unwrap();
+    let coin = spawn(&mut f.world, |b| {
+        b.add(Item);
+        b.add(Description("a gold coin".into()));
+    });
+    f.world.move_entity(coin, f.hall).unwrap();
+
+    // ∃t. related(coin, t, contained_by) ∧ tag(t, container): put the coin in *some*
+    // container. Which chest is the driver's to pick, and to re-pick when one fails.
+    let goal = Clause(vec![
+        Predicate::Related {
+            a: Term::Const(coin),
+            b: Term::var("t"),
+            kind: "contained_by".into(),
+        }
+        .into(),
+        Predicate::Tag {
+            e: Term::var("t"),
+            comp: "container".into(),
+        }
+        .into(),
+    ]);
+
+    let table = [take_aff(), put_aff()];
+    let known = known_here(&f.world, f.actor);
+    let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
+    let driver = Driver::new(&planner);
+
+    // Smash the first chest the driver tries to put into (another force breaks it),
+    // then perform the beat: the container guard now vetoes it for real.
+    let smashed: RefCell<Option<musce::world::EntityId>> = RefCell::new(None);
+    let progress = driver.pursue(f.actor, &goal, &known, &mut f.world, |world, step| {
+        if step.affordance.name == "put" && smashed.borrow().is_none() {
+            let target = step.frame.target.unwrap();
+            world.remove::<Container>(target);
+            *smashed.borrow_mut() = Some(target);
+        }
+        match perform(world, &step.affordance, &step.frame, &Verdict::guest()) {
+            Outcome::Committed => Beat::Committed,
+            Outcome::Refused(_) => Beat::Refused,
+        }
+    });
+
+    let smashed = smashed
+        .borrow()
+        .expect("a put was attempted and smashed a chest");
+    let survivor = if smashed == chest_a { chest_b } else { chest_a };
+    assert_eq!(progress, Progress::Achieved);
+    assert_eq!(f.world.container_of(coin), Some(survivor)); // recovered onto the other
+}
+
+/// Build step 5, the arbiter closing the loop: two injected goals, the higher-
+/// urgency one is committed to and pursued to completion through the same
+/// `perform` a player hits, and then released. This is the whole hand-injected
+/// autonomy loop (select, plan, execute, release) end to end, off any tick. The
+/// world reflects the *selected* goal specifically: pursuing the loser would have
+/// left the coin merely held, not stowed.
+#[test]
+fn the_arbiter_selects_a_goal_the_driver_carries_out() {
+    use crate::agency::{RefWorldModel, known_here, perform, put as put_aff, take as take_aff};
+    use crate::kinds::{Container, Item};
+    use musce::agency::{
+        Arbiter, Beat, Clause, Driver, Goal, Planner, Predicate, Progress, Term, UnitCost,
+    };
+
+    let mut f = fixture();
+    let chest = spawn(&mut f.world, |b| {
+        b.add(Container);
+        b.add(Description("a wooden chest".into()));
+    });
+    f.world.move_entity(chest, f.hall).unwrap();
+    let coin = spawn(&mut f.world, |b| {
+        b.add(Item);
+        b.add(Description("a gold coin".into()));
+    });
+    f.world.move_entity(coin, f.hall).unwrap();
+
+    // The urgent goal: the coin ends up in the chest. The idle one: merely hold some
+    // item. Pursuing the idle goal would stop at "held"; only the urgent one stows.
+    let stow = Goal {
+        predicate: Clause(vec![
+            Predicate::Related {
+                a: Term::Const(coin),
+                b: Term::Const(chest),
+                kind: "contained_by".into(),
+            }
+            .into(),
+        ]),
+        urgency: 8,
+    };
+    let hold = Goal {
+        predicate: Clause(vec![
+            Predicate::Related {
+                a: Term::var("x"),
+                b: Term::var("actor"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+            Predicate::Tag {
+                e: Term::var("x"),
+                comp: "item".into(),
+            }
+            .into(),
+        ]),
+        urgency: 3,
+    };
+
+    let mut arbiter = Arbiter::new(0);
+    let chosen = arbiter
+        .select(&[hold, stow.clone()])
+        .expect("a goal is chosen");
+    assert_eq!(chosen.predicate, stow.predicate); // the urgent one wins
+
+    let table = [take_aff(), put_aff()];
+    let known = known_here(&f.world, f.actor);
+    let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
+    let driver = Driver::new(&planner);
+
+    let progress = driver.pursue(
+        f.actor,
+        &chosen.predicate,
+        &known,
+        &mut f.world,
+        |world, step| match perform(world, &step.affordance, &step.frame, &Verdict::guest()) {
+            Outcome::Committed => Beat::Committed,
+            Outcome::Refused(_) => Beat::Refused,
+        },
+    );
+
+    assert_eq!(progress, Progress::Achieved);
+    assert_eq!(f.world.container_of(coin), Some(chest)); // the selected goal, achieved
+    arbiter.release();
+    assert!(arbiter.committed().is_none());
+}

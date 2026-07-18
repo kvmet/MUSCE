@@ -4,9 +4,10 @@
 > affordance table, with ground goals (4a) and existential goal binding (4b),
 > lives in `musce_agency` (`planner.rs`) as `Planner` / `plan` / `Plan` / `Step`.
 > `musce_ref` carries the executable oracle: a regressed plan, run through
-> `perform`, makes the goal hold. Deferred within step 4: movement (`go`) and the
-> replan-on-veto execution loop (see below); the arbiter, drives, and per-actor
-> cost learning (steps 5-6) sit on top.
+> `perform`, makes the goal hold. The replan-on-veto loop that consumes
+> `plan_excluding` is now built as the [execution driver](execution.md) (step 5).
+> Still deferred within step 4: movement (`go`, see below). The arbiter and drives
+> (step 5) and per-actor cost learning (step 6) sit on top.
 
 The planner is the GOAP core: given a goal, it finds a minimum-cost sequence of
 affordances whose execution makes the goal true. It reads the same affordance
@@ -139,6 +140,7 @@ formable, because that is what would exercise it.
 
 ```rust
 Planner::new(affordances, model, cost).plan(actor, goal, known, world) -> Option<Plan>
+Planner::new(affordances, model, cost).plan_excluding(.., known, world, excluded) -> Option<Plan>
 ```
 
 The static planning context (the affordance table and the game's read/cost
@@ -146,15 +148,17 @@ policies) lives in the `Planner`; the per-query inputs (actor, goal, known set,
 world) are `plan` arguments. `world` is borrowed only for the call, so the caller
 can take `&mut World` to execute the returned plan immediately after.
 
-The **replan loop** that step 5 needs (on a vetoed beat, remember the failed
-`(affordance, frame)` and feed it as an exclusion set to the next `plan` so the
-planner routes around it or abandons the goal) is not built here: step 4's oracle
-runs a valid plan to completion, so no beat vetoes and there is nothing to
-falsify a replan path against. The exclusion set slots in as a later `plan`
-argument touching one caller, which is why the context/query split above keeps it
-cheap. Together with the internal termination bounds, that is the two-level answer
-to "why doesn't it retry the same failed action forever": the search is bounded,
-and the executor will not re-issue an excluded step.
+The **replan loop** is built (step 5) as the [execution driver](execution.md), and
+it consumes `plan_excluding`: on a vetoed beat the driver adds the failed
+`(affordance, frame)` to an exclusion set and replans, so the planner routes around
+that step (a different binding stays available) or, if it was the only route,
+returns `None`. `plan` is `plan_excluding` with an empty set, so the exclusion set
+was the additive `plan` argument the context/query split kept cheap. Regression
+skips a candidate step that matches an excluded entry (same affordance name, same
+bound frame). Together with the internal termination bounds, that is the two-level
+answer to "why doesn't it retry the same failed action forever": the search is
+bounded, and the executor never re-issues an excluded step (see
+[execution.md](execution.md)).
 
 ## Falsifiability
 

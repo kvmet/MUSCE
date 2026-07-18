@@ -46,11 +46,12 @@ pub type Plan = Vec<Step>;
 
 /// A backward-regression planner over a fixed affordance table. The static
 /// planning context (the table and the game's read/cost policies) lives here; the
-/// per-query inputs (actor, goal, known set, world) are arguments to [`plan`]. An
-/// exclusion set for the replan loop slots in as a later `plan` argument with no
-/// churn (see the planner doc).
+/// per-query inputs (actor, goal, known set, world) are arguments to [`plan`]. The
+/// replan loop's exclusion set is the extra argument to [`plan_excluding`],
+/// consumed by [`Driver`](crate::Driver) (see the planner and execution docs).
 ///
 /// [`plan`]: Planner::plan
+/// [`plan_excluding`]: Planner::plan_excluding
 pub struct Planner<'a> {
     affordances: &'a [Affordance],
     model: &'a dyn WorldModel,
@@ -92,13 +93,31 @@ impl<'a> Planner<'a> {
         known: &[EntityId],
         world: &World,
     ) -> Option<Plan> {
+        self.plan_excluding(actor, goal, known, world, &[])
+    }
+
+    /// [`plan`](Planner::plan), but never emitting any step in `excluded`. The
+    /// replan loop's entry: when a beat vetoes, the executor adds the failed
+    /// `(affordance, frame)` to `excluded` and replans, so the planner routes around
+    /// the step that just failed or, if it was the only route, returns `None`. A
+    /// step is excluded on its affordance name and bound frame, so a *different*
+    /// binding of the same affordance stays available. `plan` is this with an empty
+    /// set.
+    pub fn plan_excluding(
+        &self,
+        actor: EntityId,
+        goal: &Clause,
+        known: &[EntityId],
+        world: &World,
+        excluded: &[Step],
+    ) -> Option<Plan> {
         // Ground the actor role: a goal is written in the same role vocabulary as
         // affordance clauses, so `actor` names the planning agent.
         let goal = goal.substitute(&Var("actor".to_string()), actor);
 
         let free = free_vars(&goal);
         let result = match free.as_slice() {
-            [] => self.regress(actor, &goal, world),
+            [] => self.regress(actor, &goal, world, excluded),
             [var] => {
                 // Bind the fungible slot: candidates are the known entities the
                 // *static* part of the goal admits (the properties no affordance can
@@ -108,7 +127,7 @@ impl<'a> Planner<'a> {
                 let filter = self.static_filter(var, &goal);
                 bind_var(var, &filter, known, world, self.model)
                     .into_iter()
-                    .filter_map(|c| self.regress(actor, &goal.substitute(var, c), world))
+                    .filter_map(|c| self.regress(actor, &goal.substitute(var, c), world, excluded))
                     .min_by_key(|(cost, _)| *cost)
             }
             // Multiple free vars is a combinatorial product no current goal needs;
@@ -149,7 +168,13 @@ impl<'a> Planner<'a> {
     /// Uniform-cost backward search from `goal`. Nodes are settled cheapest-first,
     /// so the first node whose every literal holds yields an optimal plan, returned
     /// with its total cost.
-    fn regress(&self, actor: EntityId, goal: &Clause, world: &World) -> Option<(Cost, Plan)> {
+    fn regress(
+        &self,
+        actor: EntityId,
+        goal: &Clause,
+        world: &World,
+        excluded: &[Step],
+    ) -> Option<(Cost, Plan)> {
         let mut heap = BinaryHeap::new();
         let mut visited: HashSet<String> = HashSet::new();
         let mut seq: u64 = 0;
@@ -200,6 +225,11 @@ impl<'a> Planner<'a> {
                     let Some(frame) = unify(&effect.predicate, &target, actor) else {
                         continue;
                     };
+                    // Skip a step the replan loop has excluded (a beat that vetoed):
+                    // same affordance, same bound frame. A different binding survives.
+                    if is_excluded(affordance, &frame, excluded) {
+                        continue;
+                    }
                     let subgoal = successor(&node.subgoal, affordance, &frame);
                     if visited.contains(&canonical(&subgoal)) {
                         continue;
@@ -244,6 +274,15 @@ fn free_vars(clause: &Clause) -> Vec<Var> {
         }
     }
     vars
+}
+
+/// Whether the replan loop has excluded this bound step: an excluded entry names
+/// the same affordance and the same frame. Frame equality is exact, so a different
+/// binding of the same affordance (a different object or target) is not excluded.
+fn is_excluded(affordance: &Affordance, frame: &Frame, excluded: &[Step]) -> bool {
+    excluded
+        .iter()
+        .any(|s| s.affordance.name == affordance.name && s.frame == *frame)
 }
 
 /// Whether `var` appears in a literal's predicate.
@@ -637,6 +676,61 @@ mod tests {
         let plan =
             Planner::new(&table, &facts, &UnitCost).plan(ACTOR, &goal, &[COIN], &World::new());
         assert!(plan.is_none());
+    }
+
+    #[test]
+    fn an_excluded_step_is_routed_around_or_abandoned() {
+        // Two containers admit "coin in some container". Excluding the put into the
+        // first chest forces the planner onto the second; excluding both leaves no
+        // plan. This is the replan loop's mechanism in isolation.
+        const CHEST_B: EntityId = EntityId(5);
+        let mut facts = Facts::default();
+        facts.tags.insert((CHEST, "container".into()));
+        facts.tags.insert((CHEST_B, "container".into()));
+        let table = [take(), put()];
+        let planner = Planner::new(&table, &facts, &UnitCost);
+
+        // ∃t. related(coin, t, contained_by) ∧ tag(t, container).
+        let goal = Clause(vec![
+            Predicate::Related {
+                a: Term::Const(COIN),
+                b: Term::var("t"),
+                kind: "contained_by".into(),
+            }
+            .into(),
+            Predicate::Tag {
+                e: Term::var("t"),
+                comp: "container".into(),
+            }
+            .into(),
+        ]);
+        let known = [CHEST, CHEST_B];
+
+        let put_into = |target: EntityId| Step {
+            affordance: put(),
+            frame: Frame {
+                actor: ACTOR,
+                object: Some(COIN),
+                target: Some(target),
+                kind: None,
+            },
+        };
+
+        // Excluding the put into CHEST routes the plan onto CHEST_B.
+        let plan = planner
+            .plan_excluding(ACTOR, &goal, &known, &World::new(), &[put_into(CHEST)])
+            .expect("a plan routing around the excluded chest");
+        assert_eq!(plan.last().unwrap().frame.target, Some(CHEST_B));
+
+        // Excluding the put into both leaves no route.
+        let none = planner.plan_excluding(
+            ACTOR,
+            &goal,
+            &known,
+            &World::new(),
+            &[put_into(CHEST), put_into(CHEST_B)],
+        );
+        assert!(none.is_none());
     }
 
     #[test]
