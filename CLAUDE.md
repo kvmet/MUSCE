@@ -41,6 +41,25 @@ Touch the doc when you touch the code:
 | zones, locator, entity handoff | `sharding.md` |
 | criterion benches (`*/benches/`) | `benchmarks.md` |
 
+## Regenerate the wire bindings when you touch the protocol
+
+`webclient/src/lib/bindings/` is generated from `musce_proto::web` by `ts-rs`
+and committed. It is the one place the client and server envelopes can silently
+drift: the codegen sits behind the non-default `ts` feature, so a plain
+`cargo test` will not catch a stale binding.
+
+When you change any type in `musce_proto::web` (or the `#[ts]`-derived types it
+pulls in), regenerate the bindings in the **same change** and commit them:
+
+```sh
+TS_RS_EXPORT_DIR="$PWD/webclient/src/lib/bindings" cargo test -p musce_proto --features ts
+```
+
+`TS_RS_EXPORT_DIR` is resolved relative to the crate, not the repo root, so it
+must be absolute. Run it from the repo root. Without the variable, ts-rs dumps
+to `musce_proto/bindings/` (gitignored) and the committed bindings go stale. See
+[webclient/README.md](webclient/README.md) for the client side.
+
 ## Comment style
 
 Do not make references to removed code.
