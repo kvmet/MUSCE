@@ -16,10 +16,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EventKind, Input};
 
+// Entity ids cross this wire as strings, not JSON numbers. A `musce_core::EntityId`
+// is a u64, and a JSON number is an IEEE double, so an id using its high bits would
+// lose precision in a browser's `JSON.parse`. A string is lossless regardless of how
+// ids are allocated (the counter today, sharded or hashed ids later), and the field
+// can hold a richer id form (a URI) with no wire-type change. The game formats an id
+// into the string on the way out and parses it back on the way in.
+
 /// A message from the web client. The transport parses it and hands the sim a
 /// typed [`Input`]. Lifecycle (`Connected`/`Disconnected`) is transport-generated,
 /// never sent by a client, so it is absent here.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "t", rename_all = "lowercase")]
 pub enum ClientMsg {
     /// A text command, exactly what a telnet client would type.
@@ -50,30 +58,33 @@ impl ClientMsg {
 /// role `focus` fills is game policy, so the game maps `focus`/`with` onto the
 /// affordance's roles.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Perform {
     pub name: String,
-    pub focus: u64,
+    pub focus: String,
     #[serde(default)]
-    pub with: Option<u64>,
+    pub with: Option<String>,
 }
 
 /// A read the client asks of the world, answered by a [`ServerMsg`] reply; it never
 /// mutates. Acting on an entity (`perform`) is a command, not a query, and lands in
 /// a later slice.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "q", rename_all = "lowercase")]
 pub enum Query {
     /// The perceivable containment tree for the actor (its room and, nested, what
     /// it holds).
     Snapshot,
     /// The affordances available on the clicked entity ("what can I do to this?").
-    Offers { clicked: u64 },
+    Offers { clicked: String },
 }
 
 /// A message to the web client: a streamed event or a query reply, tagged so the
 /// client can route it. The transport serializes this; the sim produces the
 /// in-process forms (`Delivery` for events, this enum for replies).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "t", rename_all = "lowercase")]
 pub enum ServerMsg {
     /// Streamed narration/feedback, the same content the text pipe renders.
@@ -81,19 +92,20 @@ pub enum ServerMsg {
     /// The reply to [`Query::Snapshot`].
     Snapshot(SnapshotData),
     /// The reply to [`Query::Offers`].
-    Offers { clicked: u64, offers: Vec<Offer> },
+    Offers { clicked: String, offers: Vec<Offer> },
 }
 
 /// One node of the containment tree: a projection of the world's containment
 /// relation plus the game's name and kinds for the entity, never new state.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Entity {
-    pub id: u64,
+    pub id: String,
     pub name: String,
     /// Game kind tags (e.g. "container", "item", "exit", "locked").
     pub kinds: Vec<String>,
     /// Ids directly contained by this entity.
-    pub contents: Vec<u64>,
+    pub contents: Vec<String>,
     /// Game-projected passive detail as ordered `(label, value)` pairs (e.g. a
     /// `("description", ...)`). Opaque to the wire: the game decides what an actor
     /// perceives by presence and the client just paints the pairs. This is the
@@ -106,15 +118,17 @@ pub struct Entity {
 /// every perceivable entity. `entities[actor].contents` is the actor's inventory,
 /// so it needs no separate query.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SnapshotData {
-    pub root: u64,
-    pub actor: u64,
+    pub root: String,
+    pub actor: String,
     pub entities: Vec<Entity>,
 }
 
 /// One enumerated act on a clicked entity: the affordance name and its status. The
 /// wire form of `musce_ref::offers::Offer`.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Offer {
     pub name: String,
     pub status: OfferStatus,
@@ -123,6 +137,7 @@ pub struct Offer {
 /// How an affordance stands for the clicked entity: a live control, a greyed one
 /// carrying the reason, or one that opens a sub-pick for a still-unbound role.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OfferStatus {
     Available,
@@ -132,6 +147,7 @@ pub enum OfferStatus {
 
 /// The frame role a still-unbound pick fills.
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Object,
@@ -142,6 +158,46 @@ pub enum Role {
 mod tests {
     use super::*;
 
+    /// The serde-compat translation of the risky enums is pinned to the shape the
+    /// hand-written client bound to. ts-rs renders an internally-tagged newtype
+    /// variant as a `{tag} & Inner` intersection, which is structurally the wire
+    /// object (`{"t":"query","q":"snapshot"}`); this asserts that form survives a
+    /// ts-rs bump or a serde-attr change, since a silent shift there would mistype
+    /// the client with no compile error on the Rust side. `decl()` returns the
+    /// declaration without writing to disk, so this needs no export dir.
+    #[cfg(feature = "ts")]
+    #[test]
+    fn generated_enum_shapes_are_pinned() {
+        use ts_rs::{Config, TS};
+
+        let cfg = Config::default();
+
+        let client = ClientMsg::decl(&cfg);
+        assert!(client.contains(r#""t": "line""#), "{client}");
+        assert!(client.contains(r#""t": "query" } & Query"#), "{client}");
+        assert!(client.contains(r#""t": "perform" } & Perform"#), "{client}");
+
+        let server = ServerMsg::decl(&cfg);
+        assert!(server.contains(r#""t": "event""#), "{server}");
+        assert!(
+            server.contains(r#""t": "snapshot" } & SnapshotData"#),
+            "{server}"
+        );
+        assert!(server.contains(r#""t": "offers""#), "{server}");
+
+        let status = OfferStatus::decl(&cfg);
+        assert!(status.contains(r#""kind": "available""#), "{status}");
+        assert!(status.contains(r#""kind": "vetoed""#), "{status}");
+        assert!(status.contains(r#""kind": "needsRole""#), "{status}");
+
+        // Entity ids cross as strings (see the module note), so ts-rs renders them
+        // `string`, not the `bigint` its default u64 mapping would emit.
+        let perform = Perform::decl(&cfg);
+        assert!(perform.contains("focus: string"), "{perform}");
+        let snapshot = SnapshotData::decl(&cfg);
+        assert!(snapshot.contains("root: string"), "{snapshot}");
+    }
+
     /// The nested-tag envelope round-trips: `{"t":"query","q":"offers",...}` parses
     /// through the outer `t` tag and the inner `q` tag both. This is the exact shape
     /// a front-end sends, and the serde nesting is the riskiest part, so pin it.
@@ -151,10 +207,10 @@ mod tests {
         assert!(matches!(snap.into_input(), Input::Query(Query::Snapshot)));
 
         let offers: ClientMsg =
-            serde_json::from_str(r#"{"t":"query","q":"offers","clicked":42}"#).unwrap();
+            serde_json::from_str(r#"{"t":"query","q":"offers","clicked":"42"}"#).unwrap();
         assert!(matches!(
             offers.into_input(),
-            Input::Query(Query::Offers { clicked: 42 })
+            Input::Query(Query::Offers { clicked }) if clicked == "42"
         ));
 
         let line: ClientMsg = serde_json::from_str(r#"{"t":"line","line":"look"}"#).unwrap();
@@ -165,23 +221,20 @@ mod tests {
     /// (a single-role act omits it, a sub-pick supplies it).
     #[test]
     fn perform_frame_parses_with_an_optional_second_role() {
-        let take: ClientMsg = serde_json::from_str(r#"{"t":"perform","name":"take","focus":5}"#)
+        let take: ClientMsg = serde_json::from_str(r#"{"t":"perform","name":"take","focus":"5"}"#)
             .expect("take frame parses");
         assert!(matches!(
             take.into_input(),
-            Input::Perform(Perform { name, focus: 5, with: None }) if name == "take"
+            Input::Perform(Perform { name, focus, with: None }) if name == "take" && focus == "5"
         ));
 
         let put: ClientMsg =
-            serde_json::from_str(r#"{"t":"perform","name":"put","focus":9,"with":5}"#)
+            serde_json::from_str(r#"{"t":"perform","name":"put","focus":"9","with":"5"}"#)
                 .expect("put frame parses");
         assert!(matches!(
             put.into_input(),
-            Input::Perform(Perform {
-                name,
-                focus: 9,
-                with: Some(5)
-            }) if name == "put"
+            Input::Perform(Perform { name, focus, with: Some(with) })
+                if name == "put" && focus == "9" && with == "5"
         ));
     }
 
@@ -190,10 +243,10 @@ mod tests {
     #[test]
     fn server_messages_serialize_to_the_wire_shape() {
         let snap = ServerMsg::Snapshot(SnapshotData {
-            root: 1,
-            actor: 7,
+            root: "1".into(),
+            actor: "7".into(),
             entities: vec![Entity {
-                id: 7,
+                id: "7".into(),
                 name: "you".into(),
                 kinds: vec!["player".into()],
                 contents: vec![],
@@ -202,12 +255,12 @@ mod tests {
         });
         let json = serde_json::to_string(&snap).unwrap();
         assert!(json.contains(r#""t":"snapshot""#));
-        assert!(json.contains(r#""root":1"#));
+        assert!(json.contains(r#""root":"1""#));
         // The detail bag rides the wire as ordered [label, value] pairs.
         assert!(json.contains(r#""details":[["description","a weary adventurer"]]"#));
 
         let offers = ServerMsg::Offers {
-            clicked: 42,
+            clicked: "42".into(),
             offers: vec![Offer {
                 name: "put".into(),
                 status: OfferStatus::NeedsRole { role: Role::Object },

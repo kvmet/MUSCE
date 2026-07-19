@@ -136,10 +136,20 @@ impl Dispatch {
         let actor = resolve_actor(world, character);
         let reply = match query {
             Query::Snapshot => ServerMsg::Snapshot((self.game.snapshot)(world, actor)),
-            Query::Offers { clicked } => ServerMsg::Offers {
-                clicked,
-                offers: (self.game.offers)(world, actor, EntityId(clicked)),
-            },
+            Query::Offers { clicked } => {
+                let Some(target) = parse_wire_id(&clicked) else {
+                    emit(Outgoing::Event(Delivery::new(
+                        id,
+                        EventKind::Feedback,
+                        "No such thing.",
+                    )));
+                    return;
+                };
+                ServerMsg::Offers {
+                    offers: (self.game.offers)(world, actor, target),
+                    clicked,
+                }
+            }
         };
         emit(Outgoing::Reply(id, reply));
     }
@@ -179,6 +189,29 @@ impl Dispatch {
             )));
             return Vec::new();
         };
+        // Parse the wire ids before doing any work: a malformed id is a client bug,
+        // answered with feedback, not a dispatch. `with` is present-and-malformed
+        // (Some(None)) versus absent (None); only the former is an error.
+        let Some(focus) = parse_wire_id(&perform.focus) else {
+            emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                "No such thing.",
+            )));
+            return Vec::new();
+        };
+        let with = match perform.with.as_deref().map(parse_wire_id) {
+            None => None,
+            Some(Some(w)) => Some(w),
+            Some(None) => {
+                emit(Outgoing::Event(Delivery::new(
+                    id,
+                    EventKind::Feedback,
+                    "No such thing.",
+                )));
+                return Vec::new();
+            }
+        };
         let actor = resolve_actor(world, character);
         let verdict = self.floor.verdict_of(id);
         let actors = self.floor.audience_index(world);
@@ -193,8 +226,8 @@ impl Dispatch {
             self.game.perform,
             Grounded {
                 affordance: &perform.name,
-                focus: EntityId(perform.focus),
-                with: perform.with.map(EntityId),
+                focus,
+                with,
             },
             emit,
         )
@@ -250,6 +283,15 @@ impl Dispatch {
                 .collect()
         }
     }
+}
+
+/// Parse a wire id (the string an entity id crosses the web envelope as) back into
+/// an `EntityId`. `None` only for a malformed string, which a well-behaved client
+/// never sends: it echoes ids the server minted, so a non-id is a client bug,
+/// surfaced as feedback rather than dropped. A well-formed id for a vanished entity
+/// parses fine and is refused downstream, exactly as a stale click always was.
+fn parse_wire_id(s: &str) -> Option<EntityId> {
+    s.parse::<u64>().ok().map(EntityId)
 }
 
 /// Resolve a connection's character to its live actor and run `line` against
@@ -369,8 +411,8 @@ mod tests {
             // Echo the resolved actor so a query test can assert `@play` resolution,
             // and hand back one sentinel offer so a reply is observable.
             snapshot: |_, actor| musce_proto::SnapshotData {
-                root: 0,
-                actor: actor.0,
+                root: "0".into(),
+                actor: actor.0.to_string(),
                 entities: Vec::new(),
             },
             offers: |_, _, _| {
@@ -607,7 +649,7 @@ mod tests {
                 _ => None,
             })
             .expect("a snapshot reply");
-        assert_eq!(reply.actor, avatar.0);
+        assert_eq!(reply.actor, avatar.0.to_string());
     }
 
     /// An offers query echoes the clicked id (host-set, so the client can match the
@@ -622,17 +664,24 @@ mod tests {
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
 
-        let out = query(&mut d, &mut world, id, Query::Offers { clicked: 42 });
+        let out = query(
+            &mut d,
+            &mut world,
+            id,
+            Query::Offers {
+                clicked: "42".into(),
+            },
+        );
         let (clicked, offers) = out
             .iter()
             .find_map(|o| match o {
                 Outgoing::Reply(_, ServerMsg::Offers { clicked, offers }) => {
-                    Some((*clicked, offers))
+                    Some((clicked.clone(), offers))
                 }
                 _ => None,
             })
             .expect("an offers reply");
-        assert_eq!(clicked, 42);
+        assert_eq!(clicked, "42");
         assert_eq!(offers.len(), 1);
         assert_eq!(offers[0].name, "take");
     }
@@ -652,7 +701,7 @@ mod tests {
             id,
             Perform {
                 name: "take".into(),
-                focus: 1,
+                focus: "1".into(),
                 with: None,
             },
         );
@@ -677,7 +726,7 @@ mod tests {
             id,
             Perform {
                 name: "take".into(),
-                focus: 7,
+                focus: "7".into(),
                 with: None,
             },
         );
@@ -810,7 +859,7 @@ mod tests {
             id,
             Perform {
                 name: "take".into(),
-                focus: 7,
+                focus: "7".into(),
                 with: None,
             },
         );

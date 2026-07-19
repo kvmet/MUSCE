@@ -129,6 +129,7 @@ impl Delivery {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum EventKind {
     /// Server-originated notice (connect banner, shutdown warning).

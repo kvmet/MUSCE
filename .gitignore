@@ -28,6 +28,10 @@ target
 # Local SQLite dev databases
 *.db
 *.db-wal
+
+# ts-rs default-dump location when the `ts` feature test is run without
+# TS_RS_EXPORT_DIR set. The committed bindings live under webclient/src/lib/.
+/musce_proto/bindings/
 *.db-shm
 
 #bb

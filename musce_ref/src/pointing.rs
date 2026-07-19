@@ -32,8 +32,8 @@ pub fn snapshot(world: &World, actor: EntityId) -> SnapshotData {
     let mut entities = Vec::new();
     collect(world, root, &mut entities);
     SnapshotData {
-        root: root.0,
-        actor: actor.0,
+        root: root.0.to_string(),
+        actor: actor.0.to_string(),
         entities,
     }
 }
@@ -43,10 +43,10 @@ pub fn snapshot(world: &World, actor: EntityId) -> SnapshotData {
 fn collect(world: &World, id: EntityId, out: &mut Vec<Entity>) {
     let contents = world.contents(id);
     out.push(Entity {
-        id: id.0,
+        id: id.0.to_string(),
         name: world.name_of(id).unwrap_or_else(|| "something".into()),
         kinds: kinds_of(world, id),
-        contents: contents.iter().map(|c| c.0).collect(),
+        contents: contents.iter().map(|c| c.0.to_string()).collect(),
         details: details_of(world, id),
     });
     for child in contents {
@@ -299,7 +299,7 @@ mod tests {
     fn node(snap: &SnapshotData, id: EntityId) -> &Entity {
         snap.entities
             .iter()
-            .find(|e| e.id == id.0)
+            .find(|e| e.id == id.0.to_string())
             .expect("entity in snapshot")
     }
 
@@ -307,12 +307,12 @@ mod tests {
     fn snapshot_roots_at_the_room_and_carries_the_actor() {
         let f = fixture();
         let snap = snapshot(&f.world, f.actor);
-        assert_eq!(snap.root, f.room.0);
-        assert_eq!(snap.actor, f.actor.0);
+        assert_eq!(snap.root, f.room.0.to_string());
+        assert_eq!(snap.actor, f.actor.0.to_string());
         // Every entity in the room is present, including the actor and its held coin.
         for id in [f.room, f.actor, f.coin, f.chest, f.rock, f.gate] {
             assert!(
-                snap.entities.iter().any(|e| e.id == id.0),
+                snap.entities.iter().any(|e| e.id == id.0.to_string()),
                 "missing entity {}",
                 id.0
             );
@@ -325,7 +325,7 @@ mod tests {
         // of the actor node.
         let f = fixture();
         let snap = snapshot(&f.world, f.actor);
-        assert_eq!(node(&snap, f.actor).contents, vec![f.coin.0]);
+        assert_eq!(node(&snap, f.actor).contents, vec![f.coin.0.to_string()]);
     }
 
     #[test]

@@ -73,27 +73,30 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
 
     // A query envelope arrives as a typed `Input::Query`.
     client
-        .send(Message::text(r#"{"t":"query","q":"offers","clicked":42}"#))
+        .send(Message::text(
+            r#"{"t":"query","q":"offers","clicked":"42"}"#,
+        ))
         .await
         .unwrap();
     let query = next_cmd(&cmd_rx).await;
     assert!(matches!(
         query.input,
-        Input::Query(Query::Offers { clicked: 42 })
+        Input::Query(Query::Offers { clicked }) if clicked == "42"
     ));
 
     // A perform envelope arrives as a typed `Input::Perform`, its optional second
     // role carried through.
     client
         .send(Message::text(
-            r#"{"t":"perform","name":"put","focus":9,"with":42}"#,
+            r#"{"t":"perform","name":"put","focus":"9","with":"42"}"#,
         ))
         .await
         .unwrap();
     let perform = next_cmd(&cmd_rx).await;
     assert!(matches!(
         perform.input,
-        Input::Perform(Perform { name, focus: 9, with: Some(42) }) if name == "put"
+        Input::Perform(Perform { name, focus, with: Some(with) })
+            if name == "put" && focus == "9" && with == "42"
     ));
 
     // A sim event arrives as one `{"t":"event",...}` frame.
@@ -115,7 +118,7 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
         .send(Outgoing::Reply(
             conn,
             ServerMsg::Offers {
-                clicked: 42,
+                clicked: "42".into(),
                 offers: vec![Offer {
                     name: "take".into(),
                     status: OfferStatus::Available,
@@ -125,7 +128,7 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
         .unwrap();
     let reply = next_json(&mut client).await;
     assert_eq!(reply["t"], "offers");
-    assert_eq!(reply["clicked"], 42);
+    assert_eq!(reply["clicked"], "42");
     assert_eq!(reply["offers"][0]["name"], "take");
     assert_eq!(reply["offers"][0]["status"]["kind"], "available");
 
