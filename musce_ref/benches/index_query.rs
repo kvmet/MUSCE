@@ -36,7 +36,6 @@ fn naive_region(world: &World, center: &Xyz, radius: i64) -> Vec<EntityId> {
     let span = radius.div_euclid(CELL) + 1;
     let (cx, cy, cz) = cell_of(center);
     world
-        .ecs()
         .query::<(&Id, &Xyz)>()
         .iter()
         .filter_map(|(id, p)| {
