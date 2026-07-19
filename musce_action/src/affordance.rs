@@ -5,10 +5,10 @@
 //! not anything plans. The GOAP planner in `musce_agency` is one *consumer* of
 //! this vocabulary, not its owner. See `docs/architecture/affordances.md`.
 //!
-//! Game content, the concrete affordances and the relation/component vocabulary
+//! App content, the concrete affordances and the relation/component vocabulary
 //! their predicates name, lives in the consumer crate, never here. The engine
-//! iterates a clause and calls back into the game-supplied [`WorldModel`]; it
-//! interprets no game vocabulary itself.
+//! iterates a clause and calls back into the app-supplied [`WorldModel`]; it
+//! interprets no app vocabulary itself.
 //!
 //! Deferred optimization: relation kinds, component tags, and `Var` names are
 //! all `String` here, matching the executor's `Action`. None of it is
@@ -36,8 +36,8 @@ pub enum Term {
 pub struct Var(pub String);
 
 /// The two chainable predicate kinds. Their parameters, a relation `kind` and a
-/// component `comp`, are game vocabulary the engine never interprets, carried as
-/// the same tag strings the executor's `Action` uses. A new game state is a new
+/// component `comp`, are app vocabulary the engine never interprets, carried as
+/// the same tag strings the executor's `Action` uses. A new app state is a new
 /// *parameter*, never a new variant: `cooked` / `worn` / `armor` are
 /// `Tag(_, "cooked")`, `Related(_, _, "worn")`, `Tag(_, "armor")`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,7 +50,7 @@ pub enum Predicate {
 
 /// A predicate under an optional negation: the atom a clause is actually built
 /// from. `negated` is engine-owned boolean structure: [`Literal::holds`] evaluates
-/// it as `model.holds(predicate) != negated`, so a game's [`WorldModel`] only ever
+/// it as `model.holds(predicate) != negated`, so an app's [`WorldModel`] only ever
 /// answers atomic `Related`/`Tag` questions and never implements negation (nor can
 /// get it wrong). A positive literal is `predicate.into()`; a negative one is
 /// `predicate.not()`.
@@ -166,7 +166,7 @@ impl Literal {
         }
     }
 
-    /// Whether this literal holds in `world`: the game reads the atomic predicate
+    /// Whether this literal holds in `world`: the app reads the atomic predicate
     /// through `model`, the engine applies the negation. This is the *only* place
     /// `¬` is evaluated, which is why no `WorldModel` ever sees it.
     pub fn holds(&self, world: &World, model: &dyn WorldModel) -> bool {
@@ -223,7 +223,7 @@ impl Frame {
 /// ignores the prose. A bare bool could serve neither well; see the affordances
 /// doc for why a guard is a predicate *plus a reason*.
 ///
-/// `reason` is `&'static str` because the guard-worthy refusals are fixed game
+/// `reason` is `&'static str` because the guard-worthy refusals are fixed app
 /// prose ("You can't put things in that."). A refusal whose message needs runtime
 /// data (a resolved name, a query echo) is not a guard; it stays a resolution
 /// failure in the handler, where the data is.
@@ -235,11 +235,11 @@ pub struct Guard {
 
 /// A grounded action: the reusable unit a player verb and the planner both
 /// resolve to. This is the generic shape; concrete instances (which relation
-/// kinds and components a given verb names, its rule, its prose) are game
+/// kinds and components a given verb names, its rule, its prose) are app
 /// content in the consumer crate.
 ///
-/// Cost is deliberately not a field: it is not a property of the action but a
-/// game policy over `(actor, affordance, world)`, supplied through
+/// Cost is deliberately not a field: it is not a property of the action but an
+/// app policy over `(actor, affordance, world)`, supplied through
 /// `musce_agency::CostModel`, so an actor's costs can vary and later be learned
 /// (agency build step 6).
 #[derive(Debug, Clone)]
@@ -280,7 +280,7 @@ impl Affordance {
 
     /// The first guard that vetoes this action for `frame` in `world`, or `None` if
     /// every guard holds. Grounds each guard's clause against the frame and reads it
-    /// through the game-supplied `model`, returning the whole failing [`Guard`] so
+    /// through the app-supplied `model`, returning the whole failing [`Guard`] so
     /// the caller chooses how to use it: today handlers read its `reason` for the
     /// player-facing prose, but a richer renderer (a second audience, a log) can
     /// read its `clause` instead. A handler calls this where its hand-written
@@ -293,15 +293,15 @@ impl Affordance {
     }
 }
 
-/// The game-supplied reading of a predicate against the world. A predicate names
-/// game vocabulary (`"contained_by"`, `"armor"`) the engine never interprets, so
-/// only the game can say whether it holds. Dispatch uses this to test a verb's
+/// The app-supplied reading of a predicate against the world. A predicate names
+/// app vocabulary (`"contained_by"`, `"armor"`) the engine never interprets, so
+/// only the app can say whether it holds. Dispatch uses this to test a verb's
 /// guards; the planner uses it to test whether a goal or precondition is already
 /// satisfied.
 ///
-/// There is deliberately no generic default: a crate that never names game
+/// There is deliberately no generic default: a crate that never names app
 /// vocabulary has no reading to offer, and that absence is the boundary working
-/// as intended. Every game supplies its own model in the consumer crate.
+/// as intended. Every app supplies its own model in the consumer crate.
 ///
 /// Only *ground* predicates (every [`Term`] a [`Term::Const`]) are meaningful.
 /// Binding a free [`Var`] by enumerating candidate entities is a separate
@@ -322,7 +322,7 @@ mod tests {
 
     // The worked clauses below come from the affordances design doc; the point
     // is to prove the vocabulary can express them. The relation kinds and
-    // components ("contains", "food", "worn", "armor") are illustrative game
+    // components ("contains", "food", "worn", "armor") are illustrative app
     // vocabulary, not a claim about musce_ref's actual tags.
 
     #[test]
@@ -375,7 +375,7 @@ mod tests {
     fn negation_flips_a_literal() {
         // A stub model where every tag holds and no relation does: the positive
         // literal holds, its negation does not. Negation is engine-side, so this
-        // never touches the game's reading.
+        // never touches the app's reading.
         struct TagsHold;
         impl WorldModel for TagsHold {
             fn holds(&self, p: &Predicate, _w: &World) -> bool {

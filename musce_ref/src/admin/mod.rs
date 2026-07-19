@@ -5,7 +5,7 @@
 //! capability gates each) over the engine's admin frame (`CommandTable` +
 //! `Gate::Cap` + dispatch); the engine owns that mechanism.
 //! See `docs/architecture/actions.md` (the three buckets) and
-//! `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/engine-and-app.md`.
 //!
 //! Entities are referenced by id, written `#7` (the form `@create`/`@dig` hand
 //! back and a future `@find` will resolve names to). The creation verbs report the

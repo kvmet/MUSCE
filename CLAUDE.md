@@ -37,7 +37,7 @@ Touch the doc when you touch the code:
 | the GOAP planner, `bind_var`, `CostModel`, drives, the arbiter | `agency/README.md` |
 | secondary indexes (`musce_index`), the `World` resource store, coordinates | `indexes.md` |
 | transports, sessions, embodiment (`Controls`/`Focus`) | `networking-and-sessions.md` |
-| the engine/game boundary, the injected `Game` | `engine-and-game.md` |
+| the engine/app boundary, the injected `App` | `engine-and-app.md` |
 | zones, locator, entity handoff | `sharding.md` |
 | criterion benches (`*/benches/`) | `benchmarks.md` |
 

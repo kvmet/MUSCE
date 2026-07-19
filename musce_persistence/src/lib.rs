@@ -73,10 +73,10 @@ pub trait Persistence {
 /// from [`Persistence`] (the whole-world save/load contract) because it is a
 /// different concern with a different access pattern, so cold storage can be backed
 /// differently (object storage) later without disturbing the world-save contract.
-/// Keys are a flat, game-owned namespace, exactly like an object store: the game
+/// Keys are a flat, app-owned namespace, exactly like an object store: the app
 /// namespaces by key prefix (`book:<hash>`, `notes:<id>`), and a shared key is how
 /// many-to-one dedup falls out (every copy of a book points at one row). Values are
-/// engine-opaque bytes the game encodes and decodes. See
+/// engine-opaque bytes the app encodes and decodes. See
 /// `docs/architecture/persistence.md`.
 pub trait KvStore {
     /// Create the content table if absent.
@@ -292,7 +292,7 @@ fn assemble(
 
 /// The world store as the runtime holds it: one of the concrete backends, chosen
 /// at connect time by the URL scheme. Forwards the `Persistence`/`KvStore`
-/// contract to the variant, so the runtime and a game program against the store
+/// contract to the variant, so the runtime and an app program against the store
 /// without naming a backend. Adding a backend is a variant here plus its impl;
 /// no call site changes.
 #[derive(Clone)]
@@ -606,7 +606,7 @@ mod tests {
         b.add(Description("hall".into()));
         let hall = w.spawn(b);
 
-        // bag/coin are just described entities: container/item are game kinds and
+        // bag/coin are just described entities: container/item are app kinds and
         // this test exercises the kind-agnostic DB round-trip.
         let mut b = EntityBuilder::new();
         b.add(Description("bag".into()));

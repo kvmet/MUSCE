@@ -26,13 +26,13 @@ const TICKS: u64 = 100;
 
 /// A freshly registered and seeded reference world, plus the game's systems.
 fn setup() -> (World, Vec<System>) {
-    let game = musce_ref::game();
-    let register: Register = game.register;
-    let seed: Seed = game.seed;
+    let app = musce_ref::app();
+    let register: Register = app.register;
+    let seed: Seed = app.seed;
     let mut world = World::new();
     register(&mut world);
     seed(&mut world);
-    (world, game.systems)
+    (world, app.systems)
 }
 
 fn tick_work(c: &mut Criterion) {

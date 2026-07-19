@@ -3,14 +3,14 @@
 > Status: **the query is built and wire-exposed.** In `musce_ref` (`offers.rs`)
 > the enumeration returns the affordances available on an entity, each annotated;
 > `pointing.rs` projects them to the `musce_proto::web` DTOs behind the
-> `Game.offers` seam, and the WebSocket read `Query::Offers` round-trips the sim
+> `App.offers` seam, and the WebSocket read `Query::Offers` round-trips the sim
 > thread to reply with them (see
 > [networking-and-sessions.md](networking-and-sessions.md)). The type filter noted
 > below is still proposed.
 
 A text parser never needs to *enumerate* affordances: a player types a verb and
 the parser resolves it straight to one handler. A pointing client (click, tap,
-examine) does need it. It holds an entity and asks the game "what can I do to
+examine) does need it. It holds an entity and asks the app "what can I do to
 this?", so it can render a live control, a greyed one with the reason, or a
 prompt for a still-missing piece. This is the renderer-side consumer the
 [affordances doc](affordances.md) foreshadowed when it noted a second audience
@@ -30,7 +30,7 @@ construction.
 The same split governs the tree the client shows: "what is here" is
 `World::contents` / `container_of` / `enclosing_locus` rendered as nesting, an
 existing read over containment, not new world state. Each node also carries a
-passive **detail bag**: game-projected `(label, value)` pairs an actor perceives by
+passive **detail bag**: app-projected `(label, value)` pairs an actor perceives by
 presence (today its `Description`), so a focused entity renders without a second
 round-trip. That bag is the passive-inspection half of the split above, delivered
 as read data; the narrated `examine` act reveals the same prose but broadcasts and
@@ -60,7 +60,7 @@ fail, and if so which. Enumeration needs three things it cannot give:
    role-vars (`required_roles`), so no new field on `Affordance` is needed: arity
    is already latent in the clauses. Guards, not the effect, because a guard names
    an entity whose state must be validated, while an effect may name a *derived*
-   destination the game fills itself (`drop`'s target is the actor's room, never a
+   destination the app fills itself (`drop`'s target is the actor's room, never a
    pick). What is *not* recovered is the parser's implicit kind gate: `go north`
    resolves to an exit by construction, but a click does not, so the query offers
    `go` on a rock (not locked) and `take` on a chest (not a being). Recovering
@@ -85,11 +85,11 @@ the handler and the planner.
 
 ## Where it lives
 
-`offers.rs` is game content in `musce_ref`, like `perform`: it names the concrete
+`offers.rs` is app content in `musce_ref`, like `perform`: it names the concrete
 affordance set and reads them through `RefWorldModel`. The *classification*
 (`classify`, `required_roles`, `focus_role`) is generic and could promote into
-`musce_action` once a second game wants it, the same promotion discipline the
-affordance vocabulary itself followed; it stays in the reference game until that
+`musce_action` once a second app wants it, the same promotion discipline the
+affordance vocabulary itself followed; it stays in the reference app until that
 second consumer exists.
 
 ## Relation to the other docs

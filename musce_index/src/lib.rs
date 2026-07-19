@@ -1,5 +1,5 @@
 //! `musce_index`: a generic, type-agnostic secondary index over a single
-//! component. A game names a component and a key function; the index maintains a
+//! component. An app names a component and a key function; the index maintains a
 //! `key -> entities` lookup so it can answer "which entities key to X" without
 //! scanning the world every time. The default is a plain value hash; a custom key
 //! function makes anything else (a spatial cell hash is the motivating case) fall
@@ -257,7 +257,7 @@ impl IndexRegistry {
 
 /// Drive the index singleton for one tick. On the first call this run it builds
 /// the registry via `init` and does the baseline scan, homing it in a `World`
-/// resource; every later call applies the tick's `facts` incrementally. A game's
+/// resource; every later call applies the tick's `facts` incrementally. An app's
 /// maintainer system is a one-liner over this, registered first among its systems
 /// so later systems in the same tick read the updated index.
 ///

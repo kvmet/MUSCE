@@ -29,7 +29,7 @@ coverage of that layer: a persisted component changed *through* `World`
 (`set_component`/`insert`/`remove`/`modify`, `move_entity`/`relate`) is always seen.
 The only way to change one *without* being seen is a raw `&mut` component borrow
 below the mutator layer, and that is no longer reachable outside the engine core:
-there is no public raw hecs handle (see ecs-and-relations.md), so game and app code
+there is no public raw hecs handle (see ecs-and-relations.md), so app and app code
 cannot open this hole at all. In-crate code that reaches through the `pub(crate)`
 raw path owns the same discipline `forbid_tracking` already names.
 
@@ -90,7 +90,7 @@ per-component rows above when they change. Large, rarely-read payloads (a book's
 text, a mail archive, a long audit log) are wasteful to keep resident, so they belong
 in **cold storage**: a separate `KvStore` keyspace of engine-opaque bytes, fetched on
 demand off the sim thread, that never enters the component rows. That store, its
-async cold-op path, and the dedup/ordering rules it deliberately leaves to the game
+async cold-op path, and the dedup/ordering rules it deliberately leaves to the app
 are their own concern: see [cold-storage.md](cold-storage.md). "Cold" means exactly
 "not a registered hot component," so the `ComponentRegistry` stays the single
 authority for what the world's rows contain.
@@ -203,7 +203,7 @@ and warned, not silently trusted.
 Two backends exist behind the `Persistence` + `KvStore` traits: `SqliteStore`
 (dev and embedded) and `PostgresStore` (production). The runtime holds a
 `WorldStore` enum that forwards to whichever the connection URL's scheme names
-(`sqlite://…` / `sqlite::memory:` vs `postgres://…`), so game code, `run`, and the
+(`sqlite://…` / `sqlite::memory:` vs `postgres://…`), so app code, `run`, and the
 persistence task never name a backend. The account store has the same shape
 (`AccountBackend` over `AccountStore`/`PostgresAccountStore`); world and accounts
 select independently by their own URLs.

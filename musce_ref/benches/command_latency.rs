@@ -27,10 +27,10 @@ struct Bench {
 }
 
 fn setup() -> Bench {
-    let game = musce_ref::game();
-    let register: Register = game.register;
-    let seed: Seed = game.seed;
-    let choose: ChooseActor = game.choose_actor;
+    let app = musce_ref::app();
+    let register: Register = app.register;
+    let seed: Seed = app.seed;
+    let choose: ChooseActor = app.choose_actor;
 
     let mut world = World::new();
     register(&mut world);
@@ -40,7 +40,7 @@ fn setup() -> Bench {
     let mut actors = Actors::default();
     actors.bind(CONN, actor);
     Bench {
-        commands: game.commands,
+        commands: app.commands,
         world,
         actor,
         actors,

@@ -1,16 +1,16 @@
 # Actions and the Executor
 
-> Status: **structural vocabulary built; engine/game split done.** The engine
+> Status: **structural vocabulary built; engine/app split done.** The engine
 > owns the structural executor
 > (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
 > its emit API, and the sim-side audience resolver (`musce_action`), plus the
-> shared vocabulary (`musce_proto`). The game content (the verbs `look`, `go`/bare
+> shared vocabulary (`musce_proto`). The app content (the verbs `look`, `go`/bare
 > direction, `take`, `drop`, `say`, `help`, name resolution, the seed world, the
-> takeable rule, and the `@play` actor policy) lives in the reference game
+> takeable rule, and the `@play` actor policy) lives in the reference app
 > `musce_ref`,
-> which builds the `Game` the runtime is parameterized over (see
-> [engine-and-game.md](engine-and-game.md)). This document covers the core
+> which builds the `App` the runtime is parameterized over (see
+> [engine-and-app.md](engine-and-app.md)). This document covers the core
 > executor, the action vocabulary, and atomicity; the structural-fact/reaction
 > channel is in [facts.md](facts.md); the
 > command/action boundary, the dispatch registry, and the `Event` output channel
@@ -42,7 +42,7 @@ the action set is just the typed reflection of the `World` mutators.
 ### The structural-fact channel
 
 Structural mutations emit typed **facts** (`Destroyed`, `Moved`, `LocusChanged`) for
-game logic to react to, drained once per tick into `SystemCtx::facts`. A fact is an
+app logic to react to, drained once per tick into `SystemCtx::facts`. A fact is an
 *observation* of a mutation, not a mutation, so the rule that an action is the only
 thing that mutates still holds: a reaction reads facts and may produce its own
 actions, but the fact stream changes nothing on its own. The channel, its selection
@@ -203,11 +203,11 @@ text before persisting it; not a concern until that log is designed.
 
 ## Where it lives
 
-The verbs, the seed world, and name resolution are game content and live in the
-reference game crate `musce_ref`, over the world queries and the public command
+The verbs, the seed world, and name resolution are app content and live in the
+reference app crate `musce_ref`, over the world queries and the public command
 surface the engine exposes. `musce_action` is pure engine mechanism: the
 executor, the `CommandTable` lookup and registration, `Ctx` and its emit API, and
-the audience resolver. See [engine-and-game.md](engine-and-game.md).
+the audience resolver. See [engine-and-app.md](engine-and-app.md).
 
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to
@@ -230,10 +230,10 @@ minimal:
   action set has since grown to the full structural vocabulary, and the
   structural-fact channel is now live; see "The structural-fact channel" above.)
 - Verbs `look`, `go <dir>` / bare direction, `take`, `drop`, `say`, and `help`
-  (the game documents its own in-world surface), in a `CommandTable` looked up by
+  (the app documents its own in-world surface), in a `CommandTable` looked up by
   exact name then first registered prefix (movement registered before `say`, so
   `s` is south and `sa` is say). The account floor's `@quit`/`@who`/`@help` stay,
-  and `@help` lists only those account commands, not the game's verbs.
+  and `@help` lists only those account commands, not the app's verbs.
 - `@play` records a connection's actor `EntityId` as a session attachment on the
   floor (session state), so bare commands have an actor; the audience resolver
   reads a conn->actor index derived from those attachments

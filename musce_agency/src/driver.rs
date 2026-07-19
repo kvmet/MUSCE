@@ -16,8 +16,8 @@ use musce_action::Clause;
 use crate::{Planner, Step};
 
 /// One beat's outcome: the grounded action committed, or a rule refused it. The
-/// generic result the replan loop reads, so the loop never names a game's richer
-/// outcome type; the game maps its own (`musce_ref::Outcome`) onto this in the
+/// generic result the replan loop reads, so the loop never names an app's richer
+/// outcome type; the app maps its own (`musce_ref::Outcome`) onto this in the
 /// closure it hands [`pursue`](Driver::pursue). The reason for a refusal is not
 /// carried: the loop excludes the step regardless of why it vetoed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +55,7 @@ impl<'a> Driver<'a> {
         Driver { planner }
     }
 
-    /// Plan for `goal`, run each step through `run` (the game's lowering of a step
+    /// Plan for `goal`, run each step through `run` (the app's lowering of a step
     /// to its grounded action), and on a vetoed beat exclude that step and replan
     /// from the now-current world. Returns [`Progress::Achieved`] when a whole plan
     /// commits, [`Progress::Abandoned`] when replanning runs dry.

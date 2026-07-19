@@ -14,12 +14,12 @@ Benchmarks live with the layer they measure:
   directly with no indirection: `musce_core/benches/world_ops.rs` for the in-memory
   ECS, `musce_persistence/benches/snapshot_roundtrip.rs` for the DB round-trip.
 - **Macrobenchmarks** sit in `musce_ref`, the only crate that assembles the whole
-  stack into a running game with a real command table and seed. A command-latency
-  or tick-cost number is only meaningful end-to-end, so it belongs where the game
+  stack into a running app with a real command table and seed. A command-latency
+  or tick-cost number is only meaningful end-to-end, so it belongs where the app
   is composed, not against a stubbed world.
 
 This split is deliberate: a micro-bench wedged into `musce_ref` would measure the
-hot path through three layers of game content and tell you nothing crisp; a macro
+hot path through three layers of app content and tell you nothing crisp; a macro
 bench in a lower crate can't see the real verbs or systems.
 
 | Bench | Crate | Question it answers |

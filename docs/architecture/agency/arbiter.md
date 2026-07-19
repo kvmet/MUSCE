@@ -5,7 +5,7 @@
 > reference magpie ([drives.md](drives.md)) feeds it two *competing* drives (hoard and
 > admire) on the sim tick, so hysteresis is no longer dormant: the arbiter holds a
 > commitment across ticks that a near-equal challenger cannot steal. Because agency
-> types do not serialize, the arbiter is reconstructed each tick from a game-owned tag
+> types do not serialize, the arbiter is reconstructed each tick from an app-owned tag
 > via `Arbiter::resume` (see "Cross-tick commitment" below). The same injection point
 > still takes a hand-authored imperative order.
 
@@ -67,7 +67,7 @@ execution sweep, not here (see [README](README.md)).
 ## Cross-tick commitment
 
 Hysteresis only bites across ticks, and the sim's persisted state is the serializable
-world, not a long-lived arbiter (agency types deliberately do not serialize). So a game
+world, not a long-lived arbiter (agency types deliberately do not serialize). So an app
 that wants a commitment to survive between ticks does not keep the arbiter alive: it
 records *which* goal was committed to as ordinary world state and rebuilds the arbiter
 each tick with `Arbiter::resume(hysteresis, incumbent)`. The incumbent it passes is

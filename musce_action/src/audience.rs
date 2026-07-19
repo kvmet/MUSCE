@@ -93,7 +93,7 @@ mod tests {
         v
     }
 
-    // An actor is just an entity a connection binds to; "player" is a game kind,
+    // An actor is just an entity a connection binds to; "player" is an app kind,
     // not needed to exercise audience routing.
     fn player(w: &mut World) -> EntityId {
         w.spawn(EntityBuilder::new())

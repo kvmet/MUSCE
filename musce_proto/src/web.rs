@@ -20,7 +20,7 @@ use crate::{EventKind, Input};
 // is a u64, and a JSON number is an IEEE double, so an id using its high bits would
 // lose precision in a browser's `JSON.parse`. A string is lossless regardless of how
 // ids are allocated (the counter today, sharded or hashed ids later), and the field
-// can hold a richer id form (a URI) with no wire-type change. The game formats an id
+// can hold a richer id form (a URI) with no wire-type change. The app formats an id
 // into the string on the way out and parses it back on the way in.
 
 /// A message from the web client. The transport parses it and hands the sim a
@@ -55,7 +55,7 @@ impl ClientMsg {
 /// the affordance name and its bound entities directly, with no noun to resolve.
 /// `focus` is the clicked entity; `with` is the optional second entity a role
 /// sub-pick supplied (the object to `put`, once the container is the focus). Which
-/// role `focus` fills is game policy, so the game maps `focus`/`with` onto the
+/// role `focus` fills is app policy, so the app maps `focus`/`with` onto the
 /// affordance's roles.
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
@@ -96,18 +96,18 @@ pub enum ServerMsg {
 }
 
 /// One node of the containment tree: a projection of the world's containment
-/// relation plus the game's name and kinds for the entity, never new state.
+/// relation plus the app's name and kinds for the entity, never new state.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Entity {
     pub id: String,
     pub name: String,
-    /// Game kind tags (e.g. "container", "item", "exit", "locked").
+    /// App kind tags (e.g. "container", "item", "exit", "locked").
     pub kinds: Vec<String>,
     /// Ids directly contained by this entity.
     pub contents: Vec<String>,
-    /// Game-projected passive detail as ordered `(label, value)` pairs (e.g. a
-    /// `("description", ...)`). Opaque to the wire: the game decides what an actor
+    /// App-projected passive detail as ordered `(label, value)` pairs (e.g. a
+    /// `("description", ...)`). Opaque to the wire: the app decides what an actor
     /// perceives by presence and the client just paints the pairs. This is the
     /// same prose a narrated `examine` reveals, delivered silently as part of the
     /// read, so the pointing client renders a focused entity without a round-trip.

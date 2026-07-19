@@ -1,12 +1,12 @@
 # Sequences and Effects
 
-> Status: **built (in the reference game).** The sequence layer ships as game
+> Status: **built (in the reference app).** The sequence layer ships as app
 > content in `musce_ref` (`sequences.rs`): the `Steps` program component, the
 > `Sequences(Vec<Instance>)` instance component, the `Intent` set, and the
 > `sequence_sweep` system on the tick pipeline, with two seeded demonstrators (a
 > patrolling sentry and a burning torch). The engine provides only the generic
 > persisted-component plumbing. The sweep *loop* is engine-shaped mechanism, but it
-> is fused to the game's `Intent` set, so the whole layer stays game-side for now
+> is fused to the app's `Intent` set, so the whole layer stays app-side for now
 > (see "Promoting the sweep skeleton" below). It sits on two
 > pieces of substrate: the tick-loop **system pipeline** (see
 > [concurrency.md](concurrency.md)) and the **structural-fact channel** the torch
@@ -126,7 +126,7 @@ is heavier than the current need.
 rhymes with a system because both are cadenced behavior, but the distinguishing
 axis is authorship:
 
-- a **system** is engine/game code: compiled, global, query-driven, applies to a
+- a **system** is engine/app code: compiled, global, query-driven, applies to a
   class of entities, fixed at boot. The sweep itself is a system.
 - a **sequence** is content: data, per-entity, attached and detached at runtime.
   The sweep interprets it.
@@ -163,15 +163,15 @@ prose `wander` emits.
 The boundary rule is "the engine owns a construct only when engine mechanism reads
 it." The sweep *loop* passes that test in spirit: collect-carriers-first, the
 carrier-despawn abandonment, the 0-delay burst handling and the attach-time guard,
-the cursor write-back-vs-remove. That is generic, fiddly mechanism a second game
+the cursor write-back-vs-remove. That is generic, fiddly mechanism a second app
 would reimplement identically and get wrong the first time, so the skeleton
 (`attach`, the delay/cursor bookkeeping, the sweep loop) is a real promote-down
 candidate into an engine crate.
 
-What keeps it in the game today is that it is welded to `Intent`, which is pure
-game vocabulary (`Move { dir }` routes through the game's `can_traverse` lock veto;
+What keeps it in the app today is that it is welded to `Intent`, which is pure
+app vocabulary (`Move { dir }` routes through the app's `can_traverse` lock veto;
 `Destroy`). Cleaving the loop from the intents needs a generic `Sweep<I>`
-parameterized over a game-supplied intent type plus a game `fire` callback, and
+parameterized over an app-supplied intent type plus an app `fire` callback, and
 because `Intent` is a **serialized** component that ripples into the persistence
 registration layer, that is a migration, not an addition. Under the reversibility
 gate we do not pay it speculatively.
@@ -179,5 +179,5 @@ gate we do not pay it speculatively.
 The trigger is a **second intent-driven consumer** (effects proper, with a
 different intent set). When it appears, extract the intent-agnostic parts
 (`attach`, `cycle_delay`, the guard, the sweep loop) into an engine `Sweep<I>`
-seam; `fire` becomes the game-supplied callback and stays in the game. Until then
+seam; `fire` becomes the app-supplied callback and stays in the app. Until then
 the layer stays whole in `musce_ref`: a named deferred decision, not an oversight.

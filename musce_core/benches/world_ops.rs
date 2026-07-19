@@ -1,7 +1,7 @@
 //! Microbenchmarks for the core world's hot paths: containment lookups, the
 //! move/relate path, the enclosing-locus walk, and full-world snapshot
 //! serialization. These measure the in-memory ECS layer in isolation, with no
-//! game content and no persistence I/O; the persistence crate benches the DB
+//! app content and no persistence I/O; the persistence crate benches the DB
 //! round-trip separately. The scaling cases (`contents`, `snapshot`) sweep world
 //! size so a regression that turns a linear cost superlinear shows up as a change
 //! in slope, not just a single number.

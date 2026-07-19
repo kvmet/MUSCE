@@ -7,8 +7,8 @@
 //! when the outcome lands.
 //!
 //! The floor also includes `@play`, which binds the connection to a character so
-//! bare commands have something to act through. Which character is game policy,
-//! injected as the game's `choose_actor`; the floor only renders the confirmation.
+//! bare commands have something to act through. Which character is app policy,
+//! injected as the app's `choose_actor`; the floor only renders the confirmation.
 //! The binding is session state, not world state; the driven actor is resolved live
 //! from the character's `Focus`. See `docs/architecture/networking-and-sessions.md`
 //! and `docs/architecture/authorization.md`.
@@ -415,7 +415,7 @@ impl Sessions {
     }
 
     /// `@play`: attach this connection to an actor so its bare commands have
-    /// something to act through. Which actor is the game's policy, injected as
+    /// something to act through. Which actor is the app's policy, injected as
     /// `choose_actor`; the floor records the attachment and renders the confirmation.
     fn play(
         &mut self,

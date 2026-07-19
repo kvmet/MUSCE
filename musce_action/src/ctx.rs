@@ -1,4 +1,4 @@
-//! The handler context and its emit API: the engine surface a game's verb
+//! The handler context and its emit API: the engine surface an app's verb
 //! handlers program against. `Ctx` carries the world a handler mutates, the actor
 //! it acts through, the connection that issued the command, and the output buffer
 //! it emits into. The emit methods address output semantically (first-person to
@@ -23,7 +23,7 @@ use crate::event::Event;
 /// cannot touch the store directly (the sim holds none, and the store is async), so
 /// it records the intent here exactly as it records perception output in `out`; the
 /// runtime drains these and hands them to the cold task. A `Read` result is decoded
-/// by the game and delivered straight to `conn`; a `Write` overwrites the key's
+/// by the app and delivered straight to `conn`; a `Write` overwrites the key's
 /// bytes and acks `conn`. See `docs/architecture/persistence.md`.
 pub enum ColdOp {
     /// Fetch `key`; deliver its decoded value to `conn` rendered as `kind` (or a
@@ -46,7 +46,7 @@ pub enum ColdOp {
 /// into. The actor is explicit so handlers are callable directly in tests and,
 /// later, by AI and sequences.
 ///
-/// It also carries the resolved authorization [`Verdict`], read-only, so a game's
+/// It also carries the resolved authorization [`Verdict`], read-only, so an app's
 /// inline rules can be superuser-aware (waving su through a scoped check the flat
 /// gate cannot express) exactly as the gate is. The verdict keys off the account,
 /// never the actor, so reading it here cannot borrow authority from a possessed
@@ -83,13 +83,13 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// Whether superuser is in force for this command. A game's inline rule reads
+    /// Whether superuser is in force for this command. An app's inline rule reads
     /// this to wave su through a restriction the flat gate cannot express.
     pub fn is_su(&self) -> bool {
         self.verdict.is_su()
     }
 
-    /// The acting principal's authorization, for a game routine that must pass it
+    /// The acting principal's authorization, for an app routine that must pass it
     /// onward: a shared narrating-perform runs the affordance's gate, so a verb
     /// handler routing through it must hand it the same verdict a bare
     /// `agency::perform` would check, or a cap-gated affordance-verb would lose the
@@ -99,7 +99,7 @@ impl<'a> Ctx<'a> {
         self.verdict
     }
 
-    /// The world and the raw output buffer together. The seam a shared game routine
+    /// The world and the raw output buffer together. The seam a shared app routine
     /// emits through when it has no `Ctx` in common with its other callers: the
     /// narrating perform runs from a verb handler (a `Ctx`), a click (a `Ctx`), and
     /// a tick system's driver closure (neither), so it takes these two borrows
@@ -141,7 +141,7 @@ impl<'a> Ctx<'a> {
     }
 
     /// Record a cold write: store `bytes` under `key`, overwriting. Acked to this
-    /// command's connection once durable. The game encodes `bytes`; the store keeps
+    /// command's connection once durable. The app encodes `bytes`; the store keeps
     /// them opaque.
     pub fn cold_write(&mut self, key: impl Into<String>, bytes: Vec<u8>) {
         self.cold.push(ColdOp::Write {
@@ -203,8 +203,8 @@ impl<'a> Ctx<'a> {
 
 /// A tick-loop system: the simulation-side analogue of a verb [`Handler`]. It
 /// mutates the world and emits semantic output through a [`SystemCtx`], which the
-/// runtime resolves to connections the same way it does a verb's. A game registers
-/// these in its `Game.systems`; the engine only invokes them.
+/// runtime resolves to connections the same way it does a verb's. An app registers
+/// these in its `App.systems`; the engine only invokes them.
 ///
 /// [`Handler`]: crate::Handler
 pub type System = fn(&mut SystemCtx);
@@ -215,7 +215,7 @@ pub type System = fn(&mut SystemCtx);
 /// on the world's behalf, not a player's, so its output is third-person only.
 ///
 /// Both clocks are carried even when a system uses only one: `tick` is
-/// deterministic sim time (the default for game logic) and `now` is wall-clock
+/// deterministic sim time (the default for app logic) and `now` is wall-clock
 /// (for real-world scheduling). They come straight from the runtime's per-tick
 /// context, captured once so every system in a tick sees the same instant.
 ///

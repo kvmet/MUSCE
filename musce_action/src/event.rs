@@ -41,7 +41,7 @@ impl Event {
     }
 
     /// Text aimed at everyone directly within a locus (a scope boundary; the
-    /// reference game's rooms are loci). The audience resolver expands this into
+    /// reference app's rooms are loci). The audience resolver expands this into
     /// per-connection deliveries; net never sees it.
     pub fn to_locus(locus: EntityId, kind: EventKind, text: impl Into<String>) -> Self {
         Event {

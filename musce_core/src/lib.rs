@@ -39,7 +39,7 @@ mod tests {
 
     // The core tests exercise the engine machinery (containment, snapshot,
     // mutation), which is kind-agnostic, so these stand-in "things" carry only a
-    // `Description`: item/container are game kinds and no longer live here.
+    // `Description`: item/container are app kinds and no longer live here.
     fn item(w: &mut World, name: &str) -> EntityId {
         let mut b = EntityBuilder::new();
         b.add(Description(name.into()));
@@ -565,8 +565,8 @@ mod tests {
 
     // --- ComponentChanged triggers ---------------------------------------
     //
-    // `Description` is a registered component, so it stands in for a tracked game
-    // component here (the engine ships no trackable game vocabulary of its own).
+    // `Description` is a registered component, so it stands in for a tracked app
+    // component here (the engine ships no trackable app vocabulary of its own).
 
     fn changed_tags(facts: &[Fact]) -> Vec<&'static str> {
         facts

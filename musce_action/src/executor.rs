@@ -137,7 +137,7 @@ mod tests {
         w.spawn(b)
     }
 
-    // Container/item are game kinds, not engine machinery, so these executor tests
+    // Container/item are app kinds, not engine machinery, so these executor tests
     // (which exercise the kind-agnostic structural actions) use bare entities: a
     // "container" is just something other things get moved into.
     fn container(w: &mut World) -> EntityId {

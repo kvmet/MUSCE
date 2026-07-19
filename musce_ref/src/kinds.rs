@@ -2,10 +2,10 @@
 //! *is* (an item, a creature, a container, a player avatar). These are game
 //! vocabulary, not engine machinery: the engine reasons about identity, relations,
 //! containment, and the room perception boundary, but never about what a
-//! "creature" is. So they live here and register through `Game.register`, exactly
+//! "creature" is. So they live here and register through `App.register`, exactly
 //! like `Wander`/`Locked`/`Aliases`. A game built on the engine defines its own
 //! kinds the same way, without modifying the engine. See
-//! `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/engine-and-app.md`.
 
 use musce::world::{NamedComponent, World};
 use serde::{Deserialize, Serialize};

@@ -3,7 +3,7 @@
 //! and test against before any builder tools exist; `choose_actor` is the policy
 //! the runtime injects for `@play`, choosing which actor a connection comes to
 //! drive. Both are game content over the world API the engine exposes. See
-//! `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/engine-and-app.md`.
 
 use musce::world::hecs::EntityBuilder;
 use musce::world::{Controls, Description, EntityId, Locus, Name, World};
@@ -30,7 +30,7 @@ const TORCH_LIFETIME: u32 = 60;
 /// a cellar below it; a takeable key in the garden; a player avatar standing in
 /// the hall; and a patrol drone beside it that the avatar controls, to exercise
 /// `pilot`/`release`. Matches the `fn(&mut World)` shape the runtime's
-/// `Game.seed` expects.
+/// `App.seed` expects.
 ///
 /// The drone ships with a `Controls` edge to the avatar so there is a controllable
 /// thing in the world out of the box for `pilot`/`release` to exercise. See

@@ -1,10 +1,10 @@
 # Cold storage
 
 > Status: the cold content store (`KvStore`) is built (`kv_init`/`kv_get`/`kv_put`)
-> and wired to verbs: the reference game's `read`/`inscribe` fetch and overwrite a
-> book's cold text through the async cold-op path (below). Game-chosen shared keys
-> (deliberate dedup) work today; automatic content-addressed dedup is deliberately a
-> game/plugin concern, not an engine feature (see "Dedup is a game decision"). Cold
+> and wired to verbs: the reference app's `read`/`inscribe` fetch and overwrite a
+> book's cold text through the async cold-op path (below). App-chosen shared keys
+> (deliberate dedup) work today; automatic content-addressed dedup is deliberately an
+> app/plugin concern, not an engine feature (see "Dedup is an app decision"). Cold
 > *entities* (paging) remain unbuilt.
 
 MUSCE splits durable data into two tiers. Everything registered is **hot**: resident
@@ -18,12 +18,12 @@ model already leaves room for it without a migration.
 - **Cold content, `KvStore`.** The entity stays resident (its name, location, and a
   small hot component holding a **key**), but the heavy payload lives in a separate
   content store, `kv (key TEXT PRIMARY KEY, value BLOB)`, fetched on demand (the
-  reference game's `read` verb pulls a book's text by key; `inscribe` overwrites it).
-  The store is a flat, game-owned keyspace, exactly like an object store (S3): the game
-  namespaces by key prefix (`book:<id>`, `notes:<id>`), and a **game-chosen shared key
+  reference app's `read` verb pulls a book's text by key; `inscribe` overwrites it).
+  The store is a flat, app-owned keyspace, exactly like an object store (S3): the app
+  namespaces by key prefix (`book:<id>`, `notes:<id>`), and a **app-chosen shared key
   is many-to-one dedup** (every copy of one book points at a single row; see "Dedup is
-  a game decision"). Values are
-  engine-opaque bytes the game encodes and decodes; the engine never interprets cold
+  an app decision"). Values are
+  engine-opaque bytes the app encodes and decodes; the engine never interprets cold
   data, which is why it can stay off-heap. `KvStore` is a **separate trait** from
   `Persistence` (the whole-world save/load contract) precisely so cold storage can
   later be backed differently (object storage) without disturbing world save. Core
@@ -31,14 +31,14 @@ model already leaves room for it without a migration.
   never enters the component rows. The invariant to preserve: the `ComponentRegistry`
   stays the single authority for what the component rows contain, so "cold" means
   exactly "not registered hot," with no competing notion of what is persisted.
-- **The wired path: async, off the sim thread, decode injected by the game.** A verb
+- **The wired path: async, off the sim thread, decode injected by the app.** A verb
   cannot touch the store (the sim holds none, and `kv_get`/`kv_put` are async), so it
   records a cold request (`ColdOp`) exactly as it records perception output; the
   runtime routes these to a cold task that owns the store, and the task's result rides
   the normal event outbox **straight to the reader's connection** (no round-trip back
   through the sim, since a read mutates nothing). Decoding a fetched value into
-  deliverable text is **game knowledge** (the game encoded it), so it is an injected
-  `Game.decode_cold` the task calls; the engine still interprets nothing. A read of an
+  deliverable text is **app knowledge** (the app encoded it), so it is an injected
+  `App.decode_cold` the task calls; the engine still interprets nothing. A read of an
   absent key delivers a blank-page line, not an error. The task applies same-key ops in
   issue order (read-your-writes, no lost writes), free today from the single consumer;
   a future parallel cold path must preserve that *per-key* order (route by `hash(key)`).
@@ -47,7 +47,7 @@ model already leaves room for it without a migration.
 - **No cascade, no cross-store transaction.** A deleted entity does **not** delete
   `kv` rows: a row may be shared, so its lifetime is not entity-scoped. Orphans (a `kv`
   row no entity references) are an accepted storage cost; a GC pass (mark-sweep over
-  referenced keys, or a refcount) is a future addition. The reference game's book path
+  referenced keys, or a refcount) is a future addition. The reference app's book path
   keys cold rows to the entity id (`book:<id>`), so the key is fixed at spawn and the
   referencing component is written *before* any bytes exist: reading an unwritten key
   reads as blank, not as a dangling reference, so write ordering is moot for it (a
@@ -55,9 +55,9 @@ model already leaves room for it without a migration.
   **cold-data-first** ordering matters only when a key is *derived from its bytes* (a
   content hash), where the key changes on every edit. That is deliberately not an
   engine feature (see the next bullet).
-- **Dedup is a game decision, and that is where the seam ends.** There are two ways to
+- **Dedup is an app decision, and that is where the seam ends.** There are two ways to
   make copies share a `kv` row, and the engine owns neither, on purpose:
-  - **A game-chosen shared key**, used *deliberately*: a game points many entities at
+  - **An app-chosen shared key**, used *deliberately*: an app points many entities at
     one key (`book:<title-version>`) because it means them to be the same, and treats
     that row as **immutable by convention** (you author a canonical book, you do not
     `inscribe` it). This needs nothing beyond the primitive: arbitrary string keys
@@ -70,7 +70,7 @@ model already leaves room for it without a migration.
     corner, the most complex place to add automatic collapse and the least often
     wanted (immutable shared content is already served by the shared-key case above,
     with no hashing). So the engine stays out of it: a consumer that wants content
-    addressing builds a hash-id scheme *on top of* `KvStore` (a game module today, a
+    addressing builds a hash-id scheme *on top of* `KvStore` (an app module today, a
     plugin crate later); the engine provides the opaque byte store and the async
     read/write path, and nothing about identity or dedup.
 

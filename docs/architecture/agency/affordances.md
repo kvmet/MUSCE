@@ -44,7 +44,7 @@ an NPC planner resolve to. It carries four things:
   actor); the gate is about the *principal's* authority (a `Verdict`, meaningless
   for a body with no account). It is enforced on the automation entry: `perform`
   checks `Affordance::permits` against the actor's verdict (guest by default) before
-  it commits, so a cap-gated act is unavailable to plain automation until a game
+  it commits, so a cap-gated act is unavailable to plain automation until an app
   hands it authority. A player verb's command keeps its own `CommandTable` gate, so
   both entries express the same requirement at their own boundary. See
   [../affordances.md](../affordances.md).
@@ -68,7 +68,7 @@ structural Action shapes the executor already has (see [../actions.md](../action
 That set is closed, small, and shape-free. A **verb** is one of those shapes with
 bound parameters, a rule predicate, cost, and prose. This is the same collapse the
 predicates went through one level up: the kinds are closed, the parameters are
-open game vocabulary. `unlock` is not a primitive; it is `RemoveComponent(target,
+open app vocabulary. `unlock` is not a primitive; it is `RemoveComponent(target,
 Locked)` plus a has-key rule, and writing it down assumes `Locked` exists, that a
 door is the thing, and that unlocking means removing that component. All of that is
 world shape and lives in `musce_ref`, exactly like `Locked`, `container`, and
@@ -95,13 +95,13 @@ An affordance's effect *is* the structural Action it commits, read as `related` 
 
 The one case that is *not* a direct projection is a verb that changes a **value**
 whose planner-relevant meaning is a threshold (`eat` lowers hunger). Do not plan
-over the number: a game **system** maintains a derived tag at the threshold
+over the number: an app **system** maintains a derived tag at the threshold
 (`tag(self, Hungry)` clears when hunger drops), and the verb's chainable effect is
 that tag flip. Same escape hatch as "Testing component content" in
 [preconditions.md](preconditions.md); the numeric work stays in a system, the
 planner sees a tag.
 
-## The reference-game verb catalog
+## The reference-app verb catalog
 
 Not the primitive set: a catalog of `musce_ref` *instances*, each a primitive
 shape with bound params, a rule, and prose. The point of the table is that a large
@@ -126,7 +126,7 @@ The verbs differ from each other only in bound params (which component, which
 destination), the rule (`unlock` needs a matching key, `open` does not), and prose;
 the shape is shared. That is why the set feels large but is not: `open`, `unlock`,
 `close`, `lock`, `cook`, and `light` are all one `SetComponent`/`RemoveComponent`
-primitive, and what distinguishes them is game vocabulary the engine never sees.
+primitive, and what distinguishes them is app vocabulary the engine never sees.
 
 Notes on the edges of the set:
 
@@ -218,8 +218,8 @@ Deliberately unresolved; listed so they are not mistaken for decided.
   lighter "goal-satisfaction hook" that does not participate in regression the way
   world-changing actions do? Still open.
 - **Cost model.** *Seam decided; policy open.* Cost is not a field on the
-  affordance but a game-supplied `CostModel::cost(actor, affordance, world)`
-  (built; the generic crate ships only `UnitCost`). Whether a game's model is flat
+  affordance but an app-supplied `CostModel::cost(actor, affordance, world)`
+  (built; the generic crate ships only `UnitCost`). Whether an app's model is flat
   per-affordance or scaled by distance/effort at bind time is still open, as is
   where soft content preferences land (grade the pencil by uses remaining rather
   than filter on it; see [preconditions.md](preconditions.md), "Gate or grade").

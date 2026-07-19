@@ -3,7 +3,7 @@
 //! system is "the world does X every tick". Each is `fn(&mut SystemCtx)`, mutating
 //! through `execute` and emitting third-person narration, which the runtime
 //! resolves to connections the same way it does a verb's output. See
-//! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-app.md`.
 
 use musce::action::SystemCtx;
 use musce::world::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
@@ -26,7 +26,7 @@ impl NamedComponent for Wander {
 }
 
 /// Register this game's own world types on a fresh world, before it loads or
-/// seeds. The runtime calls this through `Game.register`.
+/// seeds. The runtime calls this through `App.register`.
 pub fn register(world: &mut World) {
     world.register_component::<Wander>();
     world.register_component::<Locked>();

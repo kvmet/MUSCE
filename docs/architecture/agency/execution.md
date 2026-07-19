@@ -3,13 +3,13 @@
 > Status: **built (agency build step 5).** The execution driver lives in
 > `musce_agency` (`driver.rs`) as `Driver` / `Beat` / `Progress`, on top of the
 > planner's `plan_excluding`. It runs a committed goal's plan to completion in one
-> call. It is now wired onto the sim tick by the reference game's magpie (see
+> call. It is now wired onto the sim tick by the reference app's magpie (see
 > [drives.md](drives.md)), which runs the whole plan per scheduled tick. Interleaving
 > a plan a *beat* per tick (yielding between beats) is the remaining deferred
 > refinement: a scheduling concern, not a change to this logic.
 
 The driver is the bottom of the agency stack: given a committed goal, it plans,
-runs the plan beat by beat through the game's grounded action, and **replans around
+runs the plan beat by beat through the app's grounded action, and **replans around
 a beat that vetoes**. It is the executing half of "a scripted actor is vetoed
 exactly as a player is": each step lowers through the same `perform` a typed verb
 runs, so the same guard refuses it.
@@ -49,12 +49,12 @@ because the coin is genuinely held after the first beat.
 
 `pursue` takes a closure `FnMut(&mut World, &Step) -> Beat`. `Beat` is
 `Committed | Refused`: the only thing the loop needs to know about a beat is whether
-it landed. The game maps its own richer result onto it (`musce_ref` collapses
+it landed. The app maps its own richer result onto it (`musce_ref` collapses
 `Outcome::Committed` / `Outcome::Refused(_)` to `Beat`), so the generic driver never
-names a game's outcome type, and the refusal *reason* is not carried up (the loop
+names an app's outcome type, and the refusal *reason* is not carried up (the loop
 excludes the step regardless of why it failed). Keeping the lowering in the caller's
 closure is what lets the driver stay in `musce_agency` while `perform` and the veto
-stay in the game crate.
+stay in the app crate.
 
 `Progress` is `Achieved | Abandoned`. `Achieved` covers the empty plan (an
 already-true goal ran zero beats), so it doubles as the arbiter's "satisfied,
@@ -79,7 +79,7 @@ for each replan within the call.
   per tick (one beat per agent per tick, yielding between beats), a scheduling concern
   for the sim thread. The replan logic here does not change; it is re-entered per beat
   instead of looped internally.
-- **A natural in-game veto trigger.** With deterministic, precondition-gated verbs
+- **A natural in-app veto trigger.** With deterministic, precondition-gated verbs
   and a single actor, a correctly-planned plan never vetoes at execution; the
   divergence the replan path handles arrives with concurrent agents or a
   variable-outcome action (a skill roll, combat), the same gate the per-actor

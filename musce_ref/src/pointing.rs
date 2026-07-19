@@ -1,8 +1,8 @@
-//! The pointing web client's Game seams: two reads and one act. [`snapshot`]
+//! The pointing web client's App seams: two reads and one act. [`snapshot`]
 //! projects the world into a wire containment tree and [`offers`] a clicked entity
 //! into its affordance list, both as `musce_proto` DTOs the read replies carry;
 //! [`perform`] is the act, running a clicked affordance on already-bound entities.
-//! These are the game side of the `Game.snapshot`/`Game.offers`/`Game.perform`
+//! These are the game side of the `App.snapshot`/`App.offers`/`App.perform`
 //! seams: the engine routes to them and (for the reads) serializes the result,
 //! holding no game vocabulary itself. Names, kinds, the affordance set, and which
 //! role a clicked entity fills are all game knowledge, which is why they live here.
@@ -63,7 +63,7 @@ fn collect(world: &World, id: EntityId, out: &mut Vec<Entity>) {
 }
 
 /// The passive detail an actor perceives about an entity by presence, as ordered
-/// `(label, value)` pairs. Game vocabulary, like `kinds_of`: the reference game
+/// `(label, value)` pairs. App vocabulary, like `kinds_of`: the reference game
 /// exposes an entity's `Description`, the same prose a narrated `examine` reveals,
 /// delivered silently so a click renders without a second round-trip.
 fn details_of(world: &World, id: EntityId) -> Vec<(String, String)> {

@@ -18,7 +18,7 @@ The admin frame is a capability-gated `CommandTable` reached through the
 `@`-namespace. Frame selection and the gate are engine mechanism (the floor's
 lifecycle verbs vs the admin table vs the embodiment frame; `Gate::Cap` checks the
 command's account verdict, and su bypasses it, see
-[authorization.md](authorization.md)); the verbs themselves are game content in
+[authorization.md](authorization.md)); the verbs themselves are app content in
 `musce_ref`, which gates them on its own `build`/`possess` capabilities. Each compiles
 straight to the structural action set, skipping the gameplay rules a player command
 runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
@@ -38,7 +38,7 @@ runs (see the sugar table in [actions.md](actions.md) for the per-verb action):
 - `@setpos #<room> <x> <y> <z>` sets a room's integer coordinates; `@pos [#<thing>]`
   reports them (defaulting to the room you are in); `@nearby [<radius>]` lists rooms
   within a radius, using the spatial index rather than a full scan. These are the
-  reference game's coordinate layer over the generic secondary index (see
+  reference app's coordinate layer over the generic secondary index (see
   indexes.md), not engine machinery; `@setpos` writes the tracked `xyz` component,
   which is what feeds the index.
 - `@destroy #<target>` despawns one entity, spilling its contents up into its own
@@ -91,7 +91,7 @@ Implementation implications, grounded in `component.rs`:
   `rebuild_relations` reconstructs the reverse index after it, whereas a live
   mutation has no rebuild pass.
 
-The `@set` verb surface (game-side, in `musce_ref`) addresses this with a dotted
+The `@set` verb surface (app-side, in `musce_ref`) addresses this with a dotted
 path, `@set #<id>.<component>[.<field>] <json>`:
 
 - **`@set #7.description "a torch"`** sets the *whole* component, the direct

@@ -1,7 +1,7 @@
 # Drives, and the live agency loop
 
 > Status: **built (competing drives, cross-tick commitment, and a consume drive).**
-> The reference game's magpie (`musce_ref`, `hoard.rs`) runs *two* competing drives:
+> The reference app's magpie (`musce_ref`, `hoard.rs`) runs *two* competing drives:
 > a `Hoarder` need it relieves by stowing a shiny in its nest, and a `Curiosity` need
 > it relieves by holding one. They pull the same bead in opposite directions, so the
 > arbiter must commit to one and hold it, which is what makes hysteresis observable
@@ -77,7 +77,7 @@ or to reclaim one from its nest, it must *perceive* its own inventory and its ow
 neither of which is a room content. So the magpie supplies its own seed, `known_here ∪
 its inventory ∪ its nest's contents`.
 
-This is game policy, not an engine guarantee. A creature is not assumed to see into
+This is app policy, not an engine guarantee. A creature is not assumed to see into
 every container it touches (a locked box it carries would not qualify); the magpie
 knows its *own* claws and its *own* nest because those are its own state. General
 perception into arbitrary containers, and sense-propagation at range, stay a deferred
@@ -153,18 +153,18 @@ arbiter each tick from it:
 4. Map the chosen goal back to its drive and write `Committed`.
 
 `Arbiter::resume` is the whole engine-side seam this needed (`new(h)` is now just
-`resume(h, None)`); everything else is game content. The loop never calls
+`resume(h, None)`); everything else is app content. The loop never calls
 `Arbiter::release`: a served need expresses itself as fading urgency, and when it drops
 below threshold the drive stops offering, so the arbiter retires the incumbent on its
 own. `release` stays for the explicit, event-driven drop an imperative order uses.
 
 ## Two decisions this surfaced
 
-- **Consummation lives in the game, not the planner.** The needs are the bird's own
-  components; the planner and driver are world-only and never touch them. So the game
+- **Consummation lives in the app, not the planner.** The needs are the bird's own
+  components; the planner and driver are world-only and never touch them. So the app
   moves them, in the metabolism, off the world state the driver leaves behind. This
   keeps `musce_agency` free of any need vocabulary, the boundary the crate split holds.
-- **Cross-tick commitment is a game-owned tag plus one arbiter seam.** The stateful
+- **Cross-tick commitment is an app-owned tag plus one arbiter seam.** The stateful
   arbiter cannot persist, so the serializable half (which goal) lives on the bird and
   the logic half (the band, the matching) stays in `musce_agency`, reached through
   `resume`. This is the resolution of the tension the single-drive wiring first

@@ -1,11 +1,11 @@
-//! `musce_agency`: the optional planner side of the agency subsystem that a game
+//! `musce_agency`: the optional planner side of the agency subsystem that an app
 //! consumes: the `CostModel` seam, the `bind_var` binding primitive, the backward
 //! `Planner`, the `Arbiter` (goal selection and commitment), and the execution
 //! `Driver` (running a plan with replan-on-veto). The affordance vocabulary it
 //! plans over (`Term` / `Predicate` / `Clause` / `Affordance` / `Frame` /
 //! `WorldModel`) lives in the engine, non-optional, in `musce_action`, because a
 //! verb-gate is a dispatch concern independent of planning; this crate re-exports
-//! it for planner-facing consumers. Game content, the concrete affordances, the
+//! it for planner-facing consumers. App content, the concrete affordances, the
 //! relation/component vocabulary their predicates name, and the drives that emit
 //! goals, lives in the consumer crate, never here. See `docs/architecture/agency/`
 //! and `docs/architecture/affordances.md`.
@@ -28,16 +28,16 @@ pub use planner::{Plan, Planner, Step};
 /// and the `CostModel` impls.
 pub type Cost = u32;
 
-/// The game-supplied cost policy. The planner obtains an affordance's cost by
+/// The app-supplied cost policy. The planner obtains an affordance's cost by
 /// calling this, never by reading a field, so a flat cost, a distance-scaled
 /// cost, and a per-actor *learned* cost (build step 6) are all the same seam.
-/// The generic crate ships only the trivial [`UnitCost`]; a real game supplies
+/// The generic crate ships only the trivial [`UnitCost`]; a real app supplies
 /// its own model in the consumer crate.
 pub trait CostModel {
     fn cost(&self, actor: EntityId, affordance: &Affordance, world: &World) -> Cost;
 }
 
-/// Every affordance costs one. The trivial baseline a game replaces, and the
+/// Every affordance costs one. The trivial baseline an app replaces, and the
 /// static reference the learned model of build step 6 is measured against.
 pub struct UnitCost;
 

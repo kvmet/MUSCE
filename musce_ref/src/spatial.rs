@@ -3,7 +3,7 @@
 //! room. This is game vocabulary, not engine machinery: the engine never reads a
 //! coordinate; it only carries the `xyz` component and the `ComponentChanged`
 //! trigger the index rides on. So it lives here and registers through
-//! `Game.register`/`Game.systems`, like any other game type.
+//! `App.register`/`App.systems`, like any other game type.
 //!
 //! Two indexes read the one `xyz` component with different keys: `xyz_cell`, a
 //! spatial hash keyed by the cell a room falls in (so `near` retrieves a region by
@@ -57,7 +57,7 @@ fn cell_of(p: &Xyz) -> Cell {
 
 /// Register the game's `xyz` component and its two indexes' wiring: the component
 /// is registered (so coordinates persist) and tracked (so writes feed the index).
-/// Called from `Game.register`, before load or seed.
+/// Called from `App.register`, before load or seed.
 pub(crate) fn register(world: &mut World) {
     world.register_component::<Xyz>();
     world.track_component::<Xyz>();
@@ -71,7 +71,7 @@ pub fn register_indexes(reg: &mut IndexRegistry) {
     reg.register::<Xyz, i64>(LEVEL_INDEX, Policy::Multi, |p| p.z);
 }
 
-/// The index maintainer, registered first in `Game.systems` so later systems in
+/// The index maintainer, registered first in `App.systems` so later systems in
 /// the same tick read the updated index. First run builds and baselines the
 /// registry; every later tick applies the tick's `ComponentChanged`/`Destroyed`
 /// facts incrementally.

@@ -1,8 +1,8 @@
 # Concurrency and the Tick
 
 > Status: **built.** The single sim thread, the tick loop, and the system pipeline
-> run; `musce_host` carries the game's `Game.systems` on the pipeline every tick
-> (the reference game's wandering creature is the first), so tick scheduling and
+> run; `musce_host` carries the app's `App.systems` on the pipeline every tick
+> (the reference app's wandering creature is the first), so tick scheduling and
 > the dual clocks are exercised, not just declared. Multi-rate cadences beyond a
 > system's own `tick % N` gating are not yet a pipeline feature. This records the
 > threading model, the tick shape, and their rationale.
@@ -27,16 +27,16 @@ A fixed-order pipeline of phases:
 ```
 loop {
     drain command inbox        // the only entry point for external mutation
-    run systems in fixed order // Game.systems, each scheduling by tick/now
+    run systems in fixed order // App.systems, each scheduling by tick/now
     collect emitted events     // push to the outbox
     every N ticks: snapshot    // hand to the persistence thread
 }
 ```
 
 Fixed order means deterministic ticks: reproducible bugs and sane resolution
-order. The game injects its systems as `Game.systems` (a `fn(&mut SystemCtx)`
+order. The app injects its systems as `App.systems` (a `fn(&mut SystemCtx)`
 list); the runtime runs them in registration order each tick. Order is a contract a
-system can rely on: the reference game registers its index maintainer first (see
+system can rely on: the reference app registers its index maintainer first (see
 indexes.md) so a later system in the same tick reads the updated index. A `SystemCtx`
 mirrors a verb's `Ctx` for the simulation half: it carries the world the system
 mutates (through the same `execute`) and an emit buffer addressed to rooms, which
@@ -45,7 +45,7 @@ so a system's narration reaches players exactly as a verb's does. It has no acto
 or connection, because a system acts for the world, not a player.
 
 `SystemCtx` carries both clocks: `tick` (deterministic sim time, the default for
-game logic) and `now` (wall-clock). A system schedules its own cadence off these,
+app logic) and `now` (wall-clock). A system schedules its own cadence off these,
 e.g. `tick % N == 0` (the wanderer steps every `WANDER_EVERY` ticks) rather than
 running its full body each tick. A pipeline-level multi-rate scheduler is not
 built; per-system gating covers the need for now.
@@ -53,20 +53,20 @@ built; per-system gating covers the need for now.
 What `SystemCtx` carries versus what lives in the world is a rule, not a habit: it
 holds only facts the runtime uniquely owns and must capture once per tick so every
 system sees the same value (the two clocks). Anything that is persisted world
-state advanced by game logic is a component, not context, and stays out of
+state advanced by app logic is a component, not context, and stays out of
 `SystemCtx`.
 
 ### Randomness
 
 Ambient simulation wants stochastic behavior, but the sim is deterministic by
-design (tick-counted saves, reproducible ticks, no wall-clock or entropy in game
-logic). The two reconcile through a **seeded world RNG**: a game keeps its random
+design (tick-counted saves, reproducible ticks, no wall-clock or entropy in app
+logic). The two reconcile through a **seeded world RNG**: an app keeps its random
 state as a persisted component (a seed advanced as it is drawn from), reads and
 advances it inside a system, and so gets variety that is still reproducible and
-survives a reload, because the seed is world state like any other. This is game
+survives a reload, because the seed is world state like any other. This is app
 content, not engine mechanism, so the engine provides nothing here by the rule
-above (the seed is persisted game state, so it is a component). The one hard rule
-a game must hold: ambient randomness goes through that persisted RNG, never
+above (the seed is persisted app state, so it is a component). The one hard rule
+an app must hold: ambient randomness goes through that persisted RNG, never
 `rand::thread_rng()` or other entropy, which would break determinism and
 reproducibility the same way wall-clock reads would. The wanderer sidesteps this
 today by choosing deterministically (the lowest-id exit); the first system that

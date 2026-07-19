@@ -1,10 +1,10 @@
 //! The single command entry point the tick loop calls as it drains the inbox.
 //! It owns input-stack routing: the `@`-namespace always goes to the account
-//! floor; a bare command goes to the active in-game frame (the embodiment frame),
+//! floor; a bare command goes to the active in-app frame (the embodiment frame),
 //! which this slice realizes as the connection's session attachment plus the
-//! injected game's command table. Keeping this seam means the loop holds no
+//! injected app's command table. Keeping this seam means the loop holds no
 //! command knowledge: it drains the inbox and calls `handle`. See
-//! `docs/architecture/actions.md` and `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/actions.md` and `docs/architecture/engine-and-app.md`.
 
 use musce_action::{
     Caller, ColdOp, CommandTable, Grounded, dispatch_command, dispatch_perform, run_systems,
@@ -16,7 +16,7 @@ use musce_proto::{
 
 use crate::accounts::{AccountOp, AccountOutcome};
 use crate::session::{Sessions, resolve_actor};
-use crate::{Game, TickCtx};
+use crate::{App, TickCtx};
 
 /// A host-level async op a command produced, routed by the sim loop to the task
 /// that owns the resource it touches: a cold read/write to the cold task, or an
@@ -32,17 +32,17 @@ pub struct Dispatch {
     /// connection's cached authorization (account, resolved caps, su), which the
     /// account task fills in on a successful login.
     floor: Sessions,
-    /// The injected game: its command table drives bare commands and its
-    /// `choose_actor` policy backs the floor's `@play`. The runtime holds no game
+    /// The injected app: its command table drives bare commands and its
+    /// `choose_actor` policy backs the floor's `@play`. The runtime holds no app
     /// content beyond this value.
-    game: Game,
+    app: App,
 }
 
 impl Dispatch {
-    pub fn new(game: Game) -> Self {
+    pub fn new(app: App) -> Self {
         Self {
             floor: Sessions::default(),
-            game,
+            app,
         }
     }
 
@@ -101,18 +101,18 @@ impl Dispatch {
         }
     }
 
-    /// Run the game's systems for one tick, in registration order. Each system
+    /// Run the app's systems for one tick, in registration order. Each system
     /// mutates the world and emits semantic output into its own buffer; that
     /// output is then audience-resolved to connections through `emit`, exactly as
     /// `dispatch_command` does for a verb. The audience index is built once
     /// (owned, so it does not borrow the world the systems mutate).
     pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
         let actors = self.floor.audience_index(world);
-        run_systems(world, &self.game.systems, &actors, ctx.tick, ctx.now, emit);
+        run_systems(world, &self.app.systems, &actors, ctx.tick, ctx.now, emit);
     }
 
     /// Answer a read query for the connection's actor. A pure read: it runs the
-    /// game's projection seams and emits a structured `Reply`, never mutating the
+    /// app's projection seams and emits a structured `Reply`, never mutating the
     /// world, entering the verb/action path, or resolving an audience. A connection
     /// with no character yet has no actor to read from and is told to `@play`.
     fn handle_query(
@@ -135,7 +135,7 @@ impl Dispatch {
         };
         let actor = resolve_actor(world, character);
         let reply = match query {
-            Query::Snapshot => ServerMsg::Snapshot((self.game.snapshot)(world, actor)),
+            Query::Snapshot => ServerMsg::Snapshot((self.app.snapshot)(world, actor)),
             Query::Offers { clicked } => {
                 let Some(target) = parse_wire_id(&clicked) else {
                     emit(Outgoing::Event(Delivery::new(
@@ -146,7 +146,7 @@ impl Dispatch {
                     return;
                 };
                 ServerMsg::Offers {
-                    offers: (self.game.offers)(world, actor, target),
+                    offers: (self.app.offers)(world, actor, target),
                     clicked,
                 }
             }
@@ -155,7 +155,7 @@ impl Dispatch {
     }
 
     /// Perform a grounded act for the connection's actor: resolve its character to
-    /// the live actor, then route the click through the game's `perform` seam on the
+    /// the live actor, then route the click through the app's `perform` seam on the
     /// same Ctx-and-audience path a verb runs (it mutates and narrates, unlike a
     /// read query). A connection with no character is told to `@play`, exactly as a
     /// bare command is. The verdict is the connection's cached authorization, never
@@ -223,7 +223,7 @@ impl Dispatch {
                 conn: id,
                 verdict: &verdict,
             },
-            self.game.perform,
+            self.app.perform,
             Grounded {
                 affordance: &perform.name,
                 focus,
@@ -261,23 +261,23 @@ impl Dispatch {
 
         if let Some(rest) = line.strip_prefix('@') {
             // The floor owns the lifecycle and account verbs; any other @-verb is an
-            // admin/builder command, dispatched against the game's admin table with
+            // admin/builder command, dispatched against the app's admin table with
             // the same actor resolution the bare frame uses. Recognized account verbs
             // may raise account ops (an authenticate, a grant); those flow out here.
             let mut ops = Vec::new();
             if self
                 .floor
-                .account_command(id, rest, world, self.game.choose_actor, &mut ops, emit)
+                .account_command(id, rest, world, self.app.choose_actor, &mut ops, emit)
             {
                 ops.into_iter().map(HostOp::Account).collect()
             } else {
-                dispatch_through_actor(&self.floor, &self.game.admin, id, rest, world, emit)
+                dispatch_through_actor(&self.floor, &self.app.admin, id, rest, world, emit)
                     .into_iter()
                     .map(HostOp::Cold)
                     .collect()
             }
         } else {
-            dispatch_through_actor(&self.floor, &self.game.commands, id, line, world, emit)
+            dispatch_through_actor(&self.floor, &self.app.commands, id, line, world, emit)
                 .into_iter()
                 .map(HostOp::Cold)
                 .collect()
@@ -317,7 +317,7 @@ fn dispatch_through_actor(
     let actor = resolve_actor(world, character);
     // The verdict is the connection's cached authorization (account caps + su, quell
     // applied), never the resolved actor, so a possessed or `@play`-selected body
-    // cannot borrow authority. Gates the game table and the admin table alike.
+    // cannot borrow authority. Gates the app table and the admin table alike.
     let verdict = floor.verdict_of(id);
     let actors = floor.audience_index(world);
     dispatch_command(
@@ -346,15 +346,15 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::Arc;
 
-    /// A local stand-in for a game's player kind: the engine has no `Player`
+    /// A local stand-in for an app's player kind: the engine has no `Player`
     /// concept, so the router test defines its own marker to pick an actor by.
     struct Avatar;
 
-    /// An engine-only `Game` so the router can be exercised without a real game. Its
+    /// An engine-only `App` so the router can be exercised without a real app. Its
     /// seed makes one described room with a player avatar in it, `choose_actor`
     /// selects that avatar, `look` echoes the room description, and the admin table
     /// holds a capability-gated `poke`.
-    fn test_game() -> Game {
+    fn test_app() -> App {
         fn seed(world: &mut World) {
             let room = {
                 let mut b = EntityBuilder::new();
@@ -398,7 +398,7 @@ mod tests {
         let poke_cap = caps.register("poke");
         let mut admin = CommandTable::new();
         admin.register("poke", Gate::Cap(poke_cap), poke);
-        Game {
+        App {
             commands,
             admin,
             seed,
@@ -555,7 +555,7 @@ mod tests {
     /// The `@`-namespace still reaches the floor: connect then `@quit` closes.
     #[test]
     fn at_command_routes_to_floor() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -570,7 +570,7 @@ mod tests {
     /// A bare command before `@play` reports having no character.
     #[test]
     fn bare_without_actor_reports_no_character() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -586,13 +586,13 @@ mod tests {
     }
 
     /// End to end through the router: `@play` then a bare command acts through the
-    /// injected game's table against its seeded world.
+    /// injected app's table against its seeded world.
     #[test]
     fn play_then_bare_command_acts_through_the_game() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn a_query_without_a_character_is_refused_with_a_play_hint() {
         let mut world = World::new();
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -623,14 +623,14 @@ mod tests {
     }
 
     /// A snapshot query after `@play` replies for the resolved actor: the router
-    /// resolved the connection's character to its avatar and handed it to the game's
+    /// resolved the connection's character to its avatar and handed it to the app's
     /// snapshot seam.
     #[test]
     fn a_snapshot_query_replies_for_the_played_actor() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -653,13 +653,13 @@ mod tests {
     }
 
     /// An offers query echoes the clicked id (host-set, so the client can match the
-    /// reply to its request) and carries the game seam's offers.
+    /// reply to its request) and carries the app seam's offers.
     #[test]
     fn an_offers_query_echoes_the_clicked_id_and_carries_the_offers() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -691,7 +691,7 @@ mod tests {
     #[test]
     fn a_perform_without_a_character_is_refused_with_a_play_hint() {
         let mut world = World::new();
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -708,14 +708,14 @@ mod tests {
         assert!(conn_texts(&out).iter().any(|t| t.contains("@play")));
     }
 
-    /// A perform frame after `@play` routes to the game's perform seam on the
+    /// A perform frame after `@play` routes to the app's perform seam on the
     /// resolved actor's Ctx: the stub echoes the affordance name back as feedback.
     #[test]
     fn a_perform_routes_to_the_game_seam() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -739,10 +739,10 @@ mod tests {
     /// A superuser session passes a capability-gated admin verb by su bypass.
     #[test]
     fn su_session_passes_a_gated_verb() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_su(&mut d, id);
@@ -758,11 +758,11 @@ mod tests {
     /// A plain account holding the cap passes it, without su.
     #[test]
     fn capped_session_passes_its_granted_verb() {
-        let game = test_game();
-        let poke = game.caps.resolve("poke").unwrap();
+        let app = test_app();
+        let poke = app.caps.resolve("poke").unwrap();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_capped(&mut d, id, poke);
@@ -778,10 +778,10 @@ mod tests {
     /// A guest (a connection bound to no account) is refused a gated verb.
     #[test]
     fn guest_is_refused_a_gated_verb() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -799,10 +799,10 @@ mod tests {
     /// refused, and un-quelling restores it.
     #[test]
     fn quell_drops_su_to_the_character() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_su(&mut d, id);
@@ -829,7 +829,7 @@ mod tests {
     /// pending; a line arriving before the result lands is rejected, not run.
     #[test]
     fn login_marks_pending_and_rejects_in_flight_lines() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -875,10 +875,10 @@ mod tests {
     /// back; the bound authority then passes a gated verb.
     #[test]
     fn apply_outcome_binds_the_connection() {
-        let game = test_game();
+        let app = test_app();
         let mut world = World::new();
-        (game.seed)(&mut world);
-        let mut d = Dispatch::new(game);
+        (app.seed)(&mut world);
+        let mut d = Dispatch::new(app);
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -910,7 +910,7 @@ mod tests {
     /// connection would be wedged, rejecting every retry.
     #[test]
     fn refused_auth_outcome_clears_pending() {
-        let mut d = Dispatch::new(test_game());
+        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
@@ -938,7 +938,7 @@ mod tests {
         );
     }
 
-    /// `Game.systems` is a `Vec`, so the pipeline runs every registered system in
+    /// `App.systems` is a `Vec`, so the pipeline runs every registered system in
     /// one tick. Two distinct systems each leave a mark; both present proves both ran.
     #[test]
     fn run_systems_runs_every_registered_system() {
@@ -959,7 +959,7 @@ mod tests {
             ctx.world.spawn(b);
         }
 
-        let game = Game {
+        let app = App {
             commands: CommandTable::new(),
             admin: CommandTable::new(),
             seed: |_| {},
@@ -973,7 +973,7 @@ mod tests {
             offers: |_, _, _| Vec::new(),
             perform: |_, _, _, _, _| {},
         };
-        let dispatch = Dispatch::new(game);
+        let dispatch = Dispatch::new(app);
         let mut world = World::new();
         let ctx = TickCtx {
             tick: 1,

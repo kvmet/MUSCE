@@ -77,8 +77,8 @@ conceptual top layer (drives) last and the bottom of the planner first.
 
 1. **The affordance and predicate/term types.** The affordance struct,
    `Term = Const | Var`, the `related`/`tag` clause form, the `PredicateRegistry`,
-   and the `cost` *representation* (the planner obtains cost by calling a
-   game-supplied function through the `Game` seam, never by reading a bare
+   and the `cost` *representation* (the planner obtains cost by calling an
+   app-supplied function through the `App` seam, never by reading a bare
    `affordance.cost` field, so a flat scalar, a bind-time computation, and the
    per-actor learned bias of step 6 are all the same seam and richer cost stays an
    addition rather than a signature change; see the affordances open question) are
@@ -96,9 +96,9 @@ conceptual top layer (drives) last and the bottom of the planner first.
 2. **Express an existing verb as a real affordance, oracle-validated.** A verb
    cannot yet *dispatch through* an affordance: there is no affordance executor
    until step 3's lowering, so "resolve through" would overclaim. What step 2
-   honestly delivers is the affordance as **real game content** (`musce_ref`'s
+   honestly delivers is the affordance as **real app content** (`musce_ref`'s
    `agency::take`), not a test-only artifact, plus the `WorldModel` seam
-   (`RefWorldModel`) that reads a ground predicate against this game's world, the
+   (`RefWorldModel`) that reads a ground predicate against this app's world, the
    read-side twin of `CostModel`. Ground truth is an executable oracle: run the
    real verb, bind the affordance's effect against the frame the parser would
    have built, and assert every predicate `holds` in the world afterward. This
@@ -114,11 +114,11 @@ conceptual top layer (drives) last and the bottom of the planner first.
    runs end to end without the parser, exercising the two step-3 primitives
    together: `bind_var` (candidate enumeration, the **shared primitive** the
    planner reuses) fills a plan step's fungible slot from what the actor knows,
-   and the bound affordance executes through the game's grounded action.
+   and the bound affordance executes through the app's grounded action.
    Correcting the earlier framing: a plan is **not** a persisted `Steps` list and
    there is **no affordance-carrying `Intent` variant**. The lowering resolution
    (crate section) is why: a synthesized plan is transient runtime output, and a
-   plan step lowers by dispatching to the game's grounded action (`perform` →
+   plan step lowers by dispatching to the app's grounded action (`perform` →
    `do_take` / `do_drop` / `do_put` / `do_move`, returning a committed/refused
    `Outcome`), where the veto already lives, so a planned action is filtered and
    refused exactly as its typed verb is (the tests prove the veto rejects the
@@ -154,12 +154,12 @@ conceptual top layer (drives) last and the bottom of the planner first.
    reference magpie ([drives.md](drives.md)) reads competing `Hoarder` and `Curiosity`
    needs, emits hoard and admire goals, and runs the arbiter/driver loop on the tick
    through the same `perform` a player hits, the arbiter holding a persisted commitment
-   (`Arbiter::resume` plus a game-owned tag) so the two do not thrash the bead. A second
+   (`Arbiter::resume` plus an app-owned tag) so the two do not thrash the bead. A second
    agent, a hungry mouse, runs a *consume* drive exercising the planner's mid-search
    binding; what stays deferred is per-beat interleaving of the driver on the tick.
 6. **Per-actor cost learning.** An agent keeps a running success statistic per
    affordance (an exponential moving average or a win / loss tally, not a trained
-   model), and the game's cost function returns `base + learned_bias(actor,
+   model), and the app's cost function returns `base + learned_bias(actor,
    affordance)`, so an actor's costs drift toward what it actually succeeds at with
    no manual tuning. The mechanism is small but has hard entry gates it cannot
    precede. Its signal is the **beat outcome** the execution sweep already produces
@@ -173,8 +173,8 @@ conceptual top layer (drives) last and the bottom of the planner first.
    succeeding more over time," or a drifting weight silently degrades the agent with
    no way to separate learner from planner. The learned component (a
    `map<affordance, stat>` on the actor, persisted per-actor like `Hunger`) and its
-   update system are `musce_ref` content; `musce_agency` only exposes cost as a
-   game-supplied function and never learns the weights exist. It is independent of
+   update system are `musce_ref` content; `musce_agency` only exposes cost as an
+   app-supplied function and never learns the weights exist. It is independent of
    step 5 (hand-injected goals drive enough actions to learn from), so it may land
    before or after drives, but only after the planner.
 
@@ -233,38 +233,38 @@ onto the body. See [affordances.md](affordances.md) and
 > predicate vocabulary and `WorldModel` are now promoted into the engine
 > (`musce_action`, non-optional; phase A built), with a guard-based dispatch veto
 > to follow, leaving `musce_agency` as the optional planner/arbiter/drives layer.
-> The generic / game split argued below still holds; the split moved from
+> The generic / app split argued below still holds; the split moved from
 > *crate-optional vocabulary* to *engine-non-optional vocabulary plus an optional
 > planner*.
 
 **The generic mechanism is its own crate, `musce_agency`.** It is carved up front,
 with `musce_ref` as its first consumer, the way `musce_index` was: the generic
 crate and its reference consumer landed together in one change, not prototyped in
-the game and extracted later. The reason to draw the boundary early is that in Rust
+the app and extracted later. The reason to draw the boundary early is that in Rust
 the boundary *is* the enforcement of the one property this design most needs. The
 **generic mechanism** (the planner's regression and unification, the arbiter's
 commitment logic, the term/clause machinery, the affordance table with its by-name
-and by-effect indexes, the `PredicateRegistry`) must stay separable from the **game
+and by-effect indexes, the `PredicateRegistry`) must stay separable from the **app
 content** in `musce_ref` (the concrete affordances, the predicate parameters like
 `Known`/`Locked`/`Food`, drives, goals, costs, rules). A crate boundary makes a
 weld between them a *compile error*: `musce_agency` cannot name `Locked` or `Food`
 because that would be an upward dependency on `musce_ref`. Module privacy inside a
 single crate gives none of that, and deferring the crate would defer the guardrail
 to exactly the moment welding has already set in. So the split resembles
-`musce_index` (generic game-side mechanism a game consumes), not `sequences`
+`musce_index` (generic app-side mechanism an app consumes), not `sequences`
 (welded to a serialized `Intent`), *because the boundary is what keeps it there.*
 
 The one shape that could still weld agency to `sequences` is the plan step, and it
 is resolved by keeping a synthesized plan **transient** and lowering it through
-game code, not by a new serialized variant. A plan step lowers by dispatching to
-the game's **grounded action** for that affordance (`perform` → `do_take` /
+app code, not by a new serialized variant. A plan step lowers by dispatching to
+the app's **grounded action** for that affordance (`perform` → `do_take` /
 `do_drop` / `do_put` / `do_move`), the same handler-level unit a player's verb
 runs, which validates its veto and *then* commits the structural `Action`. The
 veto is why lowering is not a generic effect→`Action` translation: an affordance's
 declared effect is the *symbolic* mutation the planner chains on and that the
-step-2 oracle checks against the world, but the committing path must run the game's
+step-2 oracle checks against the world, but the committing path must run the app's
 rule (the affordance guard each `do_*` reads through `RefWorldModel`, and
-`can_traverse` for `go`), so the game supplies the dispatch (see
+`can_traverse` for `go`), so the app supplies the dispatch (see
 [affordances.md](affordances.md) and [../actions.md](../actions.md)). Two things
 keep the crate acyclic. The grounded actions live in `musce_ref`, which already
 depends on `musce_agency`, so affordance types flow *downward* into `perform` with
@@ -294,6 +294,6 @@ the only place the spatial index could serve, and that is perception logic, outs
 the planner. The governing principle: **ignorance is gameplay, not a query.** An
 agent that does not know where food is should behave like it, wander, head where
 food is usually found, ask someone, all app logic, rather than consult a global
-lookup. A game may keep authored search priors (a kind-to-locations table) if it
-wants data-driven wandering, and that is the one spot a *game* might index; the
+lookup. An app may keep authored search priors (a kind-to-locations table) if it
+wants data-driven wandering, and that is the one spot a *app* might index; the
 planner never does.

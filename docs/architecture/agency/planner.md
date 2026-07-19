@@ -24,7 +24,7 @@ The search works *backward* from the goal. A search node is a subgoal `Clause`
 finds an affordance whose `effect` produces it, and replaces that literal with the
 affordance's bound guard preconditions, recording the step. A node **succeeds**
 when every literal in it already holds in the **actual current world**, tested
-through the game's `WorldModel`.
+through the app's `WorldModel`.
 
 The alternative, forward state-space search, was set aside because it needs a
 *hypothetical* world model: to apply an affordance's effect forward you must
@@ -39,13 +39,13 @@ why regression, not forward search, is the core.
 
 Nodes are settled cheapest-first from a min-heap keyed by cumulative cost, and the
 goal is tested on pop, so the first satisfied node yields an optimal plan
-(Dijkstra). Cost comes only through the game's `CostModel`, never a field on the
+(Dijkstra). Cost comes only through the app's `CostModel`, never a field on the
 affordance; with the trivial `UnitCost` this degenerates to minimum-length, and a
 real cost model sharpens it with no change here. There is no heuristic yet (`h =
 0`); adding an admissible one is a later refinement, not a shape change.
 
 `plan` returns a transient `Plan` (a `Vec<Step>` of `{ affordance, frame }`).
-Nothing is persisted: the game lowers each step through its grounded action
+Nothing is persisted: the app lowers each step through its grounded action
 (`perform`), where the veto and the structural `Action` commit live, so no agency
 type embeds in a serialized script (see [README](README.md) crate section).
 
@@ -56,7 +56,7 @@ A goal may be existential: `∃x. related(x, actor, contained_by) ∧ tag(x, foo
 
 1. **The actor role** is substituted to the planning agent, since a goal is
    written in the same role vocabulary (`actor`) as affordance clauses.
-2. **A fungible slot** (`x`) is bound against the actor's `known` set (the game's
+2. **A fungible slot** (`x`) is bound against the actor's `known` set (the app's
    knowledge seam). The goal's literals split into a *static* part (predicates no
    affordance can produce, e.g. `tag(x, food)`, so they must already hold) and an
    *achievable* part (predicates some affordance's effect shares a shape with,
@@ -158,7 +158,7 @@ Planner::new(affordances, model, cost).plan(actor, goal, known, world) -> Option
 Planner::new(affordances, model, cost).plan_excluding(.., known, world, excluded) -> Option<Plan>
 ```
 
-The static planning context (the affordance table and the game's read/cost
+The static planning context (the affordance table and the app's read/cost
 policies) lives in the `Planner`; the per-query inputs (actor, goal, known set,
 world) are `plan` arguments. `world` is borrowed only for the call, so the caller
 can take `&mut World` to execute the returned plan immediately after.

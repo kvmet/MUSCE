@@ -46,7 +46,7 @@ Two things keep a large command surface cheap:
 - **N verbs are not N mutation paths.** Most verbs are thin parse functions over
   the tiny action set (the sugar table in [actions.md](actions.md)):
   `take`/`drop`/`give`/`put`/`@tel`/`@goto`/`@summon` are all one `Move` with a
-  different computed destination and rule. What grows with the game is parse
+  different computed destination and rule. What grows with the app is parse
   rules, not the executor, which stays small and central.
 - **Dispatch is a library layer the runtime invokes, not part of it.** The sim
   thread (`musce_host`) drains the inbox and calls one dispatch entry point with
@@ -55,7 +55,7 @@ Two things keep a large command surface cheap:
 
 Which table a command hits is the active input-stack frame (see
 [networking-and-sessions.md](networking-and-sessions.md)): the `@`-namespace
-routes to the account/admin table, bare commands to the active in-game frame.
+routes to the account/admin table, bare commands to the active in-app frame.
 
 ## Output is the Event channel, not an action
 
@@ -73,10 +73,10 @@ EventKind = System | Feedback | Narration
 way: `System` (out-of-band server messages: the connect banner, shutdown),
 `Feedback` (a solicited reply to the actor's own command, including the
 dispatcher's rejections), and `Narration` (in-world description). These are what
-engine mechanism itself emits, so the engine owns the set and a game never extends
+engine mechanism itself emits, so the engine owns the set and an app never extends
 the enum.
 
-Game presentation *channels* (speech vs emote vs a combat log vs a whisper the
+App presentation *channels* (speech vs emote vs a combat log vs a whisper the
 client styles apart) are a different axis and ride an **additive, opaque `channel`
 tag**, never new `EventKind` variants. This is deliberate and is the one rule that
 keeps the protocol stable: a new variant is a wire-format and exhaustive-match

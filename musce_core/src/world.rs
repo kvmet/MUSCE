@@ -21,7 +21,7 @@ type UnrelateFn = fn(&mut World, EntityId);
 /// component borrow `&T` and for tuples of read-only queries, and deliberately *not*
 /// for `&mut T`. This is the bound that lets `World` expose archetypal iteration
 /// without also handing out a write path that bypasses the mutator layer (and so the
-/// dirty set, the index, and the reverse lists). A game names the components in a
+/// dirty set, the index, and the reverse lists). An app names the components in a
 /// query (`world.query::<(&Id, &Foo)>()`); it never names this trait.
 pub trait ReadQuery: hecs::Query {}
 
@@ -48,7 +48,7 @@ struct RelationRegistry {
     unrelate: HashMap<&'static str, UnrelateFn>,
 }
 
-/// The authoritative in-memory game state: a hecs World plus the identity index
+/// The authoritative in-memory app state: a hecs World plus the identity index
 /// and the registries that drive persistence and relation bookkeeping.
 pub struct World {
     pub(crate) ecs: hecs::World,
@@ -81,17 +81,17 @@ pub struct World {
     /// `ComponentChanged` fact fires only for a tag in this set, keeping the trigger
     /// stream bounded to components someone actually maintains an index over.
     tracked: HashSet<&'static str>,
-    /// Component types a game declared unsafe to track (via `forbid_tracking`)
+    /// Component types an app declared unsafe to track (via `forbid_tracking`)
     /// because it mutates them in place through a raw `&mut` component borrow, below
     /// the mutator layer where no fact can fire. `track_component` refuses these, so a
     /// tracked index can never silently desync; `modify` is the supported path.
     forbid_track: HashSet<TypeId>,
-    /// Transient singleton state a game hangs off the world without persisting it:
+    /// Transient singleton state an app hangs off the world without persisting it:
     /// derived, rebuilt-on-boot data (a secondary index, a cache), keyed by type,
     /// at most one value per type. Like `facts` and `tracked` it lives beside the
     /// entity table and `snapshot` never serializes it, so it costs nothing at save
     /// time and starts empty every boot. The engine never reads a resource; it is
-    /// opaque game state, homed here only because a `fn`-pointer system can reach no
+    /// opaque app state, homed here only because a `fn`-pointer system can reach no
     /// state but the world.
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     /// Derived reverse index per relation: `R -> (target -> its sources)`. The
@@ -189,7 +189,7 @@ impl World {
 
     // --- transient resources --------------------------------------------
     //
-    // Type-keyed singleton state that is never persisted: a game's derived,
+    // Type-keyed singleton state that is never persisted: an app's derived,
     // rebuilt-on-boot data (a secondary index, a cache). The engine stores and
     // hands these back but never interprets one; `snapshot` does not see them.
 
@@ -285,7 +285,7 @@ impl World {
         // `Name`, or its `Description`, so `enclosing_locus` and the name still
         // resolve. After `index.remove` below they would not. The name is the
         // entity's `Name` handle, falling back to its `Description` for content
-        // that carries only prose (a quick-create thing), mirroring how the game
+        // that carries only prose (a quick-create thing), mirroring how the app
         // displays it; `None` if it has neither.
         let last_locus = self.enclosing_locus(id);
         let name = self
@@ -356,7 +356,7 @@ impl World {
     }
 
     /// An entity's name token, if it has one. Reads the general `Name` component;
-    /// the despawn snapshot above is one user, game name resolution is another.
+    /// the despawn snapshot above is one user, app name resolution is another.
     pub fn name_of(&self, entity: EntityId) -> Option<String> {
         self.get::<Name>(entity).map(|n| n.0.clone())
     }
@@ -474,7 +474,7 @@ impl World {
 
     /// Insert or overwrite a typed component on a live entity; no-op if the id is
     /// absent. The typed counterpart to `set_component` (which takes a runtime tag
-    /// and JSON), for game systems that mutate concrete component types on the hot
+    /// and JSON), for app systems that mutate concrete component types on the hot
     /// path without a JSON round-trip. Not for relation forward links (use
     /// `Move`/`relate`, which keep the reverse index and cycle check correct) or
     /// `Id` (identity must track the index); unlike the tag-driven path there is no
@@ -654,7 +654,7 @@ impl World {
     }
 
     /// Walk all descendants of `root`. `descend` decides whether to recurse into
-    /// a given node (game policy); `visit` is called for every descendant.
+    /// a given node (app policy); `visit` is called for every descendant.
     pub fn descendants<R, D, V>(&self, root: EntityId, mut descend: D, mut visit: V)
     where
         R: Relation,

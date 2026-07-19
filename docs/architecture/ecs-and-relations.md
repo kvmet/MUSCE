@@ -38,12 +38,12 @@ filter by kind, e.g. "all loci with coordinates". The engine defines only the on
 kind it reads: `Locus` (the perception boundary; a scope in the containment tree
 found by `enclosing_locus`, neutral of any "room" meaning). Permissions are not a
 kind: authorization is account-scoped, not a marker on the actor (see
-[authorization.md](authorization.md)). Game kinds like
-`Item`/`Creature`/`Container`/an exit/a player avatar are game
-vocabulary and live in the game, registered through `Game.register` (see
-[engine-and-game.md](engine-and-game.md)); the engine stores them but never
-interprets them. Exit connectivity is game-side in full: an exit entity is a
-game-owned kind tag plus game-owned `LeadsFrom`/`LeadsTo` relations, defined in
+[authorization.md](authorization.md)). App kinds like
+`Item`/`Creature`/`Container`/an exit/a player avatar are app
+vocabulary and live in the app, registered through `App.register` (see
+[engine-and-app.md](engine-and-app.md)); the engine stores them but never
+interprets them. Exit connectivity is app-side in full: an exit entity is an
+app-owned kind tag plus app-owned `LeadsFrom`/`LeadsTo` relations, defined in
 `musce_ref` over the engine's public relation layer (see Exits below).
 
 ## The relation layer
@@ -75,7 +75,7 @@ load rather than preserving live insertion order, the order of `sources_of` (and
 its wrappers `contents`, exit lists) is unspecified and not stable across a
 save/load. The engine promises membership, not order. A caller that wants a stable
 display order sorts at the display site by something meaningful to it (a name, a
-recency), which is presentation and so game-side anyway. Preserving true insertion
+recency), which is presentation and so app-side anyway. Preserving true insertion
 order would mean persisting a per-source sequence and giving up the "reverse lists
 are derived" property; that is a deliberate future feature to build only if a
 concrete need for it appears, not a default we pay for.
@@ -139,7 +139,7 @@ session resolves a driven actor (see
   `FocusError::NotControlled`) a target the controller does not transitively
   control, since a `Focus` outside the `Controls` subtree is a structurally
   invalid state, not rejected play. Establishing control in the first place stays
-  game policy; where an existing cursor may land is structure.
+  app policy; where an existing cursor may land is structure.
 - Helpers: `focus_of`, `set_focus`, `clear_focus`, and `control_root` (the topmost
   controller of an entity, walking `Controls` up; the inverse of resolving a
   driven actor down through `Focus`).
@@ -151,15 +151,15 @@ session resolves a driven actor (see
 > `DespawnSources` cascade) and are wired through the `Relate` action. The
 > Portal/Through door layer remains deferred.
 
-The room graph is **game vocabulary**, not engine machinery: the connectivity
+The room graph is **app vocabulary**, not engine machinery: the connectivity
 relations (`LeadsFrom`/`LeadsTo`) and the exit queries live in `musce_ref`
 (`exits.rs`), defined over the engine's public relation layer and registered
-through `Game.register`, exactly like the kind markers. The engine never reads exit
+through `App.register`, exactly like the kind markers. The engine never reads exit
 connectivity; it owns only the generic relation + cascade mechanism that
-connectivity is built on. What follows is the reference game's model.
+connectivity is built on. What follows is the reference app's model.
 
 A locus connects to many loci and is reachable from many, so connectivity is
-**many-to-many**, while the relation layer is one-to-many. The game does not
+**many-to-many**, while the relation layer is one-to-many. The app does not
 generalize the primitive for it. Connectivity is carried by an intermediate **exit
 entity** whose two endpoints are each one-to-many and so fit the existing layer
 exactly: an exit has one origin and one destination. (This is the general move for
@@ -173,7 +173,7 @@ entities, exits join the cascade like everything else.
 
 An exit is an entity carrying:
 
-- an **`Exit`** zero-sized kind marker (game-defined vocabulary the game filters
+- an **`Exit`** zero-sized kind marker (app-defined vocabulary the app filters
   on; never takeable; the engine stores but never reads it),
 - a general **`Name`** component (`"north"`, the handle a player types and sees;
   defined beside `Description`, and shared by every nameable thing), and
@@ -217,17 +217,17 @@ doors exist); exits work without it.
 ### Traversal and veto
 
 Movement through an exit is the usual validate -> mutate -> emit (see
-[actions.md](actions.md)), and the veto is a **game rule, not an engine concept**.
-The game defines the exit entity and a home for door/lock state; the engine bakes
-in no lock semantics. The game's `go` handler: (1) finds the exit out of the mover's room
+[actions.md](actions.md)), and the veto is a **app rule, not an engine concept**.
+The app defines the exit entity and a home for door/lock state; the engine bakes
+in no lock semantics. The app's `go` handler: (1) finds the exit out of the mover's room
 whose `Name` matches (reverse index of `LeadsFrom`, resolved through the unified
 name resolver: exact then whole-or-word prefix on the `Name`, then aliases, then a
 description substring), (2) runs a shared `can_traverse(world, mover, exit) -> Result<(),
-Reason>` game rule (a locked portal, a guard, a size limit) *before* committing,
+Reason>` app rule (a locked portal, a guard, a size limit) *before* committing,
 and (3) on pass `Move`s the mover into the exit's `LeadsTo` destination.
 `can_traverse` is a shared helper (like `is_takeable`), so a scripted NPC walking
 into a locked door fails exactly as a player does; "you cannot enter" is always a
-pre-commit rule, never a reaction. With no doors yet, `can_traverse` is a game-side
+pre-commit rule, never a reaction. With no doors yet, `can_traverse` is an app-side
 stub returning `Ok`.
 
 ### Wiring exits: the `Relate` action
@@ -241,7 +241,7 @@ room, with the reciprocal a second exit the other way.
 
 The `Name` is general, not exit-specific: every nameable thing (items, creatures,
 the player) carries one as its primary in-character handle, with `Description` the
-longer prose an `examine` reveals. Extra match keywords live in a game-side
+longer prose an `examine` reveals. Extra match keywords live in an app-side
 `Aliases` component the resolver also reads.
 
 ## Queries
@@ -291,4 +291,4 @@ tree walk: the engine is the mechanism, the caller supplies the descent policy
 persistence). Visitor-based so callers can early-exit without allocating.
 
 Proximity queries ("things near `[x,y]`") are a different beast needing a spatial
-index, and belong to game logic once coordinates exist. Deferred.
+index, and belong to app logic once coordinates exist. Deferred.

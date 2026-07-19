@@ -1,9 +1,9 @@
-//! The command table: a registry of in-game verbs the dispatcher looks up by
+//! The command table: a registry of in-app verbs the dispatcher looks up by
 //! name, plus the single entry point the host calls for a bare (embodied)
-//! command. A game registers its verbs here rather than into a growing `match`,
+//! command. An app registers its verbs here rather than into a growing `match`,
 //! and lookup resolves abbreviations (`n` -> `north`, `dr` -> `drop`) so adding a
 //! verb is a local change. The table, registration, and lookup are engine
-//! mechanism; the verbs themselves are game content. See
+//! mechanism; the verbs themselves are app content. See
 //! `docs/architecture/actions.md`.
 
 use musce_core::{EntityId, World};
@@ -15,16 +15,16 @@ use crate::caps::{CapId, Verdict};
 use crate::ctx::{ColdOp, Ctx};
 
 /// A verb's parse-and-act function. Receives the command context and the
-/// argument tail (everything after the verb word). A game writes these and
+/// argument tail (everything after the verb word). An app writes these and
 /// registers them; the engine only invokes them.
 pub type Handler = fn(&mut Ctx, &str);
 
-/// A game's grounded-act function: perform an affordance whose entities are already
+/// An app's grounded-act function: perform an affordance whose entities are already
 /// bound (a pointing client clicked them), so there is no noun to resolve. Receives
 /// the command context, the acting principal's `verdict` (to gate the affordance),
 /// the affordance name, the clicked `focus` entity, and any second entity a role
-/// sub-pick supplied. The game maps `focus`/`with` onto the affordance's roles,
-/// since which role the focus fills is game policy. A game writes this and the
+/// sub-pick supplied. The app maps `focus`/`with` onto the affordance's roles,
+/// since which role the focus fills is app policy. An app writes this and the
 /// engine only invokes it, through [`dispatch_perform`].
 pub type PerformHandler = fn(&mut Ctx, &Verdict, &str, EntityId, Option<EntityId>);
 
@@ -38,8 +38,8 @@ pub struct Grounded<'a> {
 }
 
 /// Permission required to run a verb, checked at dispatch before the handler runs.
-/// `Open` is every in-game verb; `Cap` gates a verb on an account capability. The
-/// capability is game vocabulary (an interned [`CapId`] the game's caps registry
+/// `Open` is every in-app verb; `Cap` gates a verb on an account capability. The
+/// capability is app vocabulary (an interned [`CapId`] the app's caps registry
 /// mints); the engine owns only this membership check. su bypasses gates, so a
 /// superuser passes any `Cap` gate regardless of its grants. See
 /// `docs/architecture/authorization.md`.
@@ -64,17 +64,17 @@ struct Verb {
     handler: Handler,
 }
 
-/// The registry of in-game verbs. Ordered: lookup prefers an exact name, then the
+/// The registry of in-app verbs. Ordered: lookup prefers an exact name, then the
 /// first registered verb the input is a prefix of, so registration order is the
 /// abbreviation tie-break (register movement before `say`, so `s` is south and
-/// `sa` is say). A game builds one at boot and the runtime shares it read-only
+/// `sa` is say). An app builds one at boot and the runtime shares it read-only
 /// across ticks.
 pub struct CommandTable {
     verbs: Vec<Verb>,
 }
 
 impl CommandTable {
-    /// A fresh, empty table. A game fills it by `register`ing its verbs.
+    /// A fresh, empty table. An app fills it by `register`ing its verbs.
     pub fn new() -> Self {
         CommandTable { verbs: Vec::new() }
     }
@@ -119,7 +119,7 @@ pub struct Caller<'a> {
 /// output, then resolve those events' audiences to connections through `emit`. Frame
 /// selection (`@`-floor vs embodiment vs admin) is the host's job; this runs
 /// whichever table the host hands it, so it serves both the bare embodiment frame
-/// (the game table) and the admin frame (the `@`-verb table), the gate carrying the
+/// (the app table) and the admin frame (the `@`-verb table), the gate carrying the
 /// difference.
 pub fn dispatch_command(
     table: &CommandTable,
@@ -164,7 +164,7 @@ pub fn dispatch_command(
     cold
 }
 
-/// Perform a grounded act: build a [`Ctx`], run the game's `perform` handler with
+/// Perform a grounded act: build a [`Ctx`], run the app's `perform` handler with
 /// the already-bound entities, then resolve the events it emits to connections. The
 /// same Ctx-and-audience machinery `dispatch_command` runs, entered with a bound
 /// affordance frame instead of a parsed line, so a click narrates through exactly
@@ -207,8 +207,8 @@ mod tests {
     use musce_core::{Description, Locus};
     use musce_proto::{Delivery, EventKind};
 
-    /// Two test verbs over the public emit API, standing in for game content so
-    /// the engine routing is exercised without depending on a real game. `ping`
+    /// Two test verbs over the public emit API, standing in for app content so
+    /// the engine routing is exercised without depending on a real app. `ping`
     /// is registered before `pet` so the `p` prefix resolves to `ping`.
     fn table() -> CommandTable {
         let mut t = CommandTable::new();

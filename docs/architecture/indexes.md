@@ -1,7 +1,7 @@
 # Secondary indexes
 
 > Status: **built.** The generic index crate (`musce_index`), the engine resource
-> store it lives in, and the reference game's spatial consumer (`Xyz` on rooms with
+> store it lives in, and the reference app's spatial consumer (`Xyz` on rooms with
 > `@setpos`/`@pos`/`@nearby`) all exist and are exercised by unit tests and a
 > crossover benchmark. This records why a maintained index is shaped the way it is.
 
@@ -13,12 +13,12 @@ changes, so the query reads the bucket instead of the table.
 
 ## What lives where
 
-- **`musce_index`** (game-side crate) is generic and type-agnostic. It indexes an
-  arbitrary component `C` under an arbitrary key `K` produced by a game-supplied key
+- **`musce_index`** (app-side crate) is generic and type-agnostic. It indexes an
+  arbitrary component `C` under an arbitrary key `K` produced by an app-supplied key
   function. The default is a plain value hash; a custom key (a spatial cell hash) is
   just a different function, so the crate never learns what a coordinate means.
 - **`musce_ref`** supplies the concrete consumer: an integer `Xyz` on rooms and the
-  spatial queries over it. This is game vocabulary; the engine reads no coordinate.
+  spatial queries over it. This is app vocabulary; the engine reads no coordinate.
 - **The engine** contributes exactly two things the index rides on: the
   `Fact::ComponentChanged` trigger (see [facts.md](facts.md)) and a `World` resource
   store to home the index in. Nothing index-specific lives in the engine.
@@ -55,7 +55,7 @@ the scan. So the index is built once and kept current by reacting to change:
   order within a batch irrelevant: a change and a destroy for one entity converge
   either way, and a duplicate trigger is idempotent.
 
-The maintainer is registered **first** in `Game.systems`, so a later system in the
+The maintainer is registered **first** in `App.systems`, so a later system in the
 same tick reads the updated index. A command-phase reader (`@nearby`) runs before
 the system loop, so it sees last-boundary (one-tick-lagged) values, which is
 consistent with the rest of the reaction channel.
@@ -78,7 +78,7 @@ A per-index `Policy` records whether a key is expected to identify one entity
 (`Unique`) or many (`Multi`, the default). A rebuilt read-model cannot intercept
 writes, so it cannot *enforce* uniqueness; `Unique` only enables `conflicts()`, an
 on-request scan reporting entities that share a key. Enforcement, if ever wanted, is
-a game rule at the write site, not the index's job.
+an app rule at the write site, not the index's job.
 
 ## The reference consumer
 
@@ -96,9 +96,9 @@ containment stays room-based) and answers range queries over it:
 
 ## Retrieval, not geometry
 
-The index does one thing: retrieve. A query is a set of keys the game builds, and
+The index does one thing: retrieve. A query is a set of keys the app builds, and
 each key's bucket comes back in O(1). "Match a key" is one `get`; "match a range" is
-the game enumerating the keys the range covers (only the game knows what "range"
+the app enumerating the keys the range covers (only the app knows what "range"
 means for its key type, so a sphere becomes the cells it covers) and unioning their
 gets. Cost is O(keys + results).
 
@@ -107,7 +107,7 @@ retrieved entity by re-reading its component (an exact-distance test, say) turns
 O(results) retrieve back into an O(candidates) scan of random ECS lookups, and a
 linear archetype scan beats that until the world is enormous. Exact geometry,
 sorting, nearest-first: all of it is the caller's, layered over the batch, never the
-index's. Results come back in arbitrary bucket order; a game that needs
+index's. Results come back in arbitrary bucket order; an app that needs
 request-order or range-order sorts the batch itself. A `preserve_order` retrieval
 convenience could live in the index later, but ordering is not what an index is for
 and it is not built.
@@ -115,7 +115,7 @@ and it is not built.
 ## Ranges
 
 A range query ("floors 3 through 5", "everything in cells the sphere covers") is the
-game enumerating the keys the range covers and unioning their `get`s:
+app enumerating the keys the range covers and unioning their `get`s:
 
 ```rust
 let rooms: Vec<EntityId> = (3..=5).flat_map(|z| idx.get(&z)).copied().collect();

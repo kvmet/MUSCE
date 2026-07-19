@@ -1,7 +1,7 @@
 //! Structural facts: observations of world mutations, emitted at the `World`
 //! mutator layer and delivered to systems as a read-only per-tick batch. A fact is
 //! never itself a mutation and is never persisted; it is the engine reporting what
-//! just happened so game logic can react (e.g. a death cry on destruction). The
+//! just happened so app logic can react (e.g. a death cry on destruction). The
 //! buffer hangs off `World` and is drained once per tick; see
 //! `docs/architecture/facts.md`.
 //!

@@ -12,25 +12,25 @@
 > `Input` and serializes a `ServerMsg`, so the sim sees typed values while a telnet
 > client still speaks bare text. Entity ids cross this envelope as **strings**, not
 > JSON numbers (a browser's `JSON.parse` yields IEEE doubles, so a full-width or
-> later sharded/URI id would lose precision as a number); the game formats an id out
+> later sharded/URI id would lose precision as a number); the app formats an id out
 > and parses it back at the dispatch boundary. The envelope's types **generate the
 > client's TypeScript** via `ts-rs` behind a feature-gated derive, so the wire
 > shapes cannot drift and no ts-rs enters a normal engine build. On that envelope
 > the **read pair is built**: a
 > `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
 > dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
-> by the game's `snapshot`/`offers` seams (see
-> [engine-and-game.md](engine-and-game.md)). **Acting on a clicked id
+> by the app's `snapshot`/`offers` seams (see
+> [engine-and-app.md](engine-and-app.md)). **Acting on a clicked id
 > (perform-by-id) is built**: a `Perform` frame (affordance name + clicked focus +
 > optional sub-pick) enters the verb/action path through `dispatch_perform` on the
-> game's `perform` seam, grounding the act with no name to resolve. The game gates
+> app's `perform` seam, grounding the act with no name to resolve. The app gates
 > the supplied ids through the actor's perceivable set (the locus subtree plus that
 > locus's exits, the scope the reads project), so a click is no more powerful than a
 > typed verb; the object of a manipulation must additionally be *reachable* (held or
 > loose in the room), which perception alone is not, so a click cannot reach into
 > another creature's inventory. It refuses an under-bound frame (a missing sub-pick)
 > rather than grounding it. A grounded click then routes through
-> the game's shared narrating perform (`act::perform_narrated`), the same one a typed
+> the app's shared narrating perform (`act::perform_narrated`), the same one a typed
 > verb and an autonomous agent use, so a click narrates to the actor and the room
 > alike (a co-located text player reads the third-person line at once, not on their
 > next snapshot). First-person is entity-addressed so the one narrator serves a
@@ -76,7 +76,7 @@ Every transport reduces to a bidirectional stream plus capability flags (line- v
   the sim only ever sees typed values. Carries text commands, the structured read
   pair, and perform-by-id. The envelope's ids are strings and its types generate
   the client's TypeScript via `ts-rs` (see the status blockquote).
-- **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-game VI, WASD movement. (`russh` for an in-process server.)
+- **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-app VI, WASD movement. (`russh` for an in-process server.)
 - **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
 
 Output renders `Event`s to the connection's format (ANSI text first). Keep events semantic where reasonable so a web client can render richly later.
@@ -86,7 +86,7 @@ Output renders `Event`s to the connection's format (ANSI text first). Keep event
 Line vs char/raw is a **switchable property of the connection, driven by the active controller**, not a second endpoint.
 
 - Normal play is **line-mode**: the client echoes locally and sends on Enter. This matters because per-keystroke server echo is a network round-trip per character (the reason telnet line-mode exists).
-- When a controller needs keystrokes (in-game VI, a WASD movement mode, a menu), it **declares it wants char/raw mode**. The sim emits a mode-change event; net flips the connection. On exit, the controller beneath asks for line-mode again.
+- When a controller needs keystrokes (in-app VI, a WASD movement mode, a menu), it **declares it wants char/raw mode**. The sim emits a mode-change event; net flips the connection. On exit, the controller beneath asks for line-mode again.
 
 So "real-time echo-back" is just the active controller asking for keystrokes. VI, WASD, menus, a fullscreen map all fall out of one mechanism. SSH/PTY and WebSocket support it natively; telnet via negotiation; a line-only client simply can't enter those modes (graceful degradation).
 
@@ -97,12 +97,12 @@ The **input stack is never empty**: its bottom frame is always the account/sessi
 Input handling, top to bottom:
 
 1. **Modal overlay** (menu/editor) if open. Captures input, offers an exit.
-2. **Embodiment** if puppeting. Bare in-game commands act through the focused entity (the `Command -> Action -> execute` path in [actions.md](actions.md)).
+2. **Embodiment** if puppeting. Bare in-app commands act through the focused entity (the `Command -> Action -> execute` path in [actions.md](actions.md)).
 3. **Account/session floor**, always present once authenticated: `@quit`, `@who`, character list, `@play <char>`, `@create`, staff puppet management.
 
 The `@`-namespace always routes to the floor regardless of what's on top; bare commands go to the active frame. So `@quit` works whether you're a fresh login, deep in a possessed drone, or mid-edit.
 
-One sim-side **dispatcher** implements this routing and is the single entry point the tick loop calls as it drains the command inbox. The runtime hands it each `Command` plus the world and an event sink; it selects the frame, emits output events, and (for in-game frames) produces `Action`s through `execute` (see [actions.md](actions.md)). The tick loop itself holds no command knowledge.
+One sim-side **dispatcher** implements this routing and is the single entry point the tick loop calls as it drains the command inbox. The runtime hands it each `Command` plus the world and an event sink; it selects the frame, emits output events, and (for in-app frames) produces `Action`s through `execute` (see [actions.md](actions.md)). The tick loop itself holds no command knowledge.
 
 ### Two kinds of control state (different homes, different durability)
 
@@ -113,7 +113,7 @@ The distinction that matters: embodied control is a *fact about the world*, not 
   - **`Focus` is the cursor**: a relation whose source is the controller and whose target is the single node in that chain your keystrokes are live on *right now*. One per controller (a source has one target), stored as the forward link on the character, persisted. Absence of `Focus` means "drive yourself" (the character); a present `Focus` means you are piloting that entity. Lowering `Focus` back to yourself tears down no `Controls` edge, so you step out of the mech and back in without re-establishing control. Making it a relation rather than a lone component is what lets a focused entity's despawn clear the cursor through the ordinary `Detach` cascade: the engine tracks focus -> target directly and never has to infer the focuser from the control wiring.
 
   Both persist, so a character piloting a robot survives a reboot still piloting it. The distinction only becomes *visible* with nested control (a cursor needs a chain to walk) or with stepping out of a puppet while keeping the ability to re-enter; in the flat single-puppet case the two look identical, which is why they are worth naming apart before that case arrives.
-- **Modal UI overlay is session state, ephemeral.** Menus, an editor's cursor and undo buffer, the input mode. Even in-game VI splits this way: the *file* is a world entity (persisted), the *editing session* is the overlay (ephemeral).
+- **Modal UI overlay is session state, ephemeral.** Menus, an editor's cursor and undo buffer, the input mode. Even in-app VI splits this way: the *file* is a world entity (persisted), the *editing session* is the overlay (ephemeral).
 
 ### Durability tiers
 
@@ -149,16 +149,16 @@ connection  →  session  →  character  →  Focus  →  actor
 2. **session → character**: the `@play` attachment (a slot, `p1` by default). Session state: survives disconnect, rebuilt on login.
 3. **character → `Focus` → actor**: `actor = focus_of(character).unwrap_or(character)`. World state, read live, so a `pilot` command that changes `Focus` redirects subsequent commands at once.
 
-The reverse walk, from a driven puppet back up to its character, is `World::control_root` (game verbs like `pilot`/`release` act on the character, not the puppet, so they walk up from the resolved actor). The two compose safely because `set_focus` refuses a cursor outside the controller's `Controls` chain (`FocusError::NotControlled`): a character's `Focus` is always within its own control subtree, so down-then-up returns where it started. Establishing the `Controls` edge is game/admin policy; constraining where the cursor may point is structure, enforced at the single `set_focus` mutator.
+The reverse walk, from a driven puppet back up to its character, is `World::control_root` (app verbs like `pilot`/`release` act on the character, not the puppet, so they walk up from the resolved actor). The two compose safely because `set_focus` refuses a cursor outside the controller's `Controls` chain (`FocusError::NotControlled`): a character's `Focus` is always within its own control subtree, so down-then-up returns where it started. Establishing the `Controls` edge is app/admin policy; constraining where the cursor may point is structure, enforced at the single `set_focus` mutator.
 
 The audience resolver consumes the same mapping in reverse (actor → the connections that perceive it), derived from the session attachments and `Focus`, never stored as its own truth.
 
-**Invalidation when the puppet dies.** Destroying the focused entity commits like any other action; nothing un-commits it. Because `Focus` is a relation with the focused entity as its target, that despawn clears the focuser's cursor through the ordinary `Detach` cascade, the same machinery that reverts a dead controller's puppets: the structural reset is automatic, and the relation layer already keeps the reverse index it needs, so there is no bespoke despawn path and no inference from the `Controls` wiring. Per the standing rule that reactions respond rather than veto (see [actions.md](actions.md)), the *prose* ("your puppet collapses; you are yourself again") belongs to a reaction on that despawn; the cursor reset itself is the cascade. The reaction layer is now built: structural mutations emit typed facts (`Fact::Destroyed`) that a `System` reads from `SystemCtx::facts` (see [facts.md](facts.md)), so this collapse narration is a reaction the game can add, written exactly like the reference game's `death_cry`. The cascade keeps world state consistent regardless; a game that adds no such reaction simply leaves the player back in their own body without narration. A resolution-time guard that refuses to hand a verb a dead actor stays as a **defensive backstop only**, and logs if it ever fires: with the cascade in place a `Focus` aimed at a despawned entity means corrupt or partially loaded state, not ordinary play. It is not the mechanism, and it must not silently paper over the dangling pointer.
+**Invalidation when the puppet dies.** Destroying the focused entity commits like any other action; nothing un-commits it. Because `Focus` is a relation with the focused entity as its target, that despawn clears the focuser's cursor through the ordinary `Detach` cascade, the same machinery that reverts a dead controller's puppets: the structural reset is automatic, and the relation layer already keeps the reverse index it needs, so there is no bespoke despawn path and no inference from the `Controls` wiring. Per the standing rule that reactions respond rather than veto (see [actions.md](actions.md)), the *prose* ("your puppet collapses; you are yourself again") belongs to a reaction on that despawn; the cursor reset itself is the cascade. The reaction layer is now built: structural mutations emit typed facts (`Fact::Destroyed`) that a `System` reads from `SystemCtx::facts` (see [facts.md](facts.md)), so this collapse narration is a reaction the app can add, written exactly like the reference app's `death_cry`. The cascade keeps world state consistent regardless; an app that adds no such reaction simply leaves the player back in their own body without narration. A resolution-time guard that refuses to hand a verb a dead actor stays as a **defensive backstop only**, and logs if it ever fires: with the cascade in place a `Focus` aimed at a despawned entity means corrupt or partially loaded state, not ordinary play. It is not the mechanism, and it must not silently paper over the dangling pointer.
 
 ### Establishing control: the target design and the first slice
 
 > Status: **built.** Both the first embodiment slice and dynamic possession ship.
-> The slice provides the `pilot`/`release` game verbs in `musce_ref` over the
+> The slice provides the `pilot`/`release` app verbs in `musce_ref` over the
 > `Controls`/`Focus` relations and the `Focus`-resolved actor path; the admin
 > `@possess`/`@unpossess` verbs establish and tear down a `Controls` edge at
 > runtime. The target design above remains the canonical end state the gameplay
@@ -174,8 +174,8 @@ yank your keystrokes onto it. `@unpossess` drops the edge; because that can stra
 a `Focus` pointing into the now-detached subtree, it first clears a focus aimed at
 the target or any of its descendants, then unrelates. It is named `@unpossess`,
 not `@release`, to avoid colliding with the bare `release` focus verb. A later
-gameplay possession (you may pilot this *if* you hold the key) is a game verb with
-a game-supplied gate, the way the takeable rule is game policy.
+gameplay possession (you may pilot this *if* you hold the key) is an app verb with
+an app-supplied gate, the way the takeable rule is app policy.
 
 The reference seed keeps one pre-wired `Controls` edge (a character controlling a
 drone) as starter content, so the embodiment loop runs out of the box; `@possess`
@@ -186,10 +186,10 @@ itself actively piloted nests control, and the focused entity's `control_root`
 relocates to wherever that inner character's own pilot writes `Focus`. The flat
 case is what is built: staff drives an NPC or object not itself driving anything.
 
-The engine/game split holds throughout: `Controls` and `Focus` are engine
+The engine/app split holds throughout: `Controls` and `Focus` are engine
 primitives, the resolution path and the possession actions (`Relate`/`Unrelate`
 over the `Controls` edge) are engine, and which entities are possessable, the
-verbs, and any gameplay gate are game policy in the reference game.
+verbs, and any gameplay gate are app policy in the reference app.
 
 ### Staff multi-puppet
 
@@ -208,14 +208,14 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
    control" above):
    - **Built.** The session attachment: `@play` records which actor a connection
      drives as **session state** on the floor; the audience resolver derives its
-     conn->actor index from those attachments. Which actor `@play` chooses is game
-     policy, injected by the `Game`'s `choose_actor` (see
-     [engine-and-game.md](engine-and-game.md)); the floor (`@quit`/`@who`/`@help`)
+     conn->actor index from those attachments. Which actor `@play` chooses is app
+     policy, injected by the `App`'s `choose_actor` (see
+     [engine-and-app.md](engine-and-app.md)); the floor (`@quit`/`@who`/`@help`)
      stays engine.
    - **Built (the first embodiment slice).** The `Controls` and `Focus` relations
      in `musce_core`; the resolution path rerouted through `Focus`
      (`actor = focus_of(character).unwrap_or(character)`, read live); a seeded
-     control edge plus `pilot`/`release` game verbs in `musce_ref`; and the
+     control edge plus `pilot`/`release` app verbs in `musce_ref`; and the
      `Focus` `Detach` cascade that clears a controller's cursor when its puppet
      despawns. This makes durable embodiment real end to end without the admin
      table. See "Establishing control" and "Resolving a command to an actor"
@@ -256,7 +256,7 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
   routing above and takes `&mut World`. The `@`-namespace and connection lifecycle
   land on the session floor (`session.rs`); a bare command routes to the
   embodiment frame, which this slice realizes as the connection's session
-  attachment plus the injected game's command table ([actions.md](actions.md)).
+  attachment plus the injected app's command table ([actions.md](actions.md)).
   Durable `Controls`/`Focus` embodiment will back the attachment behind this same
   entry point without touching the floor or the verb handlers.
 

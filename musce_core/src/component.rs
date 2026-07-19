@@ -53,13 +53,13 @@ macro_rules! marker {
 // The one kind the engine itself reasons about: `Locus`, a scope boundary in the
 // containment tree. The engine finds an entity's nearest enclosing `Locus`
 // (`enclosing_locus`) and snapshots it at destruction (the `Fact` channel's
-// `last_locus`); it assigns the boundary no further meaning. A game decides what a
-// Locus *is*: the reference game tags its rooms with it, so co-located entities in
+// `last_locus`); it assigns the boundary no further meaning. An app decides what a
+// Locus *is*: the reference app tags its rooms with it, so co-located entities in
 // a room share a perception scope, but a non-MUD application could make its loci
 // anything. Everything the engine only stores and never interprets (item,
 // creature, container, a player avatar, an exit, and the connectivity between
-// loci) is game vocabulary and lives in the game, registered through
-// `Game.register`; see docs/architecture/engine-and-game.md. Permissions are not a
+// loci) is app vocabulary and lives in the app, registered through
+// `App.register`; see docs/architecture/engine-and-app.md. Permissions are not a
 // marker on the actor: authorization is account-scoped (see
 // docs/architecture/authorization.md).
 marker!(Locus, "locus");
@@ -166,7 +166,7 @@ pub struct ComponentRegistry {
 
 impl ComponentRegistry {
     pub fn register<C: NamedComponent>(&mut self) {
-        // Registration is all-at-startup wiring (`World::new` then `Game.register`),
+        // Registration is all-at-startup wiring (`World::new` then `App.register`),
         // so a duplicate tag is a programming error, never a runtime condition. Fail
         // loudly before mutating anything, so a collision can't silently shadow the
         // tag-keyed maps (last write wins) or double-push `sers` (double-serialize).

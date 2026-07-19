@@ -1,12 +1,12 @@
 //! Combat: the `attack` verb and the two stat components it is the first consumer
 //! of. `Special` is the character's stat block; `Health` is what a blow spends.
 //! Both are game vocabulary (the engine reasons about none of it), registered
-//! through `Game.register` like `Wander` and the kind markers, and both land here
+//! through `App.register` like `Wander` and the kind markers, and both land here
 //! *with* their consumer rather than as inert schema: `attack` reads the
 //! attacker's Strength and drains the target's Health, and a killing blow routes
 //! through `execute(Destroy)` so the same `Fact::Destroyed` reaction that narrates
 //! any demise (`death_cry`) narrates a kill. See
-//! `docs/architecture/engine-and-game.md` (the component boundary),
+//! `docs/architecture/engine-and-app.md` (the component boundary),
 //! `docs/architecture/actions.md` (`execute`), and `docs/architecture/facts.md`
 //! (the `Fact::Destroyed` reaction channel).
 

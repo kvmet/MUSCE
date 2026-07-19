@@ -6,13 +6,13 @@
 //! literal with the affordance's guard preconditions, prepending the step. It
 //! succeeds when every literal of a node already holds in the *actual current
 //! world*, so the planner never simulates a hypothetical world; it only ever asks
-//! the game's [`WorldModel`] whether a ground literal holds right now. That is why
+//! the app's [`WorldModel`] whether a ground literal holds right now. That is why
 //! regression fits this vocabulary where a forward simulation would need a
 //! hypothetical-state model the engine does not have.
 //!
-//! The output is a transient [`Plan`]: a sequence of bound steps the game lowers
+//! The output is a transient [`Plan`]: a sequence of bound steps the app lowers
 //! through its grounded action (`perform`), where the veto lives. Nothing here is
-//! persisted. Cost is minimized through the game's [`CostModel`] (uniform-cost
+//! persisted. Cost is minimized through the app's [`CostModel`] (uniform-cost
 //! search); the trivial [`UnitCost`](crate::UnitCost) makes this min-length.
 //!
 //! Scope of the current planner (see `docs/architecture/agency/planner.md`):
@@ -32,7 +32,7 @@ use musce_action::{Affordance, Clause, Frame, Literal, Predicate, Term, Var, Wor
 use crate::{Cost, CostModel, bind_var};
 
 /// One bound step of a plan: an affordance and the frame grounding its roles. The
-/// game lowers it through its grounded action for that affordance name.
+/// app lowers it through its grounded action for that affordance name.
 #[derive(Debug, Clone)]
 pub struct Step {
     pub affordance: Affordance,
@@ -40,12 +40,12 @@ pub struct Step {
 }
 
 /// A transient, ordered action sequence the planner emits. Never persisted: a plan
-/// lowers to the executor's structural `Action` set through the game's grounded
+/// lowers to the executor's structural `Action` set through the app's grounded
 /// action, so no agency type embeds in a serialized script.
 pub type Plan = Vec<Step>;
 
 /// A backward-regression planner over a fixed affordance table. The static
-/// planning context (the table and the game's read/cost policies) lives here; the
+/// planning context (the table and the app's read/cost policies) lives here; the
 /// per-query inputs (actor, goal, known set, world) are arguments to [`plan`]. The
 /// replan loop's exclusion set is the extra argument to [`plan_excluding`],
 /// consumed by [`Driver`](crate::Driver) (see the planner and execution docs).
@@ -80,7 +80,7 @@ impl<'a> Planner<'a> {
 
     /// A minimum-cost plan whose execution makes `goal` hold for `actor`, or `None`
     /// if no chain of known affordances reaches it. `known` is the candidate set the
-    /// actor may bind a fungible goal slot against (the game's knowledge seam): a
+    /// actor may bind a fungible goal slot against (the app's knowledge seam): a
     /// goal like "hold some food" (`∃x. related(x, actor, contained_by) ∧ tag(x,
     /// food)`) enumerates `x` over `known`, grounds the goal per candidate, and keeps
     /// the cheapest plan. `world` is borrowed only for the duration of the call, so
@@ -360,7 +360,7 @@ fn mentions(literal: &Literal, var: &Var) -> bool {
     }
 }
 
-/// Whether two predicates could unify on their game vocabulary alone (same variant
+/// Whether two predicates could unify on their app vocabulary alone (same variant
 /// and same relation kind / component), ignoring terms. The cheap achievability
 /// test the static/achievable goal split uses.
 fn same_shape(a: &Predicate, b: &Predicate) -> bool {
@@ -510,10 +510,10 @@ mod tests {
     use super::*;
     use crate::{Gate, Guard, UnitCost};
 
-    // A ground-fact stub standing in for a game's reading: `holds` answers from a
+    // A ground-fact stub standing in for an app's reading: `holds` answers from a
     // fixed set of true relations and tags, ignoring the (empty) `World`. It plays
     // the role `RefWorldModel` plays for `musce_ref`, letting the generic planner
-    // be tested without a game. The relation kinds and tags are illustrative.
+    // be tested without an app. The relation kinds and tags are illustrative.
     #[derive(Default)]
     struct Facts {
         relations: HashSet<(EntityId, EntityId, String)>,

@@ -107,7 +107,7 @@ async fn connect_play_look_go_take() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -176,7 +176,7 @@ async fn inscribe_then_read_a_book_round_trips_cold_storage() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -237,7 +237,7 @@ async fn pilot_redirects_bare_commands_then_release_returns() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -308,7 +308,7 @@ async fn possess_then_pilot_drives_a_created_thing() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -372,7 +372,7 @@ async fn a_wandering_creature_moves_with_no_input() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -425,7 +425,7 @@ async fn a_hungry_creature_finds_and_eats_food_with_no_input() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -483,7 +483,7 @@ async fn destroying_a_thing_cries_out_in_the_room() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -534,7 +534,7 @@ async fn admin_verbs_build_the_world() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -609,7 +609,7 @@ async fn a_patrolling_sentry_moves_with_no_input() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -657,7 +657,7 @@ async fn a_torch_burns_out_and_cries_in_the_room() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -701,7 +701,7 @@ async fn attack_wears_a_foe_down_then_kills_it() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -762,7 +762,7 @@ async fn put_a_coin_in_the_chest_then_see_it_inside() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -822,7 +822,7 @@ async fn give_a_coin_to_the_drone() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -877,7 +877,7 @@ async fn a_granted_builder_creates_until_quelled() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -970,7 +970,7 @@ async fn accounts_survive_a_restart() {
         store.clone(),
         config(addr),
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -996,7 +996,7 @@ async fn accounts_survive_a_restart() {
         store.clone(),
         config(addr),
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     let (mut reader, mut writer) = connect(addr).await;
@@ -1039,7 +1039,7 @@ async fn login_rejects_a_wrong_password() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     // The operator mints a password account.
@@ -1093,7 +1093,7 @@ async fn password_change_takes_effect_for_the_next_login() {
         store.clone(),
         config,
         shutdown.clone(),
-        musce_ref::game(),
+        musce_ref::app(),
     ));
 
     // The operator mints an account, which then logs in and changes its password.

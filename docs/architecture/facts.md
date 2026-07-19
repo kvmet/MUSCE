@@ -2,14 +2,14 @@
 
 > Status: **built.** `Destroyed`, `Moved`, `LocusChanged`, and `ComponentChanged`
 > are emitted at the `World` mutator layer and drained once per tick into
-> `SystemCtx::facts`; the reference game's `death_cry` reaction consumes `Destroyed`.
+> `SystemCtx::facts`; the reference app's `death_cry` reaction consumes `Destroyed`.
 > `ComponentChanged` is the bounded trigger a derived index rides; its first
 > consumer (`musce_index`) is built separately. See
 > [fact.rs](../../musce_core/src/fact.rs) and
 > [world.rs](../../musce_core/src/world.rs). The executor and action vocabulary that
 > sit above this channel are in [actions.md](actions.md).
 
-Structural mutations emit typed **facts** for game logic to react to. A fact is an
+Structural mutations emit typed **facts** for app logic to react to. A fact is an
 *observation* of a mutation, not a mutation, so the rule that an action is the only
 thing that mutates still holds (see [actions.md](actions.md)): a reaction reads facts
 and may produce its own actions, but the fact stream changes nothing on its own.
@@ -40,7 +40,7 @@ gone entity, reread nothing). `ComponentChanged` extends that existing
 trigger-consumption rather than inverting the charter.
 
 A mutation whose result is fully queryable afterward *and* that no maintainer needs a
-trigger for earns no fact; a game that wants to fire on such an event uses a marker
+trigger for earns no fact; an app that wants to fire on such an event uses a marker
 or a system, not this channel. Facts recover the *unrecoverable* or feed a *bounded
 maintainer*; they do not narrate. This is the test every candidate fact is measured
 against, and the live proof it still has teeth is that `Created` is **declined** on
@@ -63,7 +63,7 @@ Facts buffer on a transient `World` field, drained **once per tick** by
 command-driven mutation (`@destroy`/`@purge`, drained before `run_systems`) is reacted
 to the **same tick**, while a fact a system emits is seen the **next tick** (buffered
 after the drain), so no system sees another's fact within a pass and system order is
-cosmetic. A reaction is just a `System` iterating `ctx.facts`; the reference game's
+cosmetic. A reaction is just a `System` iterating `ctx.facts`; the reference app's
 `death_cry` narrates a destroyed thing's demise to its room.
 
 ## Destroyed
@@ -127,7 +127,7 @@ and stops.
 The **right way for a consumer** to react to the carried subtree is to start from the
 mover's fact and walk `descendants(entity)` itself, once, only when it needs to (a
 region trigger usually cares about the character stepping into the lava, not each coin
-in the bag). Pushing this to the game is deliberate: only the game knows *whether* the
+in the bag). Pushing this to the app is deliberate: only the app knows *whether* the
 subtree matters for a given reaction, and it computes it cheaply on demand, whereas
 the engine emitting it eagerly would pay that cost on every move for reactions that
 mostly do not want it. The rule (fire for the entity whose own link changed) is also
@@ -197,7 +197,7 @@ the bypass are waived and greppable in one search.
 
 By the test above, `Related` and `Unrelated` earn **no** fact: their result is fully
 queryable afterward (a new link is readable) and no maintainer needs a trigger for
-them yet, so a game hooks them with a marker or a system. They become facts only if a
+them yet, so an app hooks them with a marker or a system. They become facts only if a
 concrete reaction ever needs pre-mutation state they destroy (e.g. the old target a
 re-`relate` overwrote), and then carrying exactly that and no more.
 
@@ -205,7 +205,7 @@ There is likewise no `RelationChanged` *trigger* paralleling `ComponentChanged`,
 the asymmetry is the point: a component index needed a trigger because nothing
 maintained it, but relations already ship a derived reverse index (the `reverse`
 side map, rebuilt on load), so there is no per-tick maintainer left to feed. Such a
-trigger would earn its place only if a game wanted a *keyed* index over relations
+trigger would earn its place only if an app wanted a *keyed* index over relations
 rather than the reverse-membership the side map already gives, which nothing needs
 yet.
 

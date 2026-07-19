@@ -61,7 +61,7 @@ impl FromIterator<CapId> for CapSet {
 /// capabilities and whether superuser is in force (the account's su bit set, and the
 /// connection not quelled). The account authority builds it from `conn -> account`,
 /// carrying nothing derivable from the actor or the world, so possessing or
-/// `@play`-selecting a privileged body cannot borrow authority. A gate and a game's
+/// `@play`-selecting a privileged body cannot borrow authority. A gate and an app's
 /// inline rules both read it; neither can mutate it.
 #[derive(Clone, Debug)]
 pub struct Verdict {
@@ -104,7 +104,7 @@ impl Verdict {
         self.su_override || self.caps.contains(cap)
     }
 
-    /// Whether superuser is in force. A game's inline rule reads this to decide
+    /// Whether superuser is in force. An app's inline rule reads this to decide
     /// whether to wave su through a scoped check the flat gate cannot express.
     pub fn is_su(&self) -> bool {
         self.su_override

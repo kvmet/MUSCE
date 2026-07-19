@@ -18,7 +18,7 @@ check is slow and off-thread while the gate check is a hot per-command read.
 
 The shaping decision: **an account is infrastructure, not a world entity.** Accounts
 exist before any character, must not ride the world's snapshot cadence, and must not
-be walked by game systems or the reflection admin layer. So they are *not* entities
+be walked by app systems or the reflection admin layer. So they are *not* entities
 in the ECS world. They are a thin, columnar table in the same store as the world.
 Authorization is then a `Verdict` resolved from an account's capabilities and its
 superuser bit, consulted where an act enters: the command dispatch seam (a verb's

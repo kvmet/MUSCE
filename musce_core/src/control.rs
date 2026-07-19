@@ -67,7 +67,7 @@ impl World {
     /// something the controller controls (transitively, via `Controls`); a cursor
     /// outside the chain is a structurally invalid state, not rejected play.
     /// Whether a controller may *establish* control over something in the first
-    /// place stays game policy (the `pilot`/`@possess` gate); this governs only
+    /// place stays app policy (the `pilot`/`@possess` gate); this governs only
     /// where an existing controller's cursor may land.
     pub fn set_focus(&mut self, controller: EntityId, target: EntityId) -> Result<(), FocusError> {
         if target == controller || !self.ancestors::<Controls>(target).contains(&controller) {
@@ -104,7 +104,7 @@ mod tests {
     use hecs::EntityBuilder;
 
     // Controls/Focus are kind-agnostic, so a test "being" is just a described
-    // entity; player/creature are game kinds and no longer live in core.
+    // entity; player/creature are app kinds and no longer live in core.
     fn being(w: &mut World, desc: &str) -> EntityId {
         let mut b = EntityBuilder::new();
         b.add(Description(desc.into()));

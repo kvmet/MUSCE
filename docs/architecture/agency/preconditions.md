@@ -13,11 +13,11 @@
 ## The precondition / predicate set
 
 The vocabulary the planner regresses over should mirror the world's *own* generic
-structure, not name game states one at a time. The engine already treats relation
-kinds and component types as opaque game vocabulary (`Contains`, `item`,
+structure, not name app states one at a time. The engine already treats relation
+kinds and component types as opaque app vocabulary (`Contains`, `item`,
 `container` are markers the engine never interprets); the predicate set is those
 same structures asked as questions. So the predicate *kinds* are a tiny closed
-set and their *parameters* are open game vocabulary.
+set and their *parameters* are open app vocabulary.
 
 Two primitive predicate kinds:
 
@@ -26,10 +26,10 @@ Two primitive predicate kinds:
 | `related(a, b, K)` | a relation of kind `K` links `a` to `b` | the relation graph |
 | `tag(e, C)` | `e` bears component/marker `C` | component presence |
 
-Everything specific is one of these parameterized by a game kind. Do **not** add
+Everything specific is one of these parameterized by an app kind. Do **not** add
 `cooked`, `edible`, `armor`, `worn`, `knows` as predicates; they are
 `tag(x, Cooked)`, `tag(x, Edible)`, `tag(x, Armor)`, `related(self, x, Worn)`,
-`related(a, e, Known)`. A new game state is a new *parameter*, never a new
+`related(a, e, Known)`. A new app state is a new *parameter*, never a new
 predicate kind, so it stays an addition and never a migration (the same
 closed-kinds / open-parameter split as `EventKind` vs the `channel` tag; see
 [../command-dispatch.md](../command-dispatch.md)).
@@ -82,17 +82,17 @@ primitive:
   actions toward a numeric threshold is metric planning, categorically harder than
   propositional GOAP, and not something an agent planner should attempt. If a
   threshold genuinely must be *reached* by planning (sharpen a sword until it can
-  cut), do not make the planner do arithmetic: have a game **system** maintain a
+  cut), do not make the planner do arithmetic: have an app **system** maintain a
   derived **tag** at the threshold (`tag(sword, SharpEnough)`) and let the planner
   chain over the tag. Numeric accumulation is the system's concern; the planner
   sees a tag flip. Same shape as forward-value-is-truth, the tag a derived index.
 
 **Representation.** A raw field/op/value comparison cannot express the ratio, so a
-content test is a **game-supplied boolean predicate over a candidate**, referenced
+content test is a **app-supplied boolean predicate over a candidate**, referenced
 by an interned id plus args so it serializes into goals and plans while the
-function stays game code (a small `PredicateRegistry`, the same interning move as
+function stays app code (a small `PredicateRegistry`, the same interning move as
 `CapRegistry`). A raw field comparison is just the common built-in case; ratios
-and compound tests are game fns.
+and compound tests are app fns.
 
 **Gate or grade.** Separate a hard filter (`uses > 0`, must pass, prunes the
 candidate) from a soft preference (prefer the pencil with the most uses, a cost
@@ -204,7 +204,7 @@ Deliberately unresolved; listed so they are not mistaken for decided.
 
 - **Predicate representation.** *Decided.* Two chainable primitive kinds
   (`related` / `tag`) over terms (`Const | Var`); a clause is a conjunction of
-  `Literal { negated, predicate }`, so negation is engine-owned and the game's
+  `Literal { negated, predicate }`, so negation is engine-owned and the app's
   reading stays atomic; all built in the engine (`musce_action`). Parameters
   (relation kinds, component tags) and `Var` names are
   `String`, matching the executor's `Action`. This is no longer migration-class:
@@ -215,8 +215,8 @@ Deliberately unresolved; listed so they are not mistaken for decided.
   non-chainable `PredicateRegistry` bucket) stay unbuilt until a verb first tests
   component *content* rather than presence.
 - **Predicate evaluation.** *Seam decided.* Whether a predicate holds against the
-  world is a game-supplied `WorldModel::holds(predicate, world)` (built; no generic
-  default, since only the game reads its own relation/component names), the
+  world is an app-supplied `WorldModel::holds(predicate, world)` (built; no generic
+  default, since only the app reads its own relation/component names), the
   read-side twin of `CostModel`. It evaluates *ground* predicates; binding a free
   `Var` by enumerating candidates is the separate planner primitive of build step 3
   ("bind lazily against beliefs" above), not this seam.

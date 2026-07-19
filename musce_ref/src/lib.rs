@@ -1,9 +1,9 @@
 //! `musce_ref`: the minimal reference game that ships in this repo. It owns all
 //! game content (the verbs and how they parse, the seed world, name resolution,
 //! narration prose, the takeable rule, the `@play` actor policy) and builds the
-//! [`Game`] the engine runtime is parameterized over. The engine crates stay
+//! [`App`] the engine runtime is parameterized over. The engine crates stay
 //! content-free; a real game forks this crate and replaces its content. See
-//! `docs/architecture/engine-and-game.md`.
+//! `docs/architecture/engine-and-app.md`.
 
 mod act;
 mod admin;
@@ -23,7 +23,7 @@ mod verbs;
 
 use std::sync::Arc;
 
-use musce::Game;
+use musce::App;
 use musce::action::CapRegistry;
 use musce::action::{Action, execute};
 use musce::world::World;
@@ -34,10 +34,10 @@ use musce::world::World;
 /// admin table interns its caps into the registry as it wires its gates, so the
 /// registry is built first and handed over alongside the tables. `main` (and the
 /// end-to-end test) pass this to `musce::run`.
-pub fn game() -> Game {
+pub fn app() -> App {
     let mut caps = CapRegistry::new();
     let admin = admin::commands(&mut caps);
-    Game {
+    App {
         commands: verbs::commands(),
         admin,
         seed: seed::seed,

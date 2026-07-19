@@ -8,7 +8,7 @@ two interfaces over the same command stream: a text MUD over TCP, and a thin
 
 ## Quickstart
 
-Run the reference game (the engine parameterized with `musce_ref`'s content). It
+Run the reference app (the engine parameterized with `musce_ref`'s content). It
 listens for the text MUD on `127.0.0.1:4000` and the web client on
 `127.0.0.1:4001`, and persists to a SQLite file:
 
@@ -35,12 +35,12 @@ Append `?mock` to the URL to run the in-browser stand-in with no server. See
 [webclient/README.md](webclient/README.md).
 
 The backend is chosen by the `MUSCE_DB` URL scheme (`sqlite://…` default,
-`postgres://…`); the game code is identical either way.
+`postgres://…`); the app code is identical either way.
 
 ## Workspace
 
-- `musce` — the facade: the one crate a game depends on, re-exporting the
-  engine's game-facing surface (`run`, `Config`, `Game`, the wire types) and
+- `musce` — the facade: the one crate an app depends on, re-exporting the
+  engine's app-facing surface (`run`, `Config`, `App`, the wire types) and
   nothing internal.
 - `musce_core` — the engine: the ECS world, global identity, the generic
   relation layer, containment, and the JSON snapshot model. Pure (no I/O).
@@ -54,16 +54,16 @@ The backend is chosen by the `MUSCE_DB` URL scheme (`sqlite://…` default,
 - `musce_action` — the action layer: the structural executor, verb dispatch, the
   affordance vocabulary and guards. Pure synchronous engine mechanism.
 - `musce_agency` — the optional planner: the GOAP `Planner`, `Arbiter`, and
-  execution `Driver` a game consumes to give NPCs goals.
+  execution `Driver` an app consumes to give NPCs goals.
 - `musce_auth` — account authentication and identity: the `Account` record,
   capabilities, and the verdict/gate.
 - `musce_net` — the transports (TCP line-mode and WebSocket) behind a
   transport-agnostic pipe, plus the commands-in/events-out router.
 - `musce_host` — the runtime: the single sim thread, the tick loop, boot load and
   snapshot persistence, and the command dispatcher.
-- `musce_ref` — the reference game and the runnable binary: it owns all game
+- `musce_ref` — the reference app and the runnable binary: it owns all app
   content (verbs, seed world, narration, the `@play` policy) and builds the
-  `Game` the engine runs.
+  `App` the engine runs.
 
 ## Architecture
 

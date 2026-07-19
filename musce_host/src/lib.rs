@@ -73,45 +73,45 @@ pub struct RunReport {
 pub type Seed = fn(&mut World);
 
 /// The `@play` policy: which actor a connection comes to drive. Pure selection;
-/// the floor records the attachment as session state. Returns `None` if the game
+/// the floor records the attachment as session state. Returns `None` if the app
 /// has no character to give.
 pub type ChooseActor = fn(&World) -> Option<EntityId>;
 
 /// World-type registration the runtime runs against a fresh `World` before it
-/// loads or seeds, so a game's own component types are known to the deserializer
+/// loads or seeds, so an app's own component types are known to the deserializer
 /// (registration must precede deserialization) and persist thereafter. Engine
-/// components register themselves in `World::new`; this is where a game adds its.
+/// components register themselves in `World::new`; this is where an app adds its.
 pub type Register = fn(&mut World);
 
-/// The whole of what the runtime needs from a game: its bare and admin verb
+/// The whole of what the runtime needs from an app: its bare and admin verb
 /// registries, its world seed, and its `@play` actor-choice policy. A plain struct
-/// of values plus fn pointers; the runtime never depends on a particular game,
+/// of values plus fn pointers; the runtime never depends on a particular app,
 /// only on this. The account floor (`@quit`/`@who`/`@help`) stays engine; only
-/// `@play`'s choice of actor is game policy, which is why `choose_actor` is the
-/// one floor concern the game injects. `CommandTable`, `Gate`, and dispatch are
-/// engine mechanism; the game owns which verbs each table holds and their prose.
-/// See `docs/architecture/engine-and-game.md`.
-pub struct Game {
-    /// Bare in-game verbs, driven through the embodiment frame.
+/// `@play`'s choice of actor is app policy, which is why `choose_actor` is the
+/// one floor concern the app injects. `CommandTable`, `Gate`, and dispatch are
+/// engine mechanism; the app owns which verbs each table holds and their prose.
+/// See `docs/architecture/engine-and-app.md`.
+pub struct App {
+    /// Bare in-app verbs, driven through the embodiment frame.
     pub commands: CommandTable,
     /// `@`-namespace admin/builder verbs, capability-gated, driven through the admin
-    /// frame. Empty for a game with no builder surface.
+    /// frame. Empty for an app with no builder surface.
     pub admin: CommandTable,
     pub seed: Seed,
     pub choose_actor: ChooseActor,
     /// Tick-loop systems, run in order every tick through the phase pipeline. A
-    /// `Vec` so the runtime runs N by construction; empty for a game with no
+    /// `Vec` so the runtime runs N by construction; empty for an app with no
     /// simulation.
     pub systems: Vec<System>,
-    /// Registers the game's own component/relation types on a fresh world, before
-    /// load or seed. The runtime calls this so a wanderer (or any game type)
-    /// deserializes and persists. No-op for a game that adds no types.
+    /// Registers the app's own component/relation types on a fresh world, before
+    /// load or seed. The runtime calls this so a wanderer (or any app type)
+    /// deserializes and persists. No-op for an app that adds no types.
     pub register: Register,
-    /// The game's capability vocabulary, interned to `CapId`s while it wired its
+    /// The app's capability vocabulary, interned to `CapId`s while it wired its
     /// gates. Shared (`Arc`) so the off-thread account task resolves an account's
     /// grant names against the same registry the gates use, so a gate's id and a
-    /// grant's id denote the same capability. Immutable once the game is built (all
-    /// registration happens during construction). Empty for a game with no
+    /// grant's id denote the same capability. Immutable once the app is built (all
+    /// registration happens during construction). Empty for an app with no
     /// capability-gated verbs. See `docs/architecture/authorization.md`.
     pub caps: Arc<CapRegistry>,
     /// The app's login veto, run off-thread after a connection's account passes the
@@ -121,26 +121,26 @@ pub struct Game {
     /// `docs/architecture/authorization.md`.
     pub login_veto: LoginVeto,
     /// Turns a cold-store value's opaque bytes into the text delivered to a reader.
-    /// Injected because decoding is game knowledge (the game encoded the bytes on
+    /// Injected because decoding is app knowledge (the app encoded the bytes on
     /// write), so the engine's cold task never interprets a cold value: it calls
     /// this. `Ok` is the body to deliver, `Err` a line shown when the bytes will not
-    /// decode. The reference game reads UTF-8; a game with a different cold encoding
+    /// decode. The reference app reads UTF-8; an app with a different cold encoding
     /// supplies its own. See `docs/architecture/persistence.md`.
     pub decode_cold: fn(&[u8]) -> Result<String, String>,
     /// Project the world into a pointing client's containment snapshot for an
     /// actor: the perceivable tree rooted at its room, with each entity's name and
-    /// kinds. Game policy, because names and kinds are game vocabulary; the engine
+    /// kinds. App policy, because names and kinds are app vocabulary; the engine
     /// only routes the read query to it. Returns the wire snapshot the reply
     /// carries. See `docs/architecture/networking-and-sessions.md`.
     pub snapshot: fn(&World, EntityId) -> musce_proto::SnapshotData,
     /// Enumerate the affordances available on a clicked entity for an actor: the
     /// reactionary "what can I do to this?" read behind the pointing client's offer
-    /// list. Game content, the same affordance set `perform` dispatches. See
+    /// list. App content, the same affordance set `perform` dispatches. See
     /// `docs/architecture/offers.md`.
     pub offers: fn(&World, EntityId, EntityId) -> Vec<musce_proto::Offer>,
     /// Perform a grounded act a pointing client clicked: the affordance name, the
-    /// clicked focus entity, and any second entity a role sub-pick supplied. Game
-    /// content, because the affordance set and its roles are game vocabulary; the
+    /// clicked focus entity, and any second entity a role sub-pick supplied. App
+    /// content, because the affordance set and its roles are app vocabulary; the
     /// engine only routes the act through `dispatch_perform` (a Ctx and audience,
     /// the same path a verb narrates through). See
     /// `docs/architecture/networking-and-sessions.md`.
@@ -148,7 +148,7 @@ pub struct Game {
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
-/// sim time, the default for game logic) and `now` (wall-clock, for real-world
+/// sim time, the default for app logic) and `now` (wall-clock, for real-world
 /// scheduling). Captured once per tick so every system sees the same instant.
 pub struct TickCtx {
     pub tick: u64,
@@ -173,7 +173,7 @@ pub async fn run(
     store: WorldStore,
     config: Config,
     shutdown: Arc<AtomicBool>,
-    game: Game,
+    app: App,
 ) -> Result<RunReport, Box<dyn std::error::Error + Send + Sync>> {
     store.init().await?;
     store.kv_init().await?; // the cold content table shares the world's store
@@ -205,16 +205,16 @@ pub async fn run(
     // event outbox straight to the reader, so the sim never sees the completion.
     let (cold_tx, cold_rx) = tokio::sync::mpsc::unbounded_channel::<ColdOp>();
     let cold_event_tx = event_tx.clone();
-    // A fn pointer, copied out before `game` moves into the sim thread.
-    let decode_cold = game.decode_cold;
+    // A fn pointer, copied out before `app` moves into the sim thread.
+    let decode_cold = app.decode_cold;
 
     // The account boundary: ops out to the off-thread account task, outcomes back to
     // the *sim* (unlike cold results, which go straight to the reader) because they
-    // mutate sim-owned session state. Copied out before `game` moves into the sim.
+    // mutate sim-owned session state. Copied out before `app` moves into the sim.
     let (account_op_tx, account_op_rx) = tokio::sync::mpsc::unbounded_channel::<AccountOp>();
     let (account_result_tx, account_result_rx) = crossbeam_channel::unbounded::<AccountOutcome>();
-    let account_caps = game.caps.clone();
-    let login_veto = game.login_veto;
+    let account_caps = app.caps.clone();
+    let login_veto = app.login_veto;
 
     if config.listen_addr.is_some() || config.ws_listen_addr.is_some() {
         match musce_net::start(config.listen_addr, config.ws_listen_addr, cmd_tx, event_rx).await {
@@ -252,7 +252,7 @@ pub async fn run(
                 account_result_rx,
                 shutdown,
                 config,
-                game,
+                app,
                 done_tx,
             )
         })
@@ -298,7 +298,7 @@ async fn persistence_task(
 
 /// Serves cold-store requests off the sim thread: this task is the only holder of
 /// the store on the async side. A `Read` fetches the key, hands the bytes to the
-/// game's `decode` (the engine interprets nothing), and delivers the result to the
+/// app's `decode` (the engine interprets nothing), and delivers the result to the
 /// reader's connection through the shared event outbox; a `Write` overwrites the
 /// key and acks. Both send is best-effort: a closed connection just drops the line.
 /// The task ends when the sim drops the request sender.
@@ -322,8 +322,8 @@ async fn cold_task(
         let delivery = match op {
             ColdOp::Read { key, conn, kind } => {
                 let (kind, body) = match store.kv_get(&key).await {
-                    // The value is opaque bytes; only the game knows how to read
-                    // them, so decoding is the injected game fn, never done here.
+                    // The value is opaque bytes; only the app knows how to read
+                    // them, so decoding is the injected app fn, never done here.
                     Ok(Some(bytes)) => match decode(&bytes) {
                         Ok(text) => (kind, text),
                         Err(line) => (EventKind::Feedback, line),
@@ -369,13 +369,13 @@ fn sim_loop(
     account_result_rx: Receiver<AccountOutcome>,
     shutdown: Arc<AtomicBool>,
     config: Config,
-    game: Game,
+    app: App,
     done_tx: oneshot::Sender<Result<RunReport, String>>,
 ) {
     let mut world = World::new();
-    // The game's own component types must be registered before the deserializer
+    // The app's own component types must be registered before the deserializer
     // can read them, so this runs before load (and before seed).
-    (game.register)(&mut world);
+    (app.register)(&mut world);
 
     // Bring persisted blobs up to the current schema before deserializing them.
     let mut entities = loaded.entities;
@@ -400,14 +400,14 @@ fn sim_loop(
         world.mark_all_dirty();
     }
 
-    // First boot against an empty database: lay down the game's starter world so
+    // First boot against an empty database: lay down the app's starter world so
     // there is ground truth to play. A loaded world is left untouched.
     if entities.is_empty() {
-        (game.seed)(&mut world);
+        (app.seed)(&mut world);
         tracing::info!("seeded starter world");
     }
 
-    let mut dispatch = Dispatch::new(game);
+    let mut dispatch = Dispatch::new(app);
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -544,12 +544,12 @@ mod tests {
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, World};
 
-    /// An engine-only `Game`: no verbs, a no-op seed, a `choose_actor` that picks
-    /// nothing, no systems, and a no-op `register`. The runtime, not game content,
-    /// is what this crate tests, so the lifecycle test needs only a `Game`-shaped
+    /// An engine-only `App`: no verbs, a no-op seed, a `choose_actor` that picks
+    /// nothing, no systems, and a no-op `register`. The runtime, not app content,
+    /// is what this crate tests, so the lifecycle test needs only a `App`-shaped
     /// value to hand `run`.
-    fn test_game() -> Game {
-        Game {
+    fn test_app() -> App {
+        App {
             commands: CommandTable::new(),
             admin: CommandTable::new(),
             seed: |_| {},
@@ -625,7 +625,7 @@ mod tests {
             listen_addr: None, // headless: no real socket in the lifecycle test
             ws_listen_addr: None,
         };
-        let report = run(store.clone(), config, shutdown, test_game())
+        let report = run(store.clone(), config, shutdown, test_app())
             .await
             .unwrap();
 
@@ -648,7 +648,7 @@ mod tests {
         let store = WorldStore::connect("sqlite::memory:").await.unwrap();
         store.init().await.unwrap();
 
-        // Persist an otherwise-valid entity carrying a component tag no game
+        // Persist an otherwise-valid entity carrying a component tag no app
         // registers, so load fails on the unknown tag. A hand-built snapshot writes
         // it (the normal save path only emits known tags); save does not validate,
         // it just stores the rows. The `id` component keeps it structurally valid so
@@ -674,7 +674,7 @@ mod tests {
             listen_addr: None,
             ws_listen_addr: None,
         };
-        let result = run(store.clone(), config, shutdown, test_game()).await;
+        let result = run(store.clone(), config, shutdown, test_app()).await;
         assert!(
             result.is_err(),
             "boot should fail on an unreadable world, got: {result:?}"

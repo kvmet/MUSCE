@@ -54,7 +54,7 @@ impl Arbiter {
     ///
     /// The `Arbiter` is stateful (the commitment is what stops thrashing), but the
     /// sim's persisted state is the serializable world and agency types deliberately
-    /// do not serialize. So a game that wants commitment to survive across ticks does
+    /// do not serialize. So an app that wants commitment to survive across ticks does
     /// not persist the arbiter; it persists its own record of *which* goal was
     /// committed to and reconstructs the arbiter each tick, passing that goal here.
     /// The incumbent is matched into this tick's candidate set by predicate, exactly
