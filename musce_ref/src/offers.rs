@@ -95,6 +95,15 @@ pub fn affordances_on(world: &World, actor: EntityId, clicked: EntityId) -> Vec<
 /// not "vetoed". So completeness is checked first, and only a frame that binds
 /// every guard-referenced role reaches `veto`.
 fn classify(aff: &Affordance, frame: &Frame, world: &World, model: &dyn WorldModel) -> OfferStatus {
+    // An object the actor cannot reach (held, or loose in the room) is never
+    // actionable, however its guards read: it lives inside another creature or a
+    // container. Only the bound focus object is tested here; a sub-picked object is
+    // validated when the client supplies it.
+    if let Some(object) = frame.object {
+        if !reachable(world, frame.actor, object) {
+            return OfferStatus::Vetoed("You can't reach that.");
+        }
+    }
     for role in required_roles(aff) {
         if !filled(frame, role) {
             return OfferStatus::NeedsRole(role);
@@ -104,6 +113,18 @@ fn classify(aff: &Affordance, frame: &Frame, world: &World, model: &dyn WorldMod
         Some(guard) => OfferStatus::Vetoed(guard.reason),
         None => OfferStatus::Available,
     }
+}
+
+/// Whether `actor` can manipulate `id`: it is held by the actor or lies loose in the
+/// actor's locus. Narrower than perception, which spans the whole locus subtree: an
+/// item nested inside another creature or a container is perceivable but not
+/// reachable. This is the manipulation scope the text path gets for free from its
+/// `Scope::Room`/`Scope::Inventory` name resolution and a resolver-less click does
+/// not. It is deliberately *not* the type filter finding 3 leaves open: a reachable
+/// wrong-kind object (a chest on the floor) still classifies by its guards.
+pub(crate) fn reachable(world: &World, actor: EntityId, id: EntityId) -> bool {
+    let container = world.container_of(id);
+    container == Some(actor) || container == world.enclosing_locus(actor)
 }
 
 /// Which role the pointed-at entity fills. `put`/`go` act *on* a target (a
@@ -183,7 +204,7 @@ mod tests {
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, Locus, Name};
 
-    use crate::kinds::{Container, Exit, Item};
+    use crate::kinds::{Container, Creature, Exit, Item};
     use crate::verbs::Locked;
 
     struct Fixture {
@@ -311,6 +332,33 @@ mod tests {
     fn a_clean_act_is_available() {
         let f = fixture();
         assert_eq!(offer(&f, f.rock, "take"), OfferStatus::Available);
+    }
+
+    #[test]
+    fn cannot_take_an_item_nested_in_a_creature() {
+        // Finding 4: perception spans the locus subtree, so an item held by another
+        // creature is visible, but manipulation is reachability-scoped (held or
+        // loose in the room). `take` must not offer on it. This is distinct from the
+        // deferred type filter: the crumb is a takeable *kind*, just out of reach.
+        let mut f = fixture();
+        let room = f.world.enclosing_locus(f.actor).unwrap();
+        let mouse = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Name("a field mouse".into()));
+        });
+        f.world.move_entity(mouse, room).unwrap();
+        let crumb = spawn(&mut f.world, |b| {
+            b.add(Item);
+            b.add(Name("a crumb".into()));
+        });
+        f.world.move_entity(crumb, mouse).unwrap();
+        assert_eq!(
+            offer(&f, crumb, "take"),
+            OfferStatus::Vetoed("You can't reach that.")
+        );
+        assert!(!reachable(&f.world, f.actor, crumb));
+        // The loose floor item stays reachable: the gate is depth, not visibility.
+        assert!(reachable(&f.world, f.actor, f.loose));
     }
 
     #[test]

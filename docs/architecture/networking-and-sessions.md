@@ -24,9 +24,12 @@
 > (perform-by-id) is built**: a `Perform` frame (affordance name + clicked focus +
 > optional sub-pick) enters the verb/action path through `dispatch_perform` on the
 > game's `perform` seam, grounding the act with no name to resolve. The game gates
-> the supplied ids through the actor's perceivable set (the scope the reads use), so
-> a click is no more powerful than a typed verb, and refuses an under-bound frame
-> (a missing sub-pick) rather than grounding it. A grounded click then routes through
+> the supplied ids through the actor's perceivable set (the locus subtree plus that
+> locus's exits, the scope the reads project), so a click is no more powerful than a
+> typed verb; the object of a manipulation must additionally be *reachable* (held or
+> loose in the room), which perception alone is not, so a click cannot reach into
+> another creature's inventory. It refuses an under-bound frame (a missing sub-pick)
+> rather than grounding it. A grounded click then routes through
 > the game's shared narrating perform (`act::perform_narrated`), the same one a typed
 > verb and an autonomous agent use, so a click narrates to the actor and the room
 > alike (a co-located text player reads the third-person line at once, not on their
@@ -43,8 +46,9 @@
 > a `Controls` edge at runtime. The **web pointing client** (`webclient/`) is built
 > on this envelope: a Svelte app that programs against a *push* `Conn` (send a
 > `ClientMsg`, subscribe to the `ServerMsg` stream), bootstraps by embodying a guest
-> (`@play`) then requesting a snapshot, and re-reads after each act (the server
-> pushes no state deltas). The SSH transport, char/raw input-mode switching, real
+> (`@play`) then requesting a snapshot, and re-reads after each act (a clicked
+> perform or a typed command, since the server pushes no state deltas), dropping a
+> selection whose entity the new snapshot no longer carries (a room change). The SSH transport, char/raw input-mode switching, real
 > accounts/auth, and modal overlays remain proposed; the rest of this document
 > records that design.
 

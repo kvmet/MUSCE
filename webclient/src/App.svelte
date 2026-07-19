@@ -42,6 +42,13 @@
         break;
       case "snapshot":
         snap = toSnapshot(msg);
+        // Moving rooms (or any change) can drop the selected entity from view; a
+        // stale selection would render offers for a thing no longer here.
+        if (selected !== null && !snap.entities.has(selected)) {
+          selected = null;
+          offersReply = null;
+          pending = null;
+        }
         break;
       case "offers":
         offersReply = { clicked: msg.clicked, offers: msg.offers };
@@ -90,6 +97,9 @@
 
   function say(line: string) {
     conn.send({ t: "line", line });
+    // A typed command can move the actor or change the world, and the server pushes
+    // no state deltas, so re-read exactly as a clicked act does.
+    refresh();
   }
 </script>
 

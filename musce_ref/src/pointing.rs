@@ -20,6 +20,7 @@ use musce::agency::Frame;
 use musce::wire::{Entity, EventKind, Offer, OfferStatus, Role, SnapshotData};
 use musce::world::{Description, EntityId, Locus, World};
 
+use crate::exits::ExitQueries;
 use crate::kinds::{Container, Creature, Edible, Exit, Item, Player};
 use crate::offers::{self, affordances_on};
 use crate::verbs::Locked;
@@ -41,7 +42,14 @@ pub fn snapshot(world: &World, actor: EntityId) -> SnapshotData {
 /// Walk containment depth-first from `id`, pushing one [`Entity`] per node.
 /// Containment is acyclic, so this terminates without a visited set.
 fn collect(world: &World, id: EntityId, out: &mut Vec<Entity>) {
-    let contents = world.contents(id);
+    let mut contents = world.contents(id);
+    // A locus's exits are relation-backed (`LeadsFrom`), not containment children,
+    // so raw containment misses them. The pointing client has no `go` box to type
+    // into: it reaches an exit by clicking it, so project the room's exits as nodes
+    // under it. This is the one place the client's tree diverges from containment.
+    if world.has::<Locus>(id) {
+        contents.extend(world.exits_of(id));
+    }
     out.push(Entity {
         id: id.0.to_string(),
         name: world.name_of(id).unwrap_or_else(|| "something".into()),
@@ -151,6 +159,15 @@ pub fn perform(
         offers::Role::Object => (Some(focus), with),
         offers::Role::Target => (with, Some(focus)),
     };
+    // Perception spans the whole locus subtree, but manipulation does not: an object
+    // must be held or lie loose in the room. Without this a click could take an item
+    // out of another creature's inventory, which the text path's room-scoped name
+    // resolution never allows. Targets (a container, an exit) are constrained by
+    // their own guards and the perception gate, not this reachability rule.
+    if object.is_some_and(|o| !offers::reachable(ctx.world, ctx.actor, o)) {
+        ctx.emit_self(EventKind::Feedback, "You can't reach that.");
+        return;
+    }
     let Some(affordance) = offers::affordance_named(name) else {
         ctx.emit_self(EventKind::Feedback, "You can't do that.");
         return;
@@ -180,12 +197,16 @@ pub fn perform(
 /// Whether `actor` can perceive `id`: it shares the actor's enclosing locus, the
 /// exact subtree [`snapshot`] roots at and exposes to the client (room contents,
 /// nested container contents, and the actor's own inventory all resolve to that
-/// locus). The MVP perception rule, matching `crate::agency::known_here`; a
-/// location-less actor perceives nothing. Assumes loci do not nest, as the reference
-/// world model holds.
+/// locus), or it is an exit out of that locus (relation-backed, so outside the
+/// containment subtree but still rendered and clickable). The MVP perception rule,
+/// matching `crate::agency::known_here` plus the exit projection; a location-less
+/// actor perceives nothing. Assumes loci do not nest, as the reference world model
+/// holds.
 fn perceivable(world: &World, actor: EntityId, id: EntityId) -> bool {
     match world.enclosing_locus(actor) {
-        Some(locus) => world.enclosing_locus(id) == Some(locus),
+        Some(locus) => {
+            world.enclosing_locus(id) == Some(locus) || world.exits_of(locus).contains(&id)
+        }
         None => false,
     }
 }
@@ -198,7 +219,7 @@ mod tests {
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, Name};
 
-    use crate::kinds::{Container, Item};
+    use crate::kinds::{Container, Creature, Item};
 
     /// Run a Ctx closure and return its emitted (pre-resolution) outbound buffer, so
     /// a perform test reads the actor feedback the seam emits. A guest verdict, which
@@ -481,6 +502,66 @@ mod tests {
             feedback(&out)
         );
         assert_eq!(f.world.container_of(far_item), Some(elsewhere));
+    }
+
+    #[test]
+    fn snapshot_projects_relation_backed_exits_under_the_room() {
+        // A real exit is relation-backed (`LeadsFrom`), not contained in the room,
+        // so raw containment misses it. The client reaches exits only by clicking,
+        // so `collect` projects them as room-node children, and they are perceivable
+        // (so a clicked `go` is not refused as unseen). The fixture's `gate` is a
+        // contained stand-in; this exercises the relation path the seed actually uses.
+        use crate::exits::LeadsFrom;
+        let mut f = fixture();
+        let room = f.world.enclosing_locus(f.actor).unwrap();
+        let exit = spawn(&mut f.world, |b| {
+            b.add(Exit);
+            b.add(Name("east".into()));
+        });
+        f.world.relate::<LeadsFrom>(exit, room).unwrap();
+
+        let snap = snapshot(&f.world, f.actor);
+        assert!(
+            node(&snap, room).contents.contains(&exit.0.to_string()),
+            "the exit is a child of the room node"
+        );
+        assert!(
+            snap.entities.iter().any(|e| e.id == exit.0.to_string()),
+            "the exit has its own node"
+        );
+        assert!(
+            perceivable(&f.world, f.actor, exit),
+            "a clicked exit must not be refused as unseen"
+        );
+    }
+
+    #[test]
+    fn a_clicked_take_of_an_item_inside_a_creature_is_refused() {
+        // Finding 4: an item in another creature's inventory is perceivable (shares
+        // the locus) but not reachable. Acting on it must be refused, and nothing
+        // moves. Without the reachability gate this pulled the crumb into the hand.
+        let mut f = fixture();
+        let room = f.world.enclosing_locus(f.actor).unwrap();
+        let mouse = spawn(&mut f.world, |b| {
+            b.add(Creature);
+            b.add(Name("a field mouse".into()));
+        });
+        f.world.move_entity(mouse, room).unwrap();
+        let crumb = spawn(&mut f.world, |b| {
+            b.add(Item);
+            b.add(Name("a crumb".into()));
+        });
+        f.world.move_entity(crumb, mouse).unwrap();
+
+        let out = run(&mut f.world, f.actor, |ctx| {
+            perform(ctx, &Verdict::guest(), "take", crumb, None);
+        });
+        assert!(
+            feedback(&out).iter().any(|t| t == "You can't reach that."),
+            "got: {:?}",
+            feedback(&out)
+        );
+        assert_eq!(f.world.container_of(crumb), Some(mouse));
     }
 
     #[test]

@@ -68,6 +68,15 @@ fail, and if so which. Enumeration needs three things it cannot give:
    deferred design decision, pinned by a characterization test so the eventual
    filter is deliberate, not accidental.
 
+   The resolution scope's *reachability* half **is** recovered, though, because it
+   is a safety boundary, not a nicety: a manipulated object must be `reachable`
+   (held by the actor or loose in the actor's locus), which perception alone is not.
+   Perception spans the whole locus subtree, so an item nested in another creature's
+   inventory is visible; without the reachability gate a click could take it, which
+   the text path's room-scoped resolution never allows. This is one containment
+   level, distinct from the deferred kind filter: a reachable wrong-kind object (a
+   chest on the floor) still classifies by its guards.
+
 Points 2 and 3 are the same gap the planner has, from a new angle: a
 resolver-less consumer needs the full guard set and loses the resolution scope
 that silently enforced some preconditions (see the affordances doc's note on name

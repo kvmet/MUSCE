@@ -102,8 +102,10 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   with no capability-gated verbs.
 - **`snapshot: fn(&World, EntityId) -> web::SnapshotData`** and
   **`offers: fn(&World, EntityId, EntityId) -> Vec<web::Offer>`** the pointing web
-  client's reads: the perceivable containment tree for an actor (each node carrying
-  the passive detail it perceives by presence, such as a `Description`), and the
+  client's reads: the perceivable containment tree for an actor, rooted at its locus
+  and including that locus's relation-backed exits as clickable nodes (a click has
+  no `go` box to type into), each node carrying the passive detail it perceives by
+  presence, such as a `Description`; and the
   affordances available on a clicked entity. Game policy because names, kinds, the
   detail projection, and the affordance set are all game vocabulary; the engine only
   routes a read `Query` to them and serializes the wire result (see
