@@ -1,78 +1,114 @@
 <script lang="ts">
-  import { MockConn, type Conn } from "./lib/connection";
-  import type { Offer } from "./lib/protocol";
+  import { MockConn, WsConn, type Conn } from "./lib/connection";
+  import { toSnapshot, type Snapshot } from "./lib/snapshot";
+  import type { Offer } from "./lib/bindings/Offer";
+  import type { ServerMsg } from "./lib/bindings/ServerMsg";
   import EntityTree from "./components/EntityTree.svelte";
   import Offers from "./components/Offers.svelte";
   import Log from "./components/Log.svelte";
   import CommandBar from "./components/CommandBar.svelte";
 
-  const conn: Conn = new MockConn();
+  // `?mock` runs the in-browser stand-in; otherwise connect to the server's WebSocket
+  // (its default bind, overridable at build time). The UI is identical either way.
+  const env = import.meta.env as unknown as { VITE_WS_URL?: string };
+  const useMock = new URLSearchParams(location.search).has("mock");
+  const conn: Conn = useMock
+    ? new MockConn()
+    : new WsConn(env.VITE_WS_URL ?? `ws://${location.hostname}:4001`);
 
-  // Bumped after every mutation so the derived reads recompute against the world
-  // as it now is (late-bound, like the server would be).
-  let version = $state(0);
-  let selected = $state<number | null>(null);
+  // Local state, updated by the inbound stream. The server pushes no state deltas, so
+  // after any act the client re-reads (see `refresh`).
+  let snap = $state<Snapshot | null>(null);
+  let offersReply = $state<{ clicked: string; offers: Offer[] } | null>(null);
+  let selected = $state<string | null>(null);
   // A pending act awaiting a second role (the `put` object sub-pick).
-  let pending = $state<{ offer: Offer; clicked: number } | null>(null);
-  let lines = $state<string[]>(["Pointing graybox. Click a thing to see what you can do to it."]);
+  let pending = $state<{ offer: Offer; clicked: string } | null>(null);
+  let lines = $state<string[]>(["Pointing client. Click a thing to see what you can do to it."]);
 
-  const snap = $derived.by(() => {
-    version;
-    return conn.snapshot();
-  });
-  const offers = $derived.by(() => {
-    version;
-    return selected === null ? [] : conn.offersOn(selected);
-  });
+  // Offers reflect the current selection only: a reply for a since-changed selection
+  // is stale and dropped.
+  const offers = $derived(offersReply && offersReply.clicked === selected ? offersReply.offers : []);
   const inventory = $derived.by(() => {
-    version;
-    return conn.inventory();
+    if (!snap) return [];
+    const me = snap.entities.get(snap.actor);
+    return (me?.contents ?? []).map((id) => snap!.entities.get(id)).filter((e) => e !== undefined);
+  });
+  const subjectName = $derived(selected && snap ? (snap.entities.get(selected)?.name ?? "") : "");
+
+  conn.subscribe((msg: ServerMsg) => {
+    switch (msg.t) {
+      case "event":
+        lines = [...lines, msg.text];
+        break;
+      case "snapshot":
+        snap = toSnapshot(msg);
+        break;
+      case "offers":
+        offersReply = { clicked: msg.clicked, offers: msg.offers };
+        break;
+    }
+  });
+  conn.onOpen(() => {
+    // Embody (a bare `@play` seats a guest), then read the world.
+    conn.send({ t: "line", line: "@play" });
+    conn.send({ t: "query", q: "snapshot" });
+  });
+  conn.onClose(() => {
+    lines = [...lines, "(disconnected)"];
   });
 
-  function say(...out: string[]) {
-    lines = [...lines, ...out];
+  // Re-read after a mutation: the tree, and the offers for the current selection.
+  function refresh() {
+    conn.send({ t: "query", q: "snapshot" });
+    if (selected !== null) conn.send({ t: "query", q: "offers", clicked: selected });
   }
 
-  function select(id: number) {
+  function select(id: string) {
     selected = id;
     pending = null;
+    conn.send({ t: "query", q: "offers", clicked: id });
   }
 
   function act(offer: Offer) {
     if (selected === null) return;
     if (offer.status.kind === "needsRole") {
-      // Open the sub-pick instead of acting: the client resolves the missing role.
+      // Open the sub-pick instead of acting: the client supplies the missing role.
       pending = { offer, clicked: selected };
       return;
     }
-    say(conn.perform(offer.name, conn.frameFor(offer.name, selected)));
-    version++;
+    conn.send({ t: "perform", name: offer.name, focus: selected, with: null });
+    refresh();
   }
 
   // Fill the pending act's missing role with `objectId` and run it.
-  function pick(objectId: number) {
+  function pick(objectId: string) {
     if (!pending) return;
-    const frame = { ...conn.frameFor(pending.offer.name, pending.clicked), object: objectId };
-    say(conn.perform(pending.offer.name, frame));
+    conn.send({ t: "perform", name: pending.offer.name, focus: pending.clicked, with: objectId });
     pending = null;
-    version++;
+    refresh();
   }
 
-  const subjectName = $derived(selected === null ? "" : conn.name(selected));
+  function say(line: string) {
+    conn.send({ t: "line", line });
+  }
 </script>
 
 <main>
   <header>
     <h1>MUSCE</h1>
-    <p class="tag">thin pointing client (mock connection)</p>
+    <p class="tag">thin pointing client ({useMock ? "mock" : "live"})</p>
   </header>
 
   <div class="panes">
     <nav aria-label="Here" class="tree">
       <h2>Here</h2>
-      <ul>
-        <EntityTree id={snap.root} {snap} {selected} onSelect={select} />
-      </ul>
+      {#if snap}
+        <ul>
+          <EntityTree id={snap.root} {snap} {selected} onSelect={select} />
+        </ul>
+      {:else}
+        <p class="empty">Connecting…</p>
+      {/if}
     </nav>
 
     <div class="detail">
@@ -103,7 +139,7 @@
 
     <div class="stream">
       <Log {lines} />
-      <CommandBar onSubmit={(line) => say(...conn.send(line))} />
+      <CommandBar onSubmit={say} />
     </div>
   </div>
 </main>

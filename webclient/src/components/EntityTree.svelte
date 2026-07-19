@@ -1,12 +1,13 @@
 <script lang="ts">
-  import type { Entity, Snapshot } from "../lib/protocol";
+  import type { Entity } from "../lib/bindings/Entity";
+  import type { Snapshot } from "../lib/snapshot";
   import Self from "./EntityTree.svelte";
 
   interface Props {
-    id: number;
+    id: string;
     snap: Snapshot;
-    selected: number | null;
-    onSelect: (id: number) => void;
+    selected: string | null;
+    onSelect: (id: string) => void;
   }
   let { id, snap, selected, onSelect }: Props = $props();
 

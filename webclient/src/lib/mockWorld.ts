@@ -1,11 +1,26 @@
-// A tiny stand-in for the sim, so the client is fully exercisable before the
-// WebSocket transport exists. It mirrors `musce_ref::offers`: the same focus-role
-// convention, the same guards in the same order, the same three-way classify. The
-// seed matches the `offers` test fixture (a chest, a held coin, a loose button, a
-// takeable rock, a locked gate). Replace this whole file's consumer with a real
-// `WsConn` and none of the UI changes.
+// A tiny stand-in for the sim, so the client is fully exercisable offline. It mirrors
+// `musce_ref`: the same focus-role convention, the same guards in the same order, the
+// same three-way classify, and it answers the same wire messages the real server
+// does (`handle` maps a `ClientMsg` to the `ServerMsg`s it provokes). The seed matches
+// the `offers` fixture (a chest, a held coin, a loose button, a takeable rock, a
+// locked gate). Ids are strings, as they cross the real wire.
 
-import type { Entity, Frame, Offer, OfferStatus, Role } from "./protocol";
+import type { ClientMsg } from "./bindings/ClientMsg";
+import type { ServerMsg } from "./bindings/ServerMsg";
+import type { Entity } from "./bindings/Entity";
+import type { Offer } from "./bindings/Offer";
+import type { OfferStatus } from "./bindings/OfferStatus";
+import type { Role } from "./bindings/Role";
+import type { SnapshotData } from "./bindings/SnapshotData";
+
+// The case frame the mock resolves an act against: which entities fill its roles.
+// Client-internal; the wire carries `focus`/`with`, and the mock maps them onto this
+// exactly as the server's game policy does.
+interface Frame {
+  actor: string;
+  object?: string;
+  target?: string;
+}
 
 interface Aff {
   name: string;
@@ -16,38 +31,56 @@ interface Aff {
 }
 
 export class MockWorld {
-  entities = new Map<number, Entity>();
-  actor = 0;
-  room = 0;
+  entities = new Map<string, Entity>();
+  actor = "2";
+  room = "1";
 
   constructor() {
     const add = (e: Entity) => this.entities.set(e.id, e);
     // ids are arbitrary but stable within a session
-    add({ id: 1, name: "a stone hall", kinds: ["locus"], contents: [2, 3, 4, 5, 6] });
-    add({ id: 2, name: "a weathered adventurer", kinds: ["player"], contents: [7] });
-    add({ id: 3, name: "a wooden chest", kinds: ["container"], contents: [] });
-    add({ id: 4, name: "a smooth rock", kinds: ["item"], contents: [] });
-    add({ id: 5, name: "a stray button", kinds: ["item"], contents: [] });
-    add({ id: 6, name: "north", kinds: ["exit", "locked"], contents: [] });
-    add({ id: 7, name: "a copper coin", kinds: ["item"], contents: [] });
-    this.actor = 2;
-    this.room = 1;
+    add(node("1", "a stone hall", ["locus"], ["2", "3", "4", "5", "6"]));
+    add(node("2", "a weathered adventurer", ["player"], ["7"]));
+    add(node("3", "a wooden chest", ["container"], []));
+    add(node("4", "a smooth rock", ["item"], []));
+    add(node("5", "a stray button", ["item"], []));
+    add(node("6", "north", ["exit", "locked"], []));
+    add(node("7", "a copper coin", ["item"], []));
   }
 
-  private has(id: number | undefined, kind: string): boolean {
+  // Map a wire message to the replies it provokes, exactly as the sim would.
+  handle(msg: ClientMsg): ServerMsg[] {
+    switch (msg.t) {
+      case "line":
+        return this.line(msg.line).map((text) => ({ t: "event", kind: "feedback", text }));
+      case "query":
+        return msg.q === "snapshot"
+          ? [{ t: "snapshot", ...this.snapshot() }]
+          : [{ t: "offers", clicked: msg.clicked, offers: this.offers(msg.clicked) }];
+      case "perform":
+        return [
+          {
+            t: "event",
+            kind: "feedback",
+            text: this.perform(msg.name, msg.focus, msg.with ?? undefined),
+          },
+        ];
+    }
+  }
+
+  private has(id: string | undefined, kind: string): boolean {
     return id !== undefined && (this.entities.get(id)?.kinds.includes(kind) ?? false);
   }
 
-  private parentOf(id: number): number | undefined {
+  private parentOf(id: string): string | undefined {
     for (const e of this.entities.values()) if (e.contents.includes(id)) return e.id;
     return undefined;
   }
 
-  private containedBy(a: number | undefined, b: number | undefined): boolean {
+  private containedBy(a: string | undefined, b: string | undefined): boolean {
     return a !== undefined && b !== undefined && this.parentOf(a) === b;
   }
 
-  private move(id: number, into: number) {
+  private move(id: string, into: string) {
     const from = this.parentOf(id);
     if (from !== undefined) {
       const c = this.entities.get(from)!;
@@ -109,9 +142,9 @@ export class MockWorld {
     return frame[role] !== undefined;
   }
 
-  // Mirrors `offers::classify`: completeness before veto, so an unbound role reads
-  // as "pick something", not as the guard it would spuriously fail.
-  classify(name: string, frame: Frame): OfferStatus {
+  // Mirrors `offers::classify`: completeness before veto, so an unbound role reads as
+  // "pick something", not as the guard it would spuriously fail.
+  private classify(name: string, frame: Frame): OfferStatus {
     const aff = this.table().find((a) => a.name === name)!;
     for (const role of aff.requires) {
       if (!this.filled(frame, role)) return { kind: "needsRole", role };
@@ -123,30 +156,38 @@ export class MockWorld {
     return { kind: "available" };
   }
 
-  frameFor(name: string, clicked: number): Frame {
-    const aff = this.table().find((a) => a.name === name)!;
+  private frameForRole(aff: Aff, clicked: string): Frame {
     return { actor: this.actor, [aff.focus]: clicked };
   }
 
-  offersOn(clicked: number): Offer[] {
+  offers(clicked: string): Offer[] {
     return this.table().map((a) => ({
       name: a.name,
-      status: this.classify(a.name, this.frameFor(a.name, clicked)),
+      status: this.classify(a.name, this.frameForRole(a, clicked)),
     }));
   }
 
-  inventory(): Entity[] {
-    const me = this.entities.get(this.actor)!;
-    return me.contents.map((id) => this.entities.get(id)!);
-  }
-
-  name(id: number): string {
+  private name(id: string): string {
     return this.entities.get(id)?.name ?? `#${id}`;
   }
 
-  // Apply a fully-bound act, refusing exactly as `perform` would. Returns the line
-  // the player hears.
-  perform(name: string, frame: Frame): string {
+  snapshot(): SnapshotData {
+    return { root: this.room, actor: this.actor, entities: [...this.entities.values()] };
+  }
+
+  // Apply a fully-grounded act named by the client: `focus` fills the affordance's
+  // focus role, an optional `with` fills the other required role (the `put` object
+  // once the container is the focus). Refuses exactly as the server's perform would;
+  // returns the feedback line the actor hears.
+  perform(name: string, focus: string, withId?: string): string {
+    const aff = this.table().find((a) => a.name === name);
+    if (!aff) return "You can't do that.";
+    const frame: Frame = { actor: this.actor, [aff.focus]: focus };
+    if (withId !== undefined) {
+      const other = aff.requires.find((r) => r !== aff.focus);
+      if (other) frame[other] = withId;
+    }
+
     const status = this.classify(name, frame);
     if (status.kind === "vetoed") return status.reason;
     if (status.kind === "needsRole") return "You need to choose what to act on.";
@@ -171,11 +212,12 @@ export class MockWorld {
   }
 
   // A minimal text path, so the command bar coexists with clicking (the a11y point).
-  send(line: string): string[] {
-    const input = line.trim();
-    if (!input) return [];
-    const echo = `> ${input}`;
-    if (input === "look" || input === "l") {
+  private line(input: string): string[] {
+    const text = input.trim();
+    if (!text) return [];
+    if (text === "@play") return [`Welcome. You are ${this.name(this.actor)}.`];
+    const echo = `> ${text}`;
+    if (text === "look" || text === "l") {
       const room = this.entities.get(this.room)!;
       const here = room.contents
         .filter((id) => id !== this.actor)
@@ -185,4 +227,10 @@ export class MockWorld {
     }
     return [echo, "(the graybox only understands 'look' over text for now)"];
   }
+}
+
+// One seed node as a wire `Entity`. The mock exposes no passive detail, so `details`
+// is empty; the field exists because the wire type carries it.
+function node(id: string, name: string, kinds: string[], contents: string[]): Entity {
+  return { id, name, kinds, contents, details: [] };
 }

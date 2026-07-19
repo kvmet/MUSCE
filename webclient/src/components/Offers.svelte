@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Offer } from "../lib/protocol";
+  import type { Offer } from "../lib/bindings/Offer";
 
   interface Props {
     subject: string;

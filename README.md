@@ -1,26 +1,69 @@
 # MUSCE
 
 An ECS-based MUD engine in Rust, aimed at a deep, emergent, room-based
-simulation. Early and under active design; the in-memory ECS world, its
-persistence layer, a TCP transport, and the first slice of the in-game command
-layer exist. You can connect, `@play`, and `look`/`go`/`take`/`drop`/`say` in a
-small seeded world.
+simulation. Early and under active design. One authoritative simulation drives
+two interfaces over the same command stream: a text MUD over TCP, and a thin
+"pointing" web client over WebSocket. You can connect, `@play`, and
+`look`/`go`/`take`/`drop`/`say` in a small seeded world.
+
+## Quickstart
+
+Run the reference game (the engine parameterized with `musce_ref`'s content). It
+listens for the text MUD on `127.0.0.1:4000` and the web client on
+`127.0.0.1:4001`, and persists to a SQLite file:
+
+```sh
+cargo run -p musce_ref
+```
+
+Text client: connect with any line-mode client, seat a guest, and look around.
+
+```sh
+nc localhost 4000
+@play
+look
+```
+
+Web client (the pointing UI): its dev server proxies to the WebSocket above.
+
+```sh
+cd webclient
+npx vite            # dev server; open the printed URL
+```
+
+Append `?mock` to the URL to run the in-browser stand-in with no server. See
+[webclient/README.md](webclient/README.md).
+
+The backend is chosen by the `MUSCE_DB` URL scheme (`sqlite://…` default,
+`postgres://…`); the game code is identical either way.
 
 ## Workspace
 
+- `musce` — the facade: the one crate a game depends on, re-exporting the
+  engine's game-facing surface (`run`, `Config`, `Game`, the wire types) and
+  nothing internal.
 - `musce_core` — the engine: the ECS world, global identity, the generic
   relation layer, containment, and the JSON snapshot model. Pure (no I/O).
-- `musce_persistence` — World-as-truth save/load behind a `Persistence` trait;
-  SQLite backend today, Postgres to follow.
-- `musce_proto` — the shared command/event vocabulary that crosses the net/sim
-  boundary. Transport-free, so the action layer never depends on networking.
-- `musce_action` — the action layer: the structural executor (`Action::Move`),
-  the verb dispatch table, the stub `@play` actor binding, the audience resolver,
-  and a code-seeded starter world. Pure synchronous logic.
-- `musce_net` — raw TCP line-mode transport behind a transport-agnostic
-  `Connection`, plus the commands-in/events-out pipe and event router.
+- `musce_index` — a generic secondary index over one component (`key ->
+  entities`), so the world answers "which entities key to X" without a scan.
+- `musce_persistence` — World-as-truth save/load; an entity shredded to one row
+  per component. SQLite and Postgres behind one trait.
+- `musce_proto` — the wire vocabulary crossing the net/sim boundary: commands in,
+  events out, and the web envelope. Transport-free; TS bindings behind the `ts`
+  feature.
+- `musce_action` — the action layer: the structural executor, verb dispatch, the
+  affordance vocabulary and guards. Pure synchronous engine mechanism.
+- `musce_agency` — the optional planner: the GOAP `Planner`, `Arbiter`, and
+  execution `Driver` a game consumes to give NPCs goals.
+- `musce_auth` — account authentication and identity: the `Account` record,
+  capabilities, and the verdict/gate.
+- `musce_net` — the transports (TCP line-mode and WebSocket) behind a
+  transport-agnostic pipe, plus the commands-in/events-out router.
 - `musce_host` — the runtime: the single sim thread, the tick loop, boot load and
-  snapshot persistence, and the command dispatcher that wires it together.
+  snapshot persistence, and the command dispatcher.
+- `musce_ref` — the reference game and the runnable binary: it owns all game
+  content (verbs, seed world, narration, the `@play` policy) and builds the
+  `Game` the engine runs.
 
 ## Architecture
 

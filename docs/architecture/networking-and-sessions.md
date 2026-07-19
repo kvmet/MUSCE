@@ -10,7 +10,13 @@
 > ids never collide). It carries the text line pipe *and* a **structured JSON
 > envelope** (`musce_proto::web`): the transport parses a `ClientMsg` into a typed
 > `Input` and serializes a `ServerMsg`, so the sim sees typed values while a telnet
-> client still speaks bare text. On that envelope the **read pair is built**: a
+> client still speaks bare text. Entity ids cross this envelope as **strings**, not
+> JSON numbers (a browser's `JSON.parse` yields IEEE doubles, so a full-width or
+> later sharded/URI id would lose precision as a number); the game formats an id out
+> and parses it back at the dispatch boundary. The envelope's types **generate the
+> client's TypeScript** via `ts-rs` behind a feature-gated derive, so the wire
+> shapes cannot drift and no ts-rs enters a normal engine build. On that envelope
+> the **read pair is built**: a
 > `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
 > dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
 > by the game's `snapshot`/`offers` seams (see
@@ -34,9 +40,13 @@
 > persisted `Controls` and `Focus` relations make embodiment durable: a character
 > piloting a robot survives a reboot still piloting it. Dynamic possession (the
 > `@possess`/`@unpossess` admin verbs) is built: staff can establish and tear down
-> a `Controls` edge at runtime. The SSH transport, char/raw input-mode
-> switching, real accounts/auth, and modal overlays remain proposed; the rest of
-> this document records that design.
+> a `Controls` edge at runtime. The **web pointing client** (`webclient/`) is built
+> on this envelope: a Svelte app that programs against a *push* `Conn` (send a
+> `ClientMsg`, subscribe to the `ServerMsg` stream), bootstraps by embodying a guest
+> (`@play`) then requesting a snapshot, and re-reads after each act (the server
+> pushes no state deltas). The SSH transport, char/raw input-mode switching, real
+> accounts/auth, and modal overlays remain proposed; the rest of this document
+> records that design.
 
 ## Three layers, and the thread boundary
 
@@ -60,7 +70,8 @@ Every transport reduces to a bidirectional stream plus capability flags (line- v
   produces from a typed `ServerMsg`. This is why the transport boundary yields
   `Input` (not raw strings): each transport owns its own framing and parsing, and
   the sim only ever sees typed values. Carries text commands, the structured read
-  pair, and (later) perform-by-id.
+  pair, and perform-by-id. The envelope's ids are strings and its types generate
+  the client's TypeScript via `ts-rs` (see the status blockquote).
 - **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-game VI, WASD movement. (`russh` for an in-process server.)
 - **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
 
