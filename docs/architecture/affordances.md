@@ -205,3 +205,7 @@ on top of a stable engine vocabulary.
   backstop that guards deliberately do not replace.
 - [engine-and-app.md](engine-and-app.md): the `WorldModel` seam is the new
   app-supplied surface this promotion adds to the engine/app boundary.
+- [gauges.md](gauges.md): the split between stored components (truth: present,
+  settable) and gauges (derived, read-only qualitative readings on a bounded
+  quantity space that a planner regresses over by direction), and why an effect on
+  a gauge is a direction rather than an exact transition.

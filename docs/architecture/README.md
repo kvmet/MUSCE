@@ -77,6 +77,9 @@ These hold across every subsystem:
   (`musce_action`, non-optional), why the veto is a predicate plus a reason rather
   than a bool, and the phased migration. *(Phases A and B built: vocabulary and
   `Affordance::veto` are engine surface; negation is phase C.)*
+- [gauges.md](gauges.md): the split between stored components and derived gauges,
+  the normalized byte level, inclusive target interval, and raw up/down direction.
+  *(Foundational value types built; evaluation and agency integration proposed.)*
 - [offers.md](offers.md): enumerating the affordances available on an entity for a
   pointing client ("what can I do to this?"), the three-way `OfferStatus`, why it
   is a private read rather than the `examine` verb, and the type-filter gap a

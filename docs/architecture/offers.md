@@ -92,6 +92,39 @@ affordance set and reads them through `RefWorldModel`. The *classification*
 affordance vocabulary itself followed; it stays in the reference app until that
 second consumer exists.
 
+## Open question: the focus role is not carried in-band
+
+Point 1 above *states* the convention rather than carrying it. `focus_role` is a
+by-name function in `musce_ref` (`put`/`go` act on a `target`, the rest on an
+`object`), consulted twice and independently: once by enumeration to build the
+frame it classifies, and once by `perform` to map an incoming `focus`/`with` pair
+back onto roles (`pointing.rs`). The two agree because they call the same
+app-local function, not because anything on the wire says so.
+
+So a client cannot construct an act for an affordance it was not taught. `Offer`
+carries the affordance's name and its status, and `OfferStatus::NeedsRole`
+carries the role of the *sub-pick*, but the role the clicked entity itself fills
+is never sent. The `Role` type already serializes; it is the focus slot that has
+no field for it.
+
+Two reasons this is worth more than a missing field usually is:
+
+- **It is the one place "drivable entirely in-band" is currently false.** A
+  generic client holding no app vocabulary can render offers but cannot perform
+  one without knowing the convention out of band, and a second app choosing a
+  different convention would break clients with no wire-visible signal. That
+  makes it the gate on the boundary property the whole offers/perform pair exists
+  to provide.
+- **The envelope is a serialized two-slot shape.** `focus`/`with` fixes both the
+  arity and the anonymity of the roles, and `Frame`'s arity is deliberately fixed
+  to match (`musce_action::affordance`). Declaring roles per offer, or admitting a
+  third slot, is therefore a wire migration rather than an addition.
+
+Deliberately left open rather than solved here. The shape of the fix (carry the
+focus role on `Offer`, or name roles generally and let an offer declare its
+slots) should be clearer once the lower-level predicate and effect wrinkles
+settle, since those determine what an affordance's roles are in the first place.
+
 ## Relation to the other docs
 
 - [affordances.md](affordances.md): the veto model this reads. `OfferStatus` is

@@ -82,10 +82,14 @@ primitive:
   actions toward a numeric threshold is metric planning, categorically harder than
   propositional GOAP, and not something an agent planner should attempt. If a
   threshold genuinely must be *reached* by planning (sharpen a sword until it can
-  cut), do not make the planner do arithmetic: have an app **system** maintain a
-  derived **tag** at the threshold (`tag(sword, SharpEnough)`) and let the planner
-  chain over the tag. Numeric accumulation is the system's concern; the planner
-  sees a tag flip. Same shape as forward-value-is-truth, the tag a derived index.
+  cut), do not make the planner do arithmetic: keep numeric accumulation the app's
+  concern and let the planner chain over a derived qualitative reading.
+  [../gauges.md](../gauges.md) refines the shape of that reading: rather than a
+  system *maintaining* a stored marker, it is a **gauge**, a read-only normalized
+  level *computed* from the backing data on read. A target interval derives the raw
+  direction needed to reach it; nothing is materialised, so there is no
+  derive-before-plan ordering to keep. Only the value types are built today—the
+  predicate/effect and planner integration remain proposed.
 
 **Representation.** A raw field/op/value comparison cannot express the ratio, so a
 content test is a **app-supplied boolean predicate over a candidate**, referenced
