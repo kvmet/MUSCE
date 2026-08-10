@@ -45,9 +45,16 @@ What is and isn't serialized:
   secondary index (see indexes.md). `snapshot` serializes entity rows only, so a
   resource is never written; it is rebuilt on boot, the same as the reverse lists.
 
-Load is order-independent: forward links are `EntityId`s resolved through the
-index, so a target need not exist when its source is spawned. After all entities
-are spawned, reverse lists are rebuilt in one O(n) pass.
+`World::load` accepts only a fresh world with no prior entity-derived state (startup
+registrations, tracking choices, and transient resources may already be installed).
+It stages all deserialization and identity checks before spawning, then inserts the complete set,
+validates every relation kind, and only after all validation succeeds rebuilds
+reverse lists. Forward links are `EntityId`s, so blob order remains irrelevant.
+Duplicate blob ids, non-object blobs, missing/malformed/mismatched `Id`s, dangling
+relation targets, and cycles in an `ACYCLIC` relation are contextual hard errors. A relation-validation failure
+clears only entity-derived load state, preserving registrations/resources so the
+fresh receiver is reusable for a corrected attempt; no partially rebuilt reverse
+indexes escape.
 
 ## Storage shape
 
@@ -153,27 +160,35 @@ failure.
 The DB owns it, which also pre-solves shard allocation: a future hub hands
 disjoint id ranges to shards from the same source.
 
-On load, `next_id` is clamped to `max(stored marker, max live id + 1)`, so it can
-never fall to or below a live id and let the next save reissue an id over a stored
-entity. A missing or stale-low marker (a restored dump with no `meta`) is corrected
-and warned, not silently trusted.
+Both persistence assembly and the public `World::load` boundary clamp `next_id` to
+`max(stored marker, max live id + 1)`, so a direct snapshot load cannot fall to or
+below a live id and reissue it. A missing or stale-low marker (a restored dump with
+no `meta`) is corrected and warned by persistence; `World::load` independently
+enforces the floor. A live `u64::MAX` identity is rejected because no successor can
+be represented.
 
 ## Integrity and evolution
 
 - On load, the DB primary key and the entity's own `Id` component are checked to
-  agree (a `debug_assert`), catching corrupt or wrongly-keyed data instead of
-  letting index and component silently diverge.
+  agree in every build. `LoadError::IdMismatch` retains both the blob id and the
+  optional component id, malformed `Id` values retain their parse error, non-object
+  blobs are diagnosed separately, and duplicate entity blobs are rejected before
+  spawn.
 - Per-component storage can represent states a single blob could not, so load rejects
   them rather than dropping data: an entity whose rows reassemble with no `Id`
   component is a hard error (an Id-less entity would otherwise only detonate at the
-  next snapshot, since the id-agreement check above is a release-disabled
-  `debug_assert`), and component rows referencing an entity absent from the roster
+  next snapshot), and component rows referencing an entity absent from the roster
   (orphans a roster-driven load would silently skip) are a hard error too.
 - An unknown component tag on load is a hard error, not a silent skip, and a load
   error is **fatal**: the runtime refuses to boot rather than run an empty world.
   Running empty would reissue ids from 1 that the next save would write over the
   still-stored entities, so refusing to boot is what keeps a load failure from
   becoming data loss. Surfacing the mismatch beats silently dropping data.
+- A complete-world load rejects every relation target absent from that world and
+  every cycle in an `ACYCLIC` relation before rebuilding derived indexes. This is a
+  full-world invariant; future shard-scoped loading must replace locality with
+  locator-aware remote-reference validation rather than disabling the check (see
+  [sharding.md](sharding.md)).
 - **Schema version and the migration seam.** Every save stamps a `schema_version`
   into `meta` (`SCHEMA_VERSION` in `musce_persistence`). On load, the stored
   version is compared against the current one and the blobs pass through a

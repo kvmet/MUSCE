@@ -120,6 +120,13 @@ The executor vocabulary is small and is pure world-mutation:
 - `Create` / `Destroy`
 - `SetComponent / RemoveComponent`
 
+Every executor action names a live subject. `Destroy` returns
+`ExecError::NoSuchEntity { operation: Destroy, entity }` instead of inheriting the
+typed despawn mutator's idempotent no-op; type-erased `Unrelate` likewise rejects a
+missing source after resolving its relation kind. Relation errors retain the kind,
+the missing endpoint role, or the source/target that would close a cycle, so a
+structural failure says what operation and identity need correction.
+
 Most verbs are parse-layer sugar that resolve to one action by computing a
 destination and applying a rule predicate. Containment movement is the clearest
 case: a room is just another container, so drop is give-to-the-room. All of these

@@ -262,7 +262,7 @@ mod tests {
         // Simulate a prior save: draining the snapshot clears the spawn-dirty set, so
         // the next delta reflects only what the attack changes. Without this the rat
         // would ride the delta from its spawn and the test could not see the bug.
-        let _ = f.world.snapshot();
+        let initial = f.world.snapshot();
         assert!(
             f.world.snapshot().entities.is_empty(),
             "the world is clean after a save"
@@ -276,9 +276,17 @@ mod tests {
         // would leave the delta empty and the rat would reload absent (this `hp`
         // lookup would then panic), i.e. the damage silently lost across a restart.
         let delta = f.world.snapshot();
+        let mut stored = initial.entities;
+        for changed in delta.entities {
+            let slot = stored
+                .iter_mut()
+                .find(|blob| blob.id == changed.id)
+                .expect("the changed rat exists in the stored full snapshot");
+            *slot = changed;
+        }
         let mut reloaded = World::new();
         crate::systems::register(&mut reloaded);
-        reloaded.load(&delta.entities, delta.next_id).unwrap();
+        reloaded.load(&stored, delta.next_id).unwrap();
         assert_eq!(
             hp(&reloaded, f.rat),
             3,

@@ -21,8 +21,10 @@ pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
 pub use fact::{DestroyCause, Fact};
 pub use id::{EntityId, EntityIndex};
-pub use relation::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
-pub use snapshot::{EntityBlob, Snapshot};
+pub use relation::{
+    AcyclicRelation, Cascade, RelTarget, Relation, RelationError, RelationRole, Walk,
+};
+pub use snapshot::{EntityBlob, LoadError, Snapshot};
 pub use world::{MutateError, World};
 
 #[cfg(test)]
@@ -157,8 +159,56 @@ mod tests {
         let a = container(&mut w, "a");
         let b = container(&mut w, "b");
         w.move_entity(b, a).unwrap();
-        assert!(matches!(w.move_entity(a, b), Err(RelationError::Cycle)));
-        assert!(matches!(w.move_entity(a, a), Err(RelationError::Cycle)));
+        assert!(matches!(
+            w.move_entity(a, b),
+            Err(RelationError::Cycle { .. })
+        ));
+        assert!(matches!(
+            w.move_entity(a, a),
+            Err(RelationError::Cycle { .. })
+        ));
+    }
+
+    #[test]
+    fn relation_errors_retain_kind_endpoint_role_and_cycle_edge() {
+        let mut w = World::new();
+        let live = container(&mut w, "live");
+        let missing = EntityId(99_999);
+
+        let source_error = w.move_entity(missing, live).unwrap_err();
+        assert!(matches!(
+            &source_error,
+            RelationError::NoSuchEntity {
+                kind,
+                role: RelationRole::Source,
+                entity,
+            } if kind == Containment::TARGET_TAG && *entity == missing
+        ));
+        assert!(source_error.to_string().contains("source"));
+
+        let target_error = w.move_entity(live, missing).unwrap_err();
+        assert!(matches!(
+            &target_error,
+            RelationError::NoSuchEntity {
+                kind,
+                role: RelationRole::Target,
+                entity,
+            } if kind == Containment::TARGET_TAG && *entity == missing
+        ));
+        assert!(target_error.to_string().contains("target"));
+
+        let cycle_error = w.move_entity(live, live).unwrap_err();
+        assert!(matches!(
+            &cycle_error,
+            RelationError::Cycle {
+                kind,
+                source,
+                target,
+            } if kind == Containment::TARGET_TAG && *source == live && *target == live
+        ));
+        let display = cycle_error.to_string();
+        assert!(display.contains(Containment::TARGET_TAG));
+        assert!(display.contains(&format!("{live:?}")));
     }
 
     #[test]
@@ -416,16 +466,195 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "disagrees with its Id component")]
-    fn load_rejects_mismatched_id() {
+    fn load_rejects_mismatched_and_missing_ids_with_context() {
         let mut w = World::new();
         let _ = item(&mut w, "x");
         let mut snap = w.snapshot();
         snap.entities[0].id = EntityId(99_999); // disagree with the Id in data
 
         let mut w2 = World::new();
-        let _ = w2.load(&snap.entities, snap.next_id);
+        assert!(matches!(
+            w2.load(&snap.entities, snap.next_id),
+            Err(LoadError::IdMismatch {
+                blob_id: EntityId(99_999),
+                component_id: Some(_),
+            })
+        ));
+
+        snap.entities[0]
+            .data
+            .as_object_mut()
+            .unwrap()
+            .remove(Id::TAG);
+        assert!(matches!(
+            w2.load(&snap.entities, snap.next_id),
+            Err(LoadError::IdMismatch {
+                blob_id: EntityId(99_999),
+                component_id: None,
+            })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_duplicates_before_spawning() {
+        let mut source = World::new();
+        let _ = item(&mut source, "x");
+        let mut snap = source.snapshot();
+        snap.entities.push(snap.entities[0].clone());
+
+        let mut loaded = World::new();
+        let id = snap.entities[0].id;
+        assert!(matches!(
+            loaded.load(&snap.entities, snap.next_id),
+            Err(LoadError::DuplicateEntity(duplicate)) if duplicate == id
+        ));
+        assert!(loaded.index().is_empty());
+    }
+
+    #[test]
+    fn load_clamps_a_stale_next_id_above_every_loaded_identity() {
+        let mut source = World::new();
+        let loaded_id = item(&mut source, "loaded");
+        let snapshot = source.snapshot();
+
+        let mut loaded = World::new();
+        loaded.load(&snapshot.entities, loaded_id.0).unwrap();
+        let spawned = item(&mut loaded, "new");
+
+        assert!(spawned > loaded_id);
+        assert_eq!(loaded.get::<Id>(loaded_id).unwrap().0, loaded_id);
+        assert_eq!(loaded.get::<Id>(spawned).unwrap().0, spawned);
+        assert_eq!(loaded.index().len(), 2);
+    }
+
+    #[test]
+    fn load_distinguishes_non_object_and_malformed_id_data_and_remains_retryable() {
+        let mut source = World::new();
+        let id = item(&mut source, "valid");
+        let snapshot = source.snapshot();
+        let mut loaded = World::new();
+
+        let non_object = EntityBlob {
+            id,
+            zone: None,
+            data: serde_json::json!([id.0]),
+        };
+        assert!(matches!(
+            loaded.load(&[non_object], snapshot.next_id),
+            Err(LoadError::NonObjectBlob { blob_id }) if blob_id == id
+        ));
+        assert!(loaded.index().is_empty());
+
+        let mut malformed = snapshot.entities[0].clone();
+        malformed
+            .data
+            .as_object_mut()
+            .unwrap()
+            .insert(Id::TAG.into(), serde_json::json!("not an entity id"));
+        assert!(matches!(
+            loaded.load(&[malformed], snapshot.next_id),
+            Err(LoadError::InvalidIdComponent { blob_id, .. }) if blob_id == id
+        ));
+        assert!(loaded.index().is_empty());
+
+        loaded.load(&snapshot.entities, snapshot.next_id).unwrap();
+        assert!(loaded.contains(id));
+    }
+
+    #[test]
+    fn load_rejects_an_identity_with_no_allocatable_successor() {
+        let exhausted = EntityId(u64::MAX);
+        let blob = EntityBlob {
+            id: exhausted,
+            zone: None,
+            data: serde_json::json!({"id": exhausted}),
+        };
+        let mut loaded = World::new();
+
+        assert!(matches!(
+            loaded.load(&[blob], u64::MAX),
+            Err(LoadError::IdSpaceExhausted { highest_id }) if highest_id == exhausted
+        ));
+        assert!(loaded.index().is_empty());
+    }
+
+    #[test]
+    fn failed_relation_load_is_clean_retryable_and_preserves_resources() {
+        let mut source = World::new();
+        let child = item(&mut source, "child");
+        let target = item(&mut source, "target");
+        source.move_entity(child, target).unwrap();
+        let valid = source.snapshot();
+        let mut invalid = valid.entities.clone();
+        invalid.retain(|blob| blob.id != target);
+
+        let mut loaded = World::new();
+        loaded.insert_resource(String::from("startup wiring"));
+        assert!(matches!(
+            loaded.load(&invalid, valid.next_id),
+            Err(LoadError::DanglingRelation {
+                kind,
+                source,
+                target: missing,
+            }) if kind == Containment::TARGET_TAG && source == child && missing == target
+        ));
+        assert!(loaded.index().is_empty());
+        assert_eq!(
+            loaded.resource::<String>().map(String::as_str),
+            Some("startup wiring")
+        );
+
+        loaded.load(&valid.entities, valid.next_id).unwrap();
+        assert_eq!(loaded.container_of(child), Some(target));
+    }
+
+    #[test]
+    fn load_rejects_acyclic_cycles_but_accepts_declared_cyclic_relations() {
+        let mut source = World::new();
+        let a = item(&mut source, "a");
+        let b = item(&mut source, "b");
+        let mut blobs = source.snapshot().entities;
+        for blob in &mut blobs {
+            let target = if blob.id == a { b } else { a };
+            blob.data
+                .as_object_mut()
+                .unwrap()
+                .insert(Containment::TARGET_TAG.into(), serde_json::json!(target));
+        }
+        let mut loaded = World::new();
+        assert!(matches!(
+            loaded.load(&blobs, 3),
+            Err(LoadError::RelationCycle { kind, cycle })
+                if kind == Containment::TARGET_TAG && cycle.len() == 2
+        ));
+        assert!(loaded.index().is_empty());
+
+        struct Peer;
+        impl Relation for Peer {
+            const ACYCLIC: bool = false;
+            const ON_TARGET_DESPAWN: Cascade = Cascade::Detach;
+            const TARGET_TAG: &'static str = "peer";
+        }
+        let mut cyclic_source = World::new();
+        cyclic_source.register_relation::<Peer>();
+        let x = item(&mut cyclic_source, "x");
+        let y = item(&mut cyclic_source, "y");
+        cyclic_source.relate::<Peer>(x, y).unwrap();
+        cyclic_source.relate::<Peer>(y, x).unwrap();
+        let snap = cyclic_source.snapshot();
+        let mut cyclic_loaded = World::new();
+        cyclic_loaded.register_relation::<Peer>();
+        cyclic_loaded.load(&snap.entities, snap.next_id).unwrap();
+        assert_eq!(cyclic_loaded.target_of::<Peer>(x), Some(y));
+        assert_eq!(cyclic_loaded.target_of::<Peer>(y), Some(x));
+    }
+
+    #[test]
+    fn load_requires_a_fresh_world() {
+        let mut loaded = World::new();
+        let prior = item(&mut loaded, "already here");
+        loaded.despawn(prior);
+        assert!(matches!(loaded.load(&[], 1), Err(LoadError::WorldNotFresh)));
     }
 
     // --- type-erased component mutation ----------------------------------

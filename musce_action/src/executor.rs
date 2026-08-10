@@ -40,12 +40,35 @@ pub enum Action {
     Unrelate { source: EntityId, kind: String },
 }
 
+/// Stable operation context attached to executor errors that are not naturally
+/// owned by a component or relation subsystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionKind {
+    Move,
+    Create,
+    Destroy,
+    SetComponent,
+    RemoveComponent,
+    Relate,
+    Unrelate,
+}
+
+impl fmt::Display for ActionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 /// A structural violation from `execute`. A correct handler validates its rules
 /// before committing, so an `ExecError` signals a bug (a handler skipped a check
 /// or computed a bad destination), not ordinary rejected play. Thin wrapper over
 /// the core mutation errors.
 #[derive(Debug)]
 pub enum ExecError {
+    NoSuchEntity {
+        operation: ActionKind,
+        entity: EntityId,
+    },
     Relation(RelationError),
     Mutate(MutateError),
 }
@@ -65,6 +88,9 @@ impl From<MutateError> for ExecError {
 impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ExecError::NoSuchEntity { operation, entity } => {
+                write!(f, "structural error: {operation} has no entity {entity:?}")
+            }
             ExecError::Relation(e) => write!(f, "structural error: {e}"),
             ExecError::Mutate(e) => write!(f, "structural error: {e}"),
         }
@@ -74,6 +100,7 @@ impl fmt::Display for ExecError {
 impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            ExecError::NoSuchEntity { .. } => None,
             ExecError::Relation(e) => Some(e),
             ExecError::Mutate(e) => Some(e),
         }
@@ -99,6 +126,12 @@ pub fn execute(world: &mut World, action: Action) -> Result<EntityId, ExecError>
         }
         Action::Create { components } => Ok(world.create(&components)?),
         Action::Destroy { entity } => {
+            if !world.contains(entity) {
+                return Err(ExecError::NoSuchEntity {
+                    operation: ActionKind::Destroy,
+                    entity,
+                });
+            }
             world.despawn(entity);
             Ok(entity)
         }
@@ -188,7 +221,7 @@ mod tests {
         let err = execute(&mut w, Action::Move { entity: a, into: b });
         assert!(matches!(
             err,
-            Err(ExecError::Relation(RelationError::Cycle))
+            Err(ExecError::Relation(RelationError::Cycle { .. }))
         ));
     }
 
@@ -207,7 +240,7 @@ mod tests {
         );
         assert!(matches!(
             err,
-            Err(ExecError::Relation(RelationError::NoSuchEntity(_)))
+            Err(ExecError::Relation(RelationError::NoSuchEntity { .. }))
         ));
     }
 
@@ -257,6 +290,20 @@ mod tests {
         assert!(!w.contains(bag));
         // The Reparent cascade spills the bag's contents up to the hall.
         assert_eq!(w.container_of(coin), Some(hall));
+    }
+
+    #[test]
+    fn destroy_rejects_a_missing_subject_with_operation_context() {
+        let mut w = World::new();
+        let missing = EntityId(99_999);
+        let error = execute(&mut w, Action::Destroy { entity: missing });
+        assert!(matches!(
+            error,
+            Err(ExecError::NoSuchEntity {
+                operation: ActionKind::Destroy,
+                entity,
+            }) if entity == missing
+        ));
     }
 
     #[test]
@@ -386,6 +433,27 @@ mod tests {
         assert!(matches!(
             err,
             Err(ExecError::Relation(RelationError::UnknownKind(_)))
+        ));
+    }
+
+    #[test]
+    fn unrelate_rejects_a_missing_source_with_relation_context() {
+        let mut w = World::new();
+        let missing = EntityId(99_999);
+        let error = execute(
+            &mut w,
+            Action::Unrelate {
+                source: missing,
+                kind: "controlled_by".into(),
+            },
+        );
+        assert!(matches!(
+            error,
+            Err(ExecError::Relation(RelationError::NoSuchEntity {
+                kind,
+                role: musce_core::RelationRole::Source,
+                entity,
+            })) if kind == "controlled_by" && entity == missing
         ));
     }
 }

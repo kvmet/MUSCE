@@ -843,8 +843,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_actor_backstop_falls_back_on_dangling_focus() {
-        use musce_core::{EntityBlob, Map, Value};
+    fn load_rejects_dangling_focus_before_actor_resolution() {
+        use musce_core::{EntityBlob, LoadError, Map, Value};
 
         let character = EntityId(1);
         let ghost = EntityId(9999);
@@ -854,7 +854,7 @@ mod tests {
         data.insert("focus".into(), Value::from(9999u64));
 
         let mut world = World::new();
-        world
+        let error = world
             .load(
                 &[EntityBlob {
                     id: character,
@@ -863,11 +863,17 @@ mod tests {
                 }],
                 10_000,
             )
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(world.focus_of(character), Some(ghost));
-        assert!(!world.contains(ghost));
-        assert_eq!(resolve_actor(&world, character), character);
+        assert!(matches!(
+            error,
+            LoadError::DanglingRelation {
+                kind,
+                source,
+                target,
+            } if kind == "focus" && source == character && target == ghost
+        ));
+        assert!(world.index().is_empty());
     }
 
     fn conn_texts(out: &[Outgoing]) -> Vec<String> {

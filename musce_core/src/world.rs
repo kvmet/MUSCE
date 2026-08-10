@@ -10,9 +10,13 @@ use crate::containment::Containment;
 use crate::control::{Controls, Focus};
 use crate::fact::{DestroyCause, Fact};
 use crate::id::{EntityId, EntityIndex};
-use crate::relation::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
+use crate::relation::{
+    AcyclicRelation, Cascade, RelTarget, Relation, RelationError, RelationRole, Walk,
+};
+use crate::snapshot::LoadError;
 
 type DespawnHandler = fn(&mut World, EntityId);
+type ValidateHandler = fn(&World) -> Result<(), LoadError>;
 type RebuildHandler = fn(&mut World);
 type RelateFn = fn(&mut World, EntityId, EntityId) -> Result<(), RelationError>;
 type UnrelateFn = fn(&mut World, EntityId);
@@ -58,6 +62,7 @@ read_query_tuple!(A, B, C, D, E, F);
 #[derive(Default, Clone)]
 struct RelationRegistry {
     despawn: Vec<DespawnHandler>,
+    validate: Vec<ValidateHandler>,
     rebuild: Vec<RebuildHandler>,
     relate: HashMap<&'static str, RelateFn>,
     unrelate: HashMap<&'static str, UnrelateFn>,
@@ -212,6 +217,7 @@ impl World {
         // cycle check and reverse-index bookkeeping that `relate` owns.
         self.components.mark_relation_tag(R::TARGET_TAG);
         self.relations.despawn.push(despawn_relation::<R>);
+        self.relations.validate.push(validate_relation::<R>);
         self.relations.rebuild.push(rebuild_relation::<R>);
         self.relations
             .relate
@@ -562,13 +568,25 @@ impl World {
         target: EntityId,
     ) -> Result<(), RelationError> {
         if self.index.get(source).is_none() {
-            return Err(RelationError::NoSuchEntity(source));
+            return Err(RelationError::NoSuchEntity {
+                kind: R::TARGET_TAG.to_string(),
+                role: RelationRole::Source,
+                entity: source,
+            });
         }
         if self.index.get(target).is_none() {
-            return Err(RelationError::NoSuchEntity(target));
+            return Err(RelationError::NoSuchEntity {
+                kind: R::TARGET_TAG.to_string(),
+                role: RelationRole::Target,
+                entity: target,
+            });
         }
         if R::ACYCLIC && self.would_cycle::<R>(source, target) {
-            return Err(RelationError::Cycle);
+            return Err(RelationError::Cycle {
+                kind: R::TARGET_TAG.to_string(),
+                source,
+                target,
+            });
         }
         let from = self.target_of::<R>(source);
         if from == Some(target) {
@@ -622,7 +640,8 @@ impl World {
     /// Type-erased unrelate: clear the forward link of the relation registered
     /// under `tag`. The runtime face of unrelate, used by the Unrelate action.
     /// Clearing a link that is not set is a no-op `Ok`, matching the typed
-    /// `unrelate`; only an unregistered `tag` is an error.
+    /// `unrelate`. The type-erased executor-facing path still rejects a missing
+    /// source so every action names a live subject.
     pub fn unrelate_tag(&mut self, source: EntityId, tag: &str) -> Result<(), RelationError> {
         let f = self
             .relations
@@ -630,6 +649,13 @@ impl World {
             .get(tag)
             .copied()
             .ok_or_else(|| RelationError::UnknownKind(tag.to_string()))?;
+        if !self.contains(source) {
+            return Err(RelationError::NoSuchEntity {
+                kind: tag.to_string(),
+                role: RelationRole::Source,
+                entity: source,
+            });
+        }
         f(self, source);
         Ok(())
     }
@@ -870,6 +896,35 @@ impl World {
             h(self);
         }
     }
+
+    pub(crate) fn validate_relations(&self) -> Result<(), LoadError> {
+        for validate in &self.relations.validate {
+            validate(self)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn is_fresh_for_load(&self) -> bool {
+        self.index.is_empty()
+            && self.next_id == 1
+            && self.despawned.is_empty()
+            && self.dirty.is_empty()
+            && self.facts.is_empty()
+            && self.reverse.is_empty()
+    }
+
+    /// Remove entity-derived load state while preserving startup registration,
+    /// tracking choices, and transient app resources. This makes a failed load
+    /// retryable on the same freshly configured world.
+    pub(crate) fn clear_loaded_state(&mut self) {
+        self.ecs = hecs::World::new();
+        self.index.clear();
+        self.next_id = 1;
+        self.despawned.clear();
+        self.dirty.clear();
+        self.facts.clear();
+        self.reverse.clear();
+    }
 }
 
 /// A structural failure from the type-erased mutation paths (`create`,
@@ -942,6 +997,51 @@ fn relate_by_tag<R: Relation>(
 
 fn unrelate_by_tag<R: Relation>(world: &mut World, source: EntityId) {
     world.unrelate::<R>(source);
+}
+
+fn validate_relation<R: Relation>(world: &World) -> Result<(), LoadError> {
+    let mut edges = HashMap::new();
+    let mut q = world.ecs.query::<(&Id, &RelTarget<R>)>();
+    for (id, target) in q.iter() {
+        if !world.contains(target.0) {
+            return Err(LoadError::DanglingRelation {
+                kind: R::TARGET_TAG.to_string(),
+                source: id.0,
+                target: target.0,
+            });
+        }
+        edges.insert(id.0, target.0);
+    }
+    drop(q);
+
+    if !R::ACYCLIC {
+        return Ok(());
+    }
+
+    // A relation has at most one outgoing edge, so a color/path walk visits every
+    // source at most once overall. `positions` identifies the exact cycle suffix.
+    let mut finished = HashSet::new();
+    for start in edges.keys().copied() {
+        if finished.contains(&start) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut positions = HashMap::new();
+        let mut current = start;
+        while edges.contains_key(&current) && !finished.contains(&current) {
+            if let Some(&cycle_start) = positions.get(&current) {
+                return Err(LoadError::RelationCycle {
+                    kind: R::TARGET_TAG.to_string(),
+                    cycle: path[cycle_start..].to_vec(),
+                });
+            }
+            positions.insert(current, path.len());
+            path.push(current);
+            current = edges[&current];
+        }
+        finished.extend(path);
+    }
+    Ok(())
 }
 
 fn rebuild_relation<R: Relation>(world: &mut World) {

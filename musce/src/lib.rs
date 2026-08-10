@@ -20,13 +20,15 @@ pub mod world {
     pub use musce_core::hecs;
     pub use musce_core::{Map, Value};
 
-    pub use musce_core::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
+    pub use musce_core::{
+        AcyclicRelation, Cascade, RelTarget, Relation, RelationError, RelationRole, Walk,
+    };
     pub use musce_core::{
         ComponentBlob, Description, Id, Locus, Name, NamedComponent, RegistryError,
     };
     pub use musce_core::{Controls, Focus, FocusError};
     pub use musce_core::{DestroyCause, Fact};
-    pub use musce_core::{EntityBlob, Snapshot};
+    pub use musce_core::{EntityBlob, LoadError, Snapshot};
     pub use musce_core::{EntityId, MutateError, World};
 }
 
@@ -35,7 +37,7 @@ pub mod world {
 /// through.
 pub mod action {
     pub use musce_action::actor_name;
-    pub use musce_action::{Action, ExecError, execute};
+    pub use musce_action::{Action, ActionKind, ExecError, execute};
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
     pub use musce_action::{
         Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,

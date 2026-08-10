@@ -37,7 +37,7 @@ pub use dispatch::{
     CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command, dispatch_perform,
 };
 pub use event::{Audience, Event};
-pub use executor::{Action, ExecError, execute};
+pub use executor::{Action, ActionKind, ExecError, execute};
 pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 pub use registry::CapRegistry;
 

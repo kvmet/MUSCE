@@ -86,12 +86,54 @@ impl<R: Relation> NamedComponent for RelTarget<R> {
     const TAG: &'static str = R::TARGET_TAG;
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum RelationError {
-    #[error("no such entity: {0:?}")]
-    NoSuchEntity(EntityId),
-    #[error("relation would create a cycle")]
-    Cycle,
-    #[error("unknown relation kind: {0}")]
+    NoSuchEntity {
+        kind: String,
+        role: RelationRole,
+        entity: EntityId,
+    },
+    Cycle {
+        kind: String,
+        source: EntityId,
+        target: EntityId,
+    },
     UnknownKind(String),
+}
+
+impl std::fmt::Display for RelationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchEntity { kind, role, entity } => {
+                write!(f, "relation {kind} has no {role} entity {entity:?}")
+            }
+            Self::Cycle {
+                kind,
+                source,
+                target,
+            } => write!(
+                f,
+                "relation {kind} from {source:?} to {target:?} would create a cycle"
+            ),
+            Self::UnknownKind(kind) => write!(f, "unknown relation kind: {kind}"),
+        }
+    }
+}
+
+impl std::error::Error for RelationError {}
+
+/// Which endpoint of a requested relation operation was missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationRole {
+    Source,
+    Target,
+}
+
+impl std::fmt::Display for RelationRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Source => f.write_str("source"),
+            Self::Target => f.write_str("target"),
+        }
+    }
 }

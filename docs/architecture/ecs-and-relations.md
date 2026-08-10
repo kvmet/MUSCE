@@ -28,7 +28,10 @@ across persistence or shard boundaries. So every entity also carries a global
 - `EntityId` is the currency for anything that crosses an entity boundary or is
   persisted. Local hot paths still use the fast `hecs::Entity` handle.
 - The id is stored both as the DB primary key and as an `Id` component, so an
-  entity is self-describing and the two are checked to agree on load.
+  entity is self-describing. Load rejects non-object blobs, missing/malformed/
+  mismatched `Id`s, duplicate blob ids, and an exhausted identity range with the
+  offending id in the error; it also floors `next_id` above every loaded identity,
+  so the index cannot be silently overwritten by a later spawn.
 - The index is derived, never persisted: it is rebuilt as entities load.
 
 ## Kinds
@@ -88,9 +91,12 @@ facts; default `false`, true only for `Containment`, the one spatial relation, s
 [facts.md](facts.md)).
 
 Two small registries are populated at world construction: a component registry
-(drives JSON serialization) and a relation registry (type-erased despawn, rebuild,
-and tag-driven relate/unrelate hooks per relation, the last backing the `Relate`
-action).
+(drives JSON serialization) and a relation registry (type-erased despawn,
+validation, rebuild, and tag-driven relate/unrelate hooks per relation, the last
+backing the `Relate` action). A complete-world load validates every relation kind
+before rebuilding any reverse list: every target must exist, and an `ACYCLIC`
+relation is checked in O(V) for cycles. Cycles remain legal for relation kinds that
+explicitly declare `ACYCLIC = false`.
 
 ### Important: relations are ergonomics, not speed
 

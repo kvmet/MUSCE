@@ -466,7 +466,8 @@ fn purge_entity(world: &mut World, e: EntityId) {
     for child in world.contents(e).to_vec() {
         purge_entity(world, child);
     }
-    let _ = execute(world, Action::Destroy { entity: e });
+    execute(world, Action::Destroy { entity: e })
+        .expect("purge candidate must remain live through execution");
 }
 
 /// Resolve a `#<id>` token to a live entity. `None` if it lacks the `#`, is not a

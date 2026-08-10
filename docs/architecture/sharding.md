@@ -27,6 +27,12 @@ time, but a few cheap conventions kept now make it reachable without a rewrite.
 - **A locator indirection** (`EntityId -> shard`) that today always answers
   "local." All addressing routes through it, so there is one place to make it
   real.
+- **Complete-world relation validation today.** `World::load` rejects a relation
+  target absent from the loaded world, matching the current single-world ownership
+  model and the cascade/read paths that assume local targets. A future zone-scoped
+  loader must validate an absent local target through the locator and represent a
+  legitimate remote reference explicitly; it must not simply disable dangling-link
+  validation.
 - **DB-owned id allocation**, so a hub can later hand disjoint id ranges to
   shards from the same source.
 
