@@ -8,10 +8,10 @@
 > relation/component readers, finite symbol domains, and qualitative gauge readers,
 > validates their world wiring, and evaluates the closed condition algebra with
 > explicit errors for unknown vocabulary. `AffordanceRegistryBuilder` validates and
-> freezes schemas with their handlers; `Ctx` and `SystemCtx` lend actions to one
-> authority-, grounding-, guard-, and result-checking performer. The `affordance!`
-> macro, typed narrator, executable effect oracles, wire migration, and planner
-> integration remain pending.
+> freezes schemas with typed definitions; `Ctx` and `SystemCtx` lend actions to one
+> authority-, grounding-, guard-, result-, and post-commit-narration performer. The
+> `affordance!` macro, runtime registry injection, executable effect oracles, wire
+> migration, and planner integration remain pending.
 
 ## Built prototype during migration
 

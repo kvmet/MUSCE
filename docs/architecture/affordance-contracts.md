@@ -3,9 +3,10 @@
 > Status: **registration and shared execution built; behavioral oracles pending.**
 > The immutable registry validates the structural and assembled-vocabulary rules,
 > builds the initial reverse effect index, and runs grounding, liveness, authority,
-> ordered guards, handlers, and result validation through one performer. Typed
-> narration, redundant-progress diagnostics, post-commit effect verification, and
-> executable content oracles remain pending.
+> ordered guards, handlers, and result validation through one performer. The typed
+> adapter boundary enforces mutation-only execution followed by read-only
+> post-commit narration. Redundant-progress diagnostics, advertised-effect
+> verification, and executable content oracles remain pending.
 
 Logical planning requires more than effects that describe successful outcomes. It
 also requires a contract for when an applicable action succeeds and which effects
@@ -83,11 +84,12 @@ must hold for every successful committed outcome. An outcome-specific state chan
 requires an explicit outcome model in a future extension; it is not silently made
 conditional now.
 
-Narration is not an effect. The built performer stages output emitted through
-`PerformCtx` and releases it only after the handler commits with valid result
-bindings; refusal and contract-error paths discard it. The pending typed narrator
-will receive actor, inputs, and successful results after commitment and emit the
-shared first- and third-person account.
+Narration is not an effect. `PerformCtx` has no output capability. A typed
+definition captures app-owned observations before mutation; after the handler
+commits with valid result bindings, its narrator receives those observations,
+typed inputs/results, and a read-only `NarrationCtx`. Only that context can stage
+the shared first- and third-person account. Refusal and contract-error paths never
+invoke it or release output.
 
 ## Schema registration
 

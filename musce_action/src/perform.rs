@@ -111,6 +111,82 @@ impl From<StateActivationError> for RegistryError {
     }
 }
 
+/// A typed adapter failed to decode or encode values matching its own schema.
+/// The shared performer validates the canonical values first, so this always
+/// signals drift in handwritten or generated adapter code, not ordinary play.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdapterError {
+    message: String,
+}
+
+impl AdapterError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for AdapterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AdapterError {}
+
+/// A typed implementation's result before its generated adapter encodes values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypedHandlerOutcome<T> {
+    Committed(T),
+    Refused(Box<str>),
+}
+
+impl<T> TypedHandlerOutcome<T> {
+    pub fn committed(results: T) -> Self {
+        Self::Committed(results)
+    }
+
+    pub fn refused(reason: impl Into<String>) -> Self {
+        Self::Refused(reason.into().into_boxed_str())
+    }
+}
+
+/// The permanent typed interface implemented by app content and, later, emitted
+/// by `affordance!`. Inputs decode once; observations are captured before the
+/// mutation; narration receives both plus successful typed results afterward.
+pub trait AffordanceDefinition: Send + Sync + 'static {
+    type Inputs: Send + Sync + 'static;
+    type Results: Send + Sync + 'static;
+    type Observations: Send + Sync + 'static;
+
+    fn schema(&self) -> AffordanceSchema;
+
+    fn decode_inputs(&self, action: &GroundAction) -> Result<Self::Inputs, AdapterError>;
+
+    fn observe(&self, world: &World, actor: EntityId, inputs: &Self::Inputs) -> Self::Observations;
+
+    fn execute(
+        &self,
+        ctx: &mut PerformCtx<'_>,
+        inputs: &Self::Inputs,
+    ) -> TypedHandlerOutcome<Self::Results>;
+
+    fn encode_results(&self, results: &Self::Results) -> ActionOutcome;
+
+    fn narrate(
+        &self,
+        ctx: &mut NarrationCtx<'_>,
+        inputs: &Self::Inputs,
+        results: &Self::Results,
+        observations: &Self::Observations,
+    );
+}
+
 /// The result returned by an app implementation after all shared checks pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HandlerOutcome {
@@ -135,7 +211,114 @@ pub type AffordanceHandler = Box<
 
 struct Entry {
     schema: AffordanceSchema,
+    implementation: Box<dyn Implementation>,
+}
+
+trait Implementation: Send + Sync {
+    fn prepare<'a>(
+        &'a self,
+        world: &World,
+        action: &GroundAction,
+    ) -> Result<Box<dyn Invocation + 'a>, AdapterError>;
+}
+
+trait Invocation {
+    fn execute(&mut self, ctx: &mut PerformCtx<'_>) -> Result<HandlerOutcome, AdapterError>;
+
+    fn narrate(
+        self: Box<Self>,
+        ctx: &mut NarrationCtx<'_>,
+        outcome: &ActionOutcome,
+    ) -> Result<(), AdapterError>;
+}
+
+struct RawImplementation {
     handler: AffordanceHandler,
+}
+
+impl Implementation for RawImplementation {
+    fn prepare<'a>(
+        &'a self,
+        _world: &World,
+        action: &GroundAction,
+    ) -> Result<Box<dyn Invocation + 'a>, AdapterError> {
+        Ok(Box::new(RawInvocation {
+            handler: &self.handler,
+            action: action.clone(),
+        }))
+    }
+}
+
+struct RawInvocation<'a> {
+    handler: &'a AffordanceHandler,
+    action: GroundAction,
+}
+
+impl Invocation for RawInvocation<'_> {
+    fn execute(&mut self, ctx: &mut PerformCtx<'_>) -> Result<HandlerOutcome, AdapterError> {
+        Ok((self.handler)(ctx, &self.action))
+    }
+
+    fn narrate(
+        self: Box<Self>,
+        _ctx: &mut NarrationCtx<'_>,
+        _outcome: &ActionOutcome,
+    ) -> Result<(), AdapterError> {
+        Ok(())
+    }
+}
+
+struct TypedImplementation<D>(D);
+
+impl<D: AffordanceDefinition> Implementation for TypedImplementation<D> {
+    fn prepare<'a>(
+        &'a self,
+        world: &World,
+        action: &GroundAction,
+    ) -> Result<Box<dyn Invocation + 'a>, AdapterError> {
+        let inputs = self.0.decode_inputs(action)?;
+        let observations = self.0.observe(world, action.actor(), &inputs);
+        Ok(Box::new(TypedInvocation {
+            definition: &self.0,
+            inputs,
+            observations,
+            results: None,
+        }))
+    }
+}
+
+struct TypedInvocation<'a, D: AffordanceDefinition> {
+    definition: &'a D,
+    inputs: D::Inputs,
+    observations: D::Observations,
+    results: Option<D::Results>,
+}
+
+impl<D: AffordanceDefinition> Invocation for TypedInvocation<'_, D> {
+    fn execute(&mut self, ctx: &mut PerformCtx<'_>) -> Result<HandlerOutcome, AdapterError> {
+        match self.definition.execute(ctx, &self.inputs) {
+            TypedHandlerOutcome::Committed(results) => {
+                let outcome = self.definition.encode_results(&results);
+                self.results = Some(results);
+                Ok(HandlerOutcome::Committed(outcome))
+            }
+            TypedHandlerOutcome::Refused(reason) => Ok(HandlerOutcome::Refused(reason)),
+        }
+    }
+
+    fn narrate(
+        self: Box<Self>,
+        ctx: &mut NarrationCtx<'_>,
+        _outcome: &ActionOutcome,
+    ) -> Result<(), AdapterError> {
+        let results = self
+            .results
+            .as_ref()
+            .ok_or_else(|| AdapterError::new("typed narrator has no committed results"))?;
+        self.definition
+            .narrate(ctx, &self.inputs, results, &self.observations);
+        Ok(())
+    }
 }
 
 /// Mutable boot-time assembler. `build` consumes it so the live registry cannot
@@ -162,6 +345,29 @@ impl AffordanceRegistryBuilder {
         + Sync
         + 'static,
     ) -> Result<(), RegistryError> {
+        self.insert(
+            schema,
+            Box::new(RawImplementation {
+                handler: Box::new(handler),
+            }),
+        )
+    }
+
+    /// Register a typed definition through the same schema validation and
+    /// immutable execution table used by raw engine-facing adapters.
+    pub fn register_typed<D: AffordanceDefinition>(
+        &mut self,
+        definition: D,
+    ) -> Result<(), RegistryError> {
+        let schema = definition.schema();
+        self.insert(schema, Box::new(TypedImplementation(definition)))
+    }
+
+    fn insert(
+        &mut self,
+        schema: AffordanceSchema,
+        implementation: Box<dyn Implementation>,
+    ) -> Result<(), RegistryError> {
         if self.entries.contains_key(schema.id()) {
             return Err(RegistryError::DuplicateAffordance(schema.id().clone()));
         }
@@ -170,7 +376,7 @@ impl AffordanceRegistryBuilder {
             schema.id().clone(),
             Entry {
                 schema,
-                handler: Box::new(handler),
+                implementation,
             },
         );
         Ok(())
@@ -254,15 +460,33 @@ impl AffordanceRegistry {
             }
         }
 
-        let (outcome, pending_out) = {
-            let mut pending_out = Vec::new();
-            let mut ctx = PerformCtx::new(world, &mut pending_out, verdict, action.actor());
-            let outcome = (entry.handler)(&mut ctx, action);
-            (outcome, pending_out)
+        let mut invocation = entry
+            .implementation
+            .prepare(world, action)
+            .map_err(|error| PerformError::Adapter {
+                affordance: action.affordance().clone(),
+                error,
+            })?;
+        let outcome = {
+            let mut ctx = PerformCtx::new(world, verdict, action.actor());
+            invocation
+                .execute(&mut ctx)
+                .map_err(|error| PerformError::Adapter {
+                    affordance: action.affordance().clone(),
+                    error,
+                })?
         };
         match outcome {
             HandlerOutcome::Committed(outcome) => {
                 validate_results(&entry.schema, &self.state, &outcome)?;
+                let mut pending_out = Vec::new();
+                let mut ctx = NarrationCtx::new(world, &mut pending_out, action.actor());
+                invocation
+                    .narrate(&mut ctx, &outcome)
+                    .map_err(|error| PerformError::Adapter {
+                        affordance: action.affordance().clone(),
+                        error,
+                    })?;
                 out.extend(pending_out);
                 Ok(PerformOutcome::Committed(outcome))
             }
@@ -283,25 +507,18 @@ impl AffordanceRegistry {
 
 /// The deliberately small capability lent to an app implementation after all
 /// shared checks pass. Actor and verdict are read-only; authority is never
-/// reconstructed from world components. Output is staged and becomes visible
-/// only if the handler commits with valid result bindings.
+/// reconstructed from world components. It has no output capability: narration
+/// runs only after a valid commit through [`NarrationCtx`].
 pub struct PerformCtx<'a> {
     pub world: &'a mut World,
-    out: &'a mut Vec<Outbound>,
     verdict: &'a Verdict,
     actor: EntityId,
 }
 
 impl<'a> PerformCtx<'a> {
-    fn new(
-        world: &'a mut World,
-        out: &'a mut Vec<Outbound>,
-        verdict: &'a Verdict,
-        actor: EntityId,
-    ) -> Self {
+    fn new(world: &'a mut World, verdict: &'a Verdict, actor: EntityId) -> Self {
         Self {
             world,
-            out,
             verdict,
             actor,
         }
@@ -321,6 +538,25 @@ impl<'a> PerformCtx<'a> {
 
     pub fn is_su(&self) -> bool {
         self.verdict.is_su()
+    }
+}
+
+/// Read-only post-commit world access plus staged semantic output. A typed
+/// narrator receives the observations captured before mutation separately, so
+/// consumed or moved state never has to be reconstructed from the new world.
+pub struct NarrationCtx<'a> {
+    pub world: &'a World,
+    out: &'a mut Vec<Outbound>,
+    actor: EntityId,
+}
+
+impl<'a> NarrationCtx<'a> {
+    fn new(world: &'a World, out: &'a mut Vec<Outbound>, actor: EntityId) -> Self {
+        Self { world, out, actor }
+    }
+
+    pub fn actor(&self) -> EntityId {
+        self.actor
     }
 
     pub fn emit_self(&mut self, kind: EventKind, text: impl Into<String>) {
@@ -404,6 +640,10 @@ pub enum PerformError {
     UnknownResultSymbol {
         slot: usize,
     },
+    Adapter {
+        affordance: AffordanceId,
+        error: AdapterError,
+    },
     DeterministicRefusal {
         affordance: AffordanceId,
         reason: Box<str>,
@@ -455,6 +695,12 @@ impl fmt::Display for PerformError {
                 f,
                 "symbol result at slot {slot} is not in its registered domain"
             ),
+            PerformError::Adapter { affordance, error } => {
+                write!(
+                    f,
+                    "affordance {affordance} adapter contract failed: {error}"
+                )
+            }
             PerformError::DeterministicRefusal { affordance, reason } => write!(
                 f,
                 "deterministic affordance {affordance} refused after its guards passed: {reason}"
@@ -467,6 +713,7 @@ impl std::error::Error for PerformError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             PerformError::Evaluation(error) => Some(error),
+            PerformError::Adapter { error, .. } => Some(error),
             _ => None,
         }
     }

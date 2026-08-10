@@ -1,8 +1,10 @@
 # Affordance Authoring Language
 
-> Status: **target design specified; implementation pending.** App affordances
-> will normally be declared through a Rust `affordance!` procedural macro that
-> lowers into the canonical representation in
+> Status: **typed lowering interface built; macro pending.**
+> `AffordanceDefinition` now fixes the generated adapter boundary: typed inputs,
+> results, pre-commit observations, mutation-only execution, result encoding, and
+> post-commit narration. App affordances will normally implement it through a Rust
+> `affordance!` procedural macro that lowers into the canonical representation in
 > [affordances.md](affordances.md).
 
 The authoring language resembles a typed function signature with a logical
@@ -95,23 +97,27 @@ struct HangInputs {
 
 struct HangResults {}
 
-fn hang(ctx: &mut Ctx, inputs: HangInputs) -> PerformResult<HangResults>;
+fn hang(
+    ctx: &mut PerformCtx,
+    inputs: &HangInputs,
+) -> TypedHandlerOutcome<HangResults>;
 
 fn narrate_hang(
-    ctx: &NarrationCtx,
+    ctx: &mut NarrationCtx,
     inputs: &HangInputs,
     results: &HangResults,
+    observations: &HangObservations,
 ) -> Narration;
 ```
 
-The exact public result type follows the shared affordance execution API. The
-stable guarantee is that app code receives typed fields instead of indexed raw
-value arrays. The canonical `GroundAction` carries inputs beneath the adapter;
-`ActionOutcome` carries results. The narrator references generated fields rather
-than fixed participant roles, so arbitrary arity does not reintroduce a frame.
-`NarrationCtx` exposes the actor, pre-commit observations captured by the shared
-performer, and post-commit world/audience access. Movement narration can therefore
-address both the vanished departure locus and the resulting arrival locus.
+This boundary is built as `AffordanceDefinition`. App code receives typed fields
+instead of indexed raw value arrays. The canonical `GroundAction` carries inputs
+beneath the adapter; `ActionOutcome` carries encoded results. `observe` captures
+typed app data before mutation. `PerformCtx` can mutate but cannot emit;
+`NarrationCtx` can read the post-commit world and emit but cannot mutate. The
+narrator receives the captured observations separately, so movement can address
+both the vanished departure locus and the resulting arrival locus. The pending
+macro generates the decoding, encoding, and trait implementation.
 
 ## Result parameters
 

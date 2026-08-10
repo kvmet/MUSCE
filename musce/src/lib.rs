@@ -40,12 +40,12 @@ pub mod action {
     pub use musce_action::{Action, ActionKind, ExecError, execute};
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
     pub use musce_action::{
-        Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
+        AdapterError, AffordanceDefinition, AffordanceHandler, AffordanceRegistry,
+        AffordanceRegistryBuilder, EffectKind, HandlerOutcome, NarrationCtx, PerformCtx,
+        PerformError, PerformOutcome, Refusal, RegistryError, SchemaError, TypedHandlerOutcome,
     };
     pub use musce_action::{
-        AffordanceHandler, AffordanceRegistry, AffordanceRegistryBuilder, EffectKind,
-        HandlerOutcome, PerformCtx, PerformError, PerformOutcome, Refusal, RegistryError,
-        SchemaError,
+        Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
     };
     pub use musce_action::{
         Caller, CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command,

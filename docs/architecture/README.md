@@ -82,19 +82,20 @@ These hold across every subsystem:
   input/result declarations, formulas/effects, partial bindings, grounded actions,
   outcomes, typed state-reader registration, closed-condition evaluation, finite
   symbol domains, qualitative gauge regions, immutable schema/handler
-  registration, structural schema validation, reverse effect indexing, and the
-  shared performer. Authoring, effect oracles, and consumer migration pending.)*
+  registration, structural schema validation, reverse effect indexing, the shared
+  performer, and its typed execution/observation/narration boundary. Macro
+  authoring, effect oracles, and consumer migration pending.)*
 - [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
   additive canonical build, cutover boundary, and legacy removal condition.
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
   description language, generated typed handler interface, closed-vocabulary
-  boundary, and path to future non-Rust front ends. *(Target design specified;
-  implementation pending.)*
+  boundary, and path to future non-Rust front ends. *(Built: typed lowering
+  interface; procedural macro pending.)*
 - [affordance-contracts.md](affordance-contracts.md): ordered applicability
   guards, deterministic/contested/opaque resolution, unconditional effects, and
   executable-oracle obligations. *(Built: structural registration checks, shared
-  grounding/gate/guard execution, resolution enforcement, and result validation;
-  effect oracles pending.)*
+  grounding/gate/guard execution, resolution enforcement, result validation, and
+  post-commit typed narration; effect oracles pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
   raw normalized readings, registered qualitative regions, strict directional
   effects, and bounded QSIM regression. *(Built: value vocabulary, evaluator and

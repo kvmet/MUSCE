@@ -45,8 +45,9 @@ pub use event::{Audience, Event};
 pub use executor::{Action, ActionKind, ExecError, execute};
 pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 pub use perform::{
-    AffordanceHandler, AffordanceRegistry, AffordanceRegistryBuilder, EffectKind, HandlerOutcome,
-    PerformCtx, PerformError, PerformOutcome, Refusal, RegistryError, SchemaError,
+    AdapterError, AffordanceDefinition, AffordanceHandler, AffordanceRegistry,
+    AffordanceRegistryBuilder, EffectKind, HandlerOutcome, NarrationCtx, PerformCtx, PerformError,
+    PerformOutcome, Refusal, RegistryError, SchemaError, TypedHandlerOutcome,
 };
 pub use registry::CapRegistry;
 

@@ -51,6 +51,119 @@ fn empty_handler(_ctx: &mut PerformCtx<'_>, _action: &GroundAction) -> HandlerOu
     HandlerOutcome::committed(ActionOutcome::empty())
 }
 
+struct Speak;
+
+impl AffordanceDefinition for Speak {
+    type Inputs = ();
+    type Results = String;
+    type Observations = String;
+
+    fn schema(&self) -> AffordanceSchema {
+        schema(
+            "speak",
+            vec![parameter("echo", ParameterMode::Result, ValueSort::Text, 0)],
+            Vec::new(),
+            Vec::new(),
+            Gate::Open,
+            Resolution::Deterministic,
+        )
+    }
+
+    fn decode_inputs(&self, action: &GroundAction) -> Result<Self::Inputs, AdapterError> {
+        if action.inputs().is_empty() {
+            Ok(())
+        } else {
+            Err(AdapterError::new("speak expected no inputs"))
+        }
+    }
+
+    fn observe(
+        &self,
+        _world: &World,
+        _actor: EntityId,
+        _inputs: &Self::Inputs,
+    ) -> Self::Observations {
+        "hello".into()
+    }
+
+    fn execute(
+        &self,
+        _ctx: &mut PerformCtx<'_>,
+        _inputs: &Self::Inputs,
+    ) -> TypedHandlerOutcome<Self::Results> {
+        TypedHandlerOutcome::committed("hello".into())
+    }
+
+    fn encode_results(&self, results: &Self::Results) -> ActionOutcome {
+        ActionOutcome::new(vec![Value::text(results)])
+    }
+
+    fn narrate(
+        &self,
+        ctx: &mut NarrationCtx<'_>,
+        _inputs: &Self::Inputs,
+        _results: &Self::Results,
+        observations: &Self::Observations,
+    ) {
+        ctx.emit_self(EventKind::Narration, observations);
+    }
+}
+
+struct BadResult {
+    narrated: Arc<AtomicUsize>,
+}
+
+impl AffordanceDefinition for BadResult {
+    type Inputs = ();
+    type Results = ();
+    type Observations = ();
+
+    fn schema(&self) -> AffordanceSchema {
+        schema(
+            "bad_result",
+            vec![parameter("text", ParameterMode::Result, ValueSort::Text, 0)],
+            Vec::new(),
+            Vec::new(),
+            Gate::Open,
+            Resolution::Deterministic,
+        )
+    }
+
+    fn decode_inputs(&self, _action: &GroundAction) -> Result<Self::Inputs, AdapterError> {
+        Ok(())
+    }
+
+    fn observe(
+        &self,
+        _world: &World,
+        _actor: EntityId,
+        _inputs: &Self::Inputs,
+    ) -> Self::Observations {
+    }
+
+    fn execute(
+        &self,
+        _ctx: &mut PerformCtx<'_>,
+        _inputs: &Self::Inputs,
+    ) -> TypedHandlerOutcome<Self::Results> {
+        TypedHandlerOutcome::committed(())
+    }
+
+    fn encode_results(&self, _results: &Self::Results) -> ActionOutcome {
+        ActionOutcome::new(vec![Value::Entity(EntityId(4))])
+    }
+
+    fn narrate(
+        &self,
+        _ctx: &mut NarrationCtx<'_>,
+        _inputs: &Self::Inputs,
+        _results: &Self::Results,
+        _observations: &Self::Observations,
+    ) {
+        self.narrated.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 #[test]
 fn registration_rejects_malformed_and_unknown_schema_state() {
     let world = World::new();
@@ -335,22 +448,7 @@ fn committed_results_are_checked_and_self_output_is_entity_addressed() {
     let mut world = World::new();
     let actor = actor(&mut world);
     let mut builder = AffordanceRegistryBuilder::new(StateRegistry::new());
-    builder
-        .register(
-            schema(
-                "speak",
-                vec![parameter("echo", ParameterMode::Result, ValueSort::Text, 0)],
-                Vec::new(),
-                Vec::new(),
-                Gate::Open,
-                Resolution::Deterministic,
-            ),
-            |ctx, _action| {
-                ctx.emit_self(EventKind::Narration, "hello");
-                HandlerOutcome::committed(ActionOutcome::new(vec![Value::text("hello")]))
-            },
-        )
-        .unwrap();
+    builder.register_typed(Speak).unwrap();
     let registry = builder.build(&world).unwrap();
     let mut out = Vec::new();
     let outcome = registry
@@ -370,22 +468,12 @@ fn committed_results_are_checked_and_self_output_is_entity_addressed() {
 fn malformed_handler_results_are_contract_errors() {
     let mut world = World::new();
     let actor = actor(&mut world);
+    let narrated = Arc::new(AtomicUsize::new(0));
     let mut builder = AffordanceRegistryBuilder::new(StateRegistry::new());
     builder
-        .register(
-            schema(
-                "bad_result",
-                vec![parameter("text", ParameterMode::Result, ValueSort::Text, 0)],
-                Vec::new(),
-                Vec::new(),
-                Gate::Open,
-                Resolution::Deterministic,
-            ),
-            |ctx, _action| {
-                ctx.emit_self(EventKind::Narration, "must not escape");
-                HandlerOutcome::committed(ActionOutcome::new(vec![Value::Entity(EntityId(4))]))
-            },
-        )
+        .register_typed(BadResult {
+            narrated: Arc::clone(&narrated),
+        })
         .unwrap();
     let registry = builder.build(&world).unwrap();
 
@@ -400,6 +488,7 @@ fn malformed_handler_results_are_contract_errors() {
         Err(PerformError::WrongResultSort { .. })
     ));
     assert!(out.is_empty());
+    assert_eq!(narrated.load(Ordering::SeqCst), 0);
 }
 
 #[test]
