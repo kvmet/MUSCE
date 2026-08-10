@@ -43,7 +43,6 @@ impl World {
     /// carrying the boundary marker.
     pub fn enclosing_locus(&self, entity: EntityId) -> Option<EntityId> {
         self.ancestors::<Containment>(entity)
-            .into_iter()
             .find(|&a| self.has::<Locus>(a))
     }
 }

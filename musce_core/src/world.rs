@@ -17,18 +17,33 @@ type RebuildHandler = fn(&mut World);
 type RelateFn = fn(&mut World, EntityId, EntityId) -> Result<(), RelationError>;
 type UnrelateFn = fn(&mut World, EntityId);
 
+mod read_query_sealed {
+    pub trait Sealed {}
+}
+
 /// The queries [`World::query`] accepts: read-only ones. Implemented for a shared
 /// component borrow `&T` and for tuples of read-only queries, and deliberately *not*
 /// for `&mut T`. This is the bound that lets `World` expose archetypal iteration
 /// without also handing out a write path that bypasses the mutator layer (and so the
 /// dirty set, the index, and the reverse lists). An app names the components in a
-/// query (`world.query::<(&Id, &Foo)>()`); it never names this trait.
-pub trait ReadQuery: hecs::Query {}
+/// query (`world.query::<(&Id, &Foo)>()`); it never names this trait. The private
+/// supertrait seals the implementation set, so an app cannot opt a mutable hecs
+/// query back into this surface.
+///
+/// ```compile_fail
+/// use musce_core::world::ReadQuery;
+///
+/// struct AppComponent;
+/// impl ReadQuery for &mut AppComponent {}
+/// ```
+pub trait ReadQuery: hecs::Query + read_query_sealed::Sealed {}
 
+impl<T: hecs::Component> read_query_sealed::Sealed for &T {}
 impl<T: hecs::Component> ReadQuery for &T {}
 
 macro_rules! read_query_tuple {
     ($($name:ident),+) => {
+        impl<$($name: ReadQuery),+> read_query_sealed::Sealed for ($($name,)+) {}
         impl<$($name: ReadQuery),+> ReadQuery for ($($name,)+) {}
     };
 }
@@ -444,31 +459,36 @@ impl World {
         Ok(())
     }
 
-    /// Insert or overwrite a typed component on a live entity; no-op if the id is
-    /// absent. The typed counterpart to `set_component` (which takes a runtime tag
-    /// and JSON), for app systems that mutate concrete component types on the hot
-    /// path without a JSON round-trip. Not for relation forward links (use
-    /// `Move`/`relate`, which keep the reverse index and cycle check correct) or
-    /// `Id` (identity must track the index); unlike the tag-driven path there is no
-    /// runtime guard, because naming one of those types here is a mistake visible at
-    /// the call site, not a runtime-string misroute.
-    pub fn insert<C: hecs::Component>(&mut self, id: EntityId, component: C) {
-        if let Some(e) = self.index.get(id) {
-            let _ = self.ecs.insert_one(e, component);
-            self.mark_dirty(id);
-            self.note_component_change_typed::<C>(id);
-        }
+    /// Insert or overwrite a typed component on a live entity. The typed counterpart
+    /// to `set_component` (which takes a runtime tag and JSON), for app systems that
+    /// mutate concrete component types on the hot path without a JSON round-trip.
+    /// Identity and registered relation forward-link types are rejected before the
+    /// write, so this path cannot bypass their structural bookkeeping.
+    pub fn insert<C: hecs::Component>(
+        &mut self,
+        id: EntityId,
+        component: C,
+    ) -> Result<(), MutateError> {
+        let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
+        self.guard_component_type::<C>()?;
+        let _ = self.ecs.insert_one(e, component);
+        self.mark_dirty(id);
+        self.note_component_change_typed::<C>(id);
+        Ok(())
     }
 
-    /// Remove a typed component from a live entity; no-op if the id or the component
-    /// is absent. The typed counterpart to `remove_component`; same caveats as
-    /// `insert`.
-    pub fn remove<C: hecs::Component>(&mut self, id: EntityId) {
-        if let Some(e) = self.index.get(id) {
-            let _ = self.ecs.remove_one::<C>(e);
-            self.mark_dirty(id);
-            self.note_component_change_typed::<C>(id);
+    /// Remove a typed component from a live entity. Returns whether the component
+    /// was present. An absent component is a true no-op: it emits no fact and does
+    /// not dirty the entity.
+    pub fn remove<C: hecs::Component>(&mut self, id: EntityId) -> Result<bool, MutateError> {
+        let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
+        self.guard_component_type::<C>()?;
+        if self.ecs.remove_one::<C>(e).is_err() {
+            return Ok(false);
         }
+        self.mark_dirty(id);
+        self.note_component_change_typed::<C>(id);
+        Ok(true)
     }
 
     /// Mutate a component in place: mark the entity dirty and emit `ComponentChanged`.
@@ -479,21 +499,24 @@ impl World {
     /// (touching nothing) if the entity or the component is absent, so no trigger or
     /// dirty mark claims a change that did not happen. Typed and JSON-free, for the
     /// hot path.
-    pub fn modify<C: hecs::Component>(&mut self, id: EntityId, f: impl FnOnce(&mut C)) -> bool {
-        let Some(e) = self.index.get(id) else {
-            return false;
-        };
+    pub fn modify<C: hecs::Component>(
+        &mut self,
+        id: EntityId,
+        f: impl FnOnce(&mut C),
+    ) -> Result<bool, MutateError> {
+        let e = self.index.get(id).ok_or(MutateError::NoSuchEntity(id))?;
+        self.guard_component_type::<C>()?;
         {
             // This method IS the sanctioned in-place mutator: it marks dirty and
             // emits the trigger below, so reaching for the raw borrow is warranted.
             let Some(mut c) = self.raw_get_mut::<C>(e) else {
-                return false;
+                return Ok(false);
             };
             f(&mut *c);
         }
         self.mark_dirty(id);
         self.note_component_change_typed::<C>(id);
-        true
+        Ok(true)
     }
 
     /// Serialize just one named component back to JSON; `None` if absent. The read
@@ -510,6 +533,22 @@ impl World {
             return Err(MutateError::IdentityTag(tag.to_string()));
         }
         if self.components.is_relation_tag(tag) {
+            return Err(MutateError::RelationTag(tag.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Typed counterpart to [`World::guard_tag`]. Registered relation components
+    /// resolve through the component registry populated by `register_relation`; the
+    /// identity type is recognized directly so it remains protected even on a
+    /// freshly constructed world.
+    fn guard_component_type<C: 'static>(&self) -> Result<(), MutateError> {
+        if TypeId::of::<C>() == TypeId::of::<Id>() {
+            return Err(MutateError::IdentityTag(Id::TAG.to_string()));
+        }
+        if let Some(tag) = self.components.tag_of::<C>()
+            && self.components.is_relation_tag(tag)
+        {
             return Err(MutateError::RelationTag(tag.to_string()));
         }
         Ok(())
@@ -616,19 +655,19 @@ impl World {
             .unwrap_or(&[])
     }
 
-    /// Ancestor chain (immediate target first), following the relation upward.
-    pub fn ancestors<R: AcyclicRelation>(&self, start: EntityId) -> Vec<EntityId> {
+    /// Stream the ancestor chain (immediate target first) without allocating.
+    /// Callers that need ownership across a world mutation collect explicitly.
+    pub fn ancestors<R: AcyclicRelation>(
+        &self,
+        start: EntityId,
+    ) -> impl Iterator<Item = EntityId> + '_ {
         assert!(
             R::ACYCLIC,
             "AcyclicRelation implementors must set Relation::ACYCLIC"
         );
-        let mut out = Vec::new();
-        let mut cur = self.target_of::<R>(start);
-        while let Some(c) = cur {
-            out.push(c);
-            cur = self.target_of::<R>(c);
-        }
-        out
+        std::iter::successors(self.target_of::<R>(start), move |&current| {
+            self.target_of::<R>(current)
+        })
     }
 
     /// Walk every descendant of `root` in an acyclic relation. `visit` sees each

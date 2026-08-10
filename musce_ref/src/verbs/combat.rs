@@ -84,10 +84,13 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
     // from the next delta snapshot (a non-lethal hit lost across a restart). The
     // target has `Health` (checked above) and is live (just resolved).
     let mut killed = false;
-    let hit = ctx.world.modify::<Health>(target, |hp| {
-        hp.current = hp.current.saturating_sub(dmg);
-        killed = hp.current == 0;
-    });
+    let hit = ctx
+        .world
+        .modify::<Health>(target, |hp| {
+            hp.current = hp.current.saturating_sub(dmg);
+            killed = hp.current == 0;
+        })
+        .expect("a resolved fightable target is live");
     debug_assert!(hit, "a fightable target has Health");
 
     let who = display_name(ctx.world, ctx.actor);

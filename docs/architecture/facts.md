@@ -165,6 +165,10 @@ values), and `modify<C>`. It is **not** emitted from `spawn`, which takes an
 already-built `EntityBuilder` and cannot enumerate the tracked components inside it;
 boot content built through `spawn` (and `seed`, which runs through it) is invisible to
 the trigger stream and is instead covered by a maintainer's one-time baseline scan.
+Typed `remove<C>` or `modify<C>` on an absent component returns `Ok(false)` and
+emits nothing; the closure passed to `modify` is not invoked. Tag-driven
+`remove_component` has its existing whole-request `Result<()>` contract. A missing
+entity is an error, also without a dirty mark or fact.
 
 **Idempotent and order-free.** Duplicate triggers for one entity in a tick are safe
 because reread converges regardless; a maintainer may coalesce its dirty set but is

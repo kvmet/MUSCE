@@ -226,7 +226,9 @@ fn drive_goals(world: &World, bird: EntityId) -> Vec<(Drive, Goal)> {
 fn commit_and_select(world: &mut World, bird: EntityId, hysteresis: u32) -> Option<(Drive, Goal)> {
     let candidates = drive_goals(world, bird);
     if candidates.is_empty() {
-        world.remove::<Committed>(bird);
+        world
+            .remove::<Committed>(bird)
+            .expect("a drive candidate names a live bird");
         return None;
     }
 
@@ -244,7 +246,9 @@ fn commit_and_select(world: &mut World, bird: EntityId, hysteresis: u32) -> Opti
         .into_iter()
         .find(|(_, goal)| goal.predicate == chosen.predicate)
         .expect("the chosen goal came from a candidate");
-    world.insert(bird, Committed(drive));
+    world
+        .insert(bird, Committed(drive))
+        .expect("the selected drive belongs to a live bird");
     Some((drive, goal))
 }
 
@@ -359,21 +363,25 @@ pub fn hoard(ctx: &mut SystemCtx) {
 fn metabolize(world: &mut World, bird: EntityId) {
     if let Some(urge) = world.get::<Hoarder>(bird).map(|h| h.urge) {
         let sated = shiny_in_nest(world, bird);
-        world.insert(
-            bird,
-            Hoarder {
-                urge: step_need(urge, sated),
-            },
-        );
+        world
+            .insert(
+                bird,
+                Hoarder {
+                    urge: step_need(urge, sated),
+                },
+            )
+            .expect("a read Hoarder belongs to a live bird");
     }
     if let Some(itch) = world.get::<Curiosity>(bird).map(|c| c.itch) {
         let sated = holds_shiny(world, bird);
-        world.insert(
-            bird,
-            Curiosity {
-                itch: step_need(itch, sated),
-            },
-        );
+        world
+            .insert(
+                bird,
+                Curiosity {
+                    itch: step_need(itch, sated),
+                },
+            )
+            .expect("a read Curiosity belongs to a live bird");
     }
 }
 
@@ -581,7 +589,7 @@ mod tests {
     #[test]
     fn nothing_to_steal_leaves_it_restless() {
         let mut f = fixture();
-        f.world.remove::<Shiny>(f.bead); // the only glittery thing loses its shine
+        f.world.remove::<Shiny>(f.bead).unwrap(); // the only glittery thing loses its shine
 
         for n in 1..=THRESHOLD as u64 + 1 {
             tick(&mut f.world, HOARD_EVERY * n);

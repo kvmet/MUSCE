@@ -47,9 +47,15 @@ pub fn seed(world: &mut World) {
 
     // Coordinates matching the exits: the garden lies north of the hall, the cellar
     // below it. Gives the spatial index and `@nearby` something to work on at boot.
-    world.insert(hall, crate::spatial::Xyz { x: 0, y: 0, z: 0 });
-    world.insert(garden, crate::spatial::Xyz { x: 0, y: 10, z: 0 });
-    world.insert(cellar, crate::spatial::Xyz { x: 0, y: 0, z: -10 });
+    world
+        .insert(hall, crate::spatial::Xyz { x: 0, y: 0, z: 0 })
+        .expect("seed: position hall");
+    world
+        .insert(garden, crate::spatial::Xyz { x: 0, y: 10, z: 0 })
+        .expect("seed: position garden");
+    world
+        .insert(cellar, crate::spatial::Xyz { x: 0, y: 0, z: -10 })
+        .expect("seed: position cellar");
 
     let key = item(
         world,
@@ -89,12 +95,14 @@ pub fn seed(world: &mut World) {
         ));
         b.add(Aliases(vec!["journal".into(), "book".into()]));
     });
-    world.insert(
-        journal,
-        Readable {
-            key: book_key(journal),
-        },
-    );
+    world
+        .insert(
+            journal,
+            Readable {
+                key: book_key(journal),
+            },
+        )
+        .expect("seed: mark journal readable");
     world
         .move_entity(journal, hall)
         .expect("seed: place journal");
@@ -128,8 +136,12 @@ pub fn seed(world: &mut World) {
         "a magpie",
         "A glossy magpie hops along the wall, head cocked at anything that glitters.",
     );
-    world.insert(magpie, Hoarder { urge: 0 });
-    world.insert(magpie, Curiosity { itch: 0 });
+    world
+        .insert(magpie, Hoarder { urge: 0 })
+        .expect("seed: initialize hoard drive");
+    world
+        .insert(magpie, Curiosity { itch: 0 })
+        .expect("seed: initialize curiosity drive");
     world
         .move_entity(magpie, garden)
         .expect("seed: place magpie");
@@ -157,7 +169,9 @@ pub fn seed(world: &mut World) {
         "a field mouse",
         "A small brown field mouse, whiskers twitching as it noses about the garden.",
     );
-    world.insert(mouse, Hunger { pang: 0 });
+    world
+        .insert(mouse, Hunger { pang: 0 })
+        .expect("seed: initialize hunger drive");
     world.move_entity(mouse, garden).expect("seed: place mouse");
 
     let avatar = avatar(

@@ -130,9 +130,14 @@ fn push_instance(world: &mut World, carrier: EntityId, inst: Instance) {
         return;
     }
     if world.has::<Sequences>(carrier) {
-        world.modify::<Sequences>(carrier, |seqs| seqs.0.push(inst));
+        let modified = world
+            .modify::<Sequences>(carrier, |seqs| seqs.0.push(inst))
+            .expect("a checked sequence carrier is live");
+        debug_assert!(modified, "the carrier was checked to have Sequences");
     } else {
-        world.insert(carrier, Sequences(vec![inst]));
+        world
+            .insert(carrier, Sequences(vec![inst]))
+            .expect("a checked sequence carrier is live");
     }
 }
 
@@ -277,9 +282,13 @@ fn fire(ctx: &mut SystemCtx, carrier: EntityId, intent: &Intent) {
 /// the component when none remain. Skipped entirely if the carrier was despawned.
 fn write_back(world: &mut World, carrier: EntityId, retained: Vec<Instance>) {
     if retained.is_empty() {
-        world.remove::<Sequences>(carrier);
+        world
+            .remove::<Sequences>(carrier)
+            .expect("write-back skips a despawned carrier");
     } else {
-        world.insert(carrier, Sequences(retained));
+        world
+            .insert(carrier, Sequences(retained))
+            .expect("write-back skips a despawned carrier");
     }
 }
 

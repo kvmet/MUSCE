@@ -111,12 +111,14 @@ mod tests {
             b.add(Item);
             b.add(Name("a leather journal".into()));
         });
-        world.insert(
-            book,
-            Readable {
-                key: book_key(book),
-            },
-        );
+        world
+            .insert(
+                book,
+                Readable {
+                    key: book_key(book),
+                },
+            )
+            .unwrap();
         world.move_entity(book, room).unwrap();
 
         let rock = spawn(&mut world, |b| {

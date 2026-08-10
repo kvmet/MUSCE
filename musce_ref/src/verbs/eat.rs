@@ -36,8 +36,12 @@ pub(crate) fn do_eat(world: &mut World, actor: EntityId, food: EntityId) -> Outc
     if let Some(guard) = eat_affordance().veto(&frame, world, &RefWorldModel) {
         return Outcome::Refused(guard.reason);
     }
-    world.remove::<Edible>(food);
-    world.insert(actor, Fed);
+    world
+        .remove::<Edible>(food)
+        .expect("the applicable eat frame names a live food");
+    world
+        .insert(actor, Fed)
+        .expect("the applicable eat frame names a live actor");
     Outcome::Committed
 }
 

@@ -672,7 +672,7 @@ mod tests {
         store.save(&w.snapshot()).await.unwrap();
 
         // Drop the Name component and save again.
-        w.remove::<Name>(sign);
+        w.remove::<Name>(sign).unwrap();
         store.save(&w.snapshot()).await.unwrap();
 
         let loaded = store.load().await.unwrap();

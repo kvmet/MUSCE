@@ -38,7 +38,7 @@ fn go_invalid_exit_rejects() {
 fn go_through_a_locked_exit_rejects() {
     let mut f = fixture();
     let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
-    f.world.insert(north, Locked);
+    f.world.insert(north, Locked).unwrap();
 
     let out = run(&mut f.world, f.actor, |c| go(c, "north"));
 

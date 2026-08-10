@@ -181,12 +181,14 @@ pub fn consume(ctx: &mut SystemCtx) {
 fn metabolize(world: &mut World, eater: EntityId) {
     if let Some(pang) = world.get::<Hunger>(eater).map(|h| h.pang) {
         let sated = world.has::<Fed>(eater);
-        world.insert(
-            eater,
-            Hunger {
-                pang: step_need(pang, sated),
-            },
-        );
+        world
+            .insert(
+                eater,
+                Hunger {
+                    pang: step_need(pang, sated),
+                },
+            )
+            .expect("a read Hunger belongs to a live eater");
     }
 }
 
@@ -388,7 +390,7 @@ mod tests {
     #[test]
     fn nothing_edible_leaves_it_hungry() {
         let mut f = fixture();
-        f.world.remove::<Edible>(f.bread); // the only food loses its edibility
+        f.world.remove::<Edible>(f.bread).unwrap(); // the only food loses its edibility
 
         for n in 1..=THRESHOLD as u64 + 1 {
             tick(&mut f.world, CONSUME_EVERY * n);

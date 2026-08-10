@@ -376,7 +376,11 @@ pub fn unpossess(ctx: &mut Ctx, args: &str) {
         }
     }
     if let Some(f) = ctx.world.focus_of(ctx.actor)
-        && (f == target || ctx.world.ancestors::<Controls>(f).contains(&target))
+        && (f == target
+            || ctx
+                .world
+                .ancestors::<Controls>(f)
+                .any(|ancestor| ancestor == target))
     {
         ctx.world.clear_focus(ctx.actor);
     }
@@ -485,7 +489,9 @@ pub fn setpos(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Coordinates must be whole numbers.");
         return;
     };
-    ctx.world.insert(id, Xyz { x, y, z });
+    ctx.world
+        .insert(id, Xyz { x, y, z })
+        .expect("a parsed entity reference is live");
     ctx.emit_self(
         EventKind::Feedback,
         format!("Set #{} to ({x}, {y}, {z}).", id.0),

@@ -298,7 +298,7 @@ fn planned_put_drop_go_run_through_the_typed_veto() {
     {
         let mut f = fixture();
         let north = names::resolve(&f.world, f.actor, Scope::Exits, "north").unwrap();
-        f.world.insert(north, Locked);
+        f.world.insert(north, Locked).unwrap();
         let framed = Frame {
             actor: f.actor,
             object: None,
@@ -336,7 +336,7 @@ fn go_guard_predicts_the_locked_veto() {
     assert!(veto_open.is_none());
 
     // Locked: the negated guard fires with exactly the message the handler shows.
-    f.world.insert(north, Locked);
+    f.world.insert(north, Locked).unwrap();
     let veto_locked = go_aff()
         .veto(&frame, &f.world, &RefWorldModel)
         .map(|g| g.reason);
@@ -523,7 +523,7 @@ fn the_driver_replans_around_a_vetoed_beat_and_finishes_the_goal() {
     let progress = driver.pursue(f.actor, &goal, &known, &mut f.world, |world, step| {
         if step.affordance.name == "put" && smashed.borrow().is_none() {
             let target = step.frame.target.unwrap();
-            world.remove::<Container>(target);
+            world.remove::<Container>(target).unwrap();
             *smashed.borrow_mut() = Some(target);
         }
         match perform(world, &step.affordance, &step.frame) {

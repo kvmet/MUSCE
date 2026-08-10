@@ -118,9 +118,10 @@ Rooms, containers, and inventories are all containers. See
   subtree (see [facts.md](facts.md)).
 - Helpers: `contents` (one level), `container_of` (immediate parent),
   `enclosing_locus` (walk up to the nearest `Locus`, the perception boundary).
-  `contents` and the generic `sources_of` borrow their reverse-index slices, so
-  read-only queries allocate nothing; mutation during traversal first copies at
-  that explicit ownership boundary.
+  `contents` and the generic `sources_of` borrow their reverse-index slices, and
+  `ancestors` streams immediate-parent-first, so read-only queries allocate
+  nothing; mutation during traversal first collects/copies at that explicit
+  ownership boundary.
 
 ## Control and focus
 
@@ -247,53 +248,10 @@ the player) carries one as its primary in-character handle, with `Description` t
 longer prose an `examine` reveals. Extra match keywords live in an app-side
 `Aliases` component the resolver also reads.
 
-## Queries
+## Queries and mutation
 
-Two kinds, and the split drives what machinery exists:
-
-- **Archetypal** ("which entities have components X?") is what hecs does
-  natively and fast. Needs only marker components to filter by kind.
-- **Relational** ("which entity is related to this one?") hecs does not do. We
-  answer it with the relation components as indexes plus the `EntityId` index.
-
-Reads go through `World`'s own addressed-by-id surface, never a raw hecs handle:
-`world.query::<Q>()` for archetypal iteration, `world.get::<C>(id)` for one
-component, `world.has::<C>(id)`, `world.contains(id)`. The raw `hecs::World` and
-`EntityRef` are **not reachable outside the crate**: there is no `ecs()` accessor,
-and `entity_ref` (the raw `EntityRef`) is `pub(crate)` for trusted internal use only
-(snapshot serialization). This is deliberate and load-bearing for correctness, not
-just tidiness. hecs does *runtime* borrow checking, so a shared `&hecs::World` can
-still hand out `&mut C` (interior borrow); exposing it would let any reader mutate a
-component below the mutator layer, silently skipping the `EntityId` index, the
-despawn cascade, the reverse lists, and the persistence dirty set. So `query` is
-bounded by [`ReadQuery`](../../musce_core/src/world.rs) (shared borrows only, never
-`&mut`), and `get` returns a shared `Ref`. The **only** way to change a persisted
-component is through `World`'s mutators (`set_component`/`insert`/`remove`/`modify`,
-`move_entity`/`relate`), which keep all of that consistent; a raw `ecs.despawn`
-would skip the cascade, a raw `ecs.spawn` would make an `Id`-less entity, and a raw
-`get::<&mut C>` would drop a change from the next delta snapshot. Making the raw
-handle unreachable turns that boundary from a convention into a compile error.
-
-Those write mutators are all **per-entity**: `modify(id, f)` is a point lookup
-(`EntityId` -> `hecs::Entity` -> archetype fetch) each call. A system that writes one
-component across many entities every tick therefore pays that lookup per entity where
-a raw `query::<(&mut C,)>()` would do one columnar pass. A sanctioned bulk mutator
-(`modify_each`) closes that gap without reopening the hole: iterate the mutable query
-under the hood, collect the touched ids, then mark them dirty and emit
-`ComponentChanged` in a second pass (the fact push cannot borrow `self` while the
-query holds `ecs`). It is **deferred** on purpose, not forgotten: keeping hecs's
-archetypal storage is precisely what leaves this escape valve open, but the right
-signature is consumer-shaped (a single-`C` form vs a filtered multi-component query,
-and whether the closure returns "did I change it" to keep fact emission precise), so
-it is built with the first hot bulk-write system that defines those, as a pure
-addition.
-
-Relations that promise acyclicity implement `AcyclicRelation`; ancestor and
-descendant walks require that marker at compile time, so a cyclic relation cannot
-enter a tree walk. `walk_descendants` owns only its DFS stack and gives the caller
-explicit `Walk::{Descend, Prune, Stop}` control for each visited entity. The engine
-owns traversal mechanics; the consumer owns pruning and early termination. Order is
-unspecified because the borrowed reverse lists are unordered.
-
-Proximity queries ("things near `[x,y]`") are a different beast needing a spatial
-index, and belong to app logic once coordinates exist. Deferred.
+The public read boundary, sealed read-only queries, typed mutator contracts, and
+allocation-free traversal live in
+[world-queries-and-mutation.md](world-queries-and-mutation.md). They are split out
+because the boundary applies across identity, persistence, and every relation kind;
+this document remains the source of the relation invariants those APIs preserve.

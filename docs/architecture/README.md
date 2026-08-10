@@ -34,7 +34,10 @@ These hold across every subsystem:
 ## Documents
 
 - [ecs-and-relations.md](ecs-and-relations.md): the ECS, identity, the generic
-  relation layer, containment, and how queries work.
+  relation layer, containment, and relation invariants.
+- [world-queries-and-mutation.md](world-queries-and-mutation.md): the sealed public
+  read boundary, typed mutator contracts, and allocation-free relation traversal.
+  *(Built; a sanctioned bulk mutator remains consumer-shaped and deferred.)*
 - [persistence.md](persistence.md): World-as-truth, the delta snapshot model, the
   blob schema, and the save/confirm contract.
 - [cold-storage.md](cold-storage.md): the cold content store (`KvStore`), its async

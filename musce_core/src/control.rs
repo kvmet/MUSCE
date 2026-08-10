@@ -60,10 +60,7 @@ impl World {
     /// entity it drives and back. See
     /// `docs/architecture/networking-and-sessions.md`.
     pub fn control_root(&self, entity: EntityId) -> EntityId {
-        self.ancestors::<Controls>(entity)
-            .last()
-            .copied()
-            .unwrap_or(entity)
+        self.ancestors::<Controls>(entity).last().unwrap_or(entity)
     }
 
     /// Point a controller's cursor at `target`. `Focus` is, by definition, the
@@ -74,7 +71,11 @@ impl World {
     /// place stays app policy (the `pilot`/`@possess` gate); this governs only
     /// where an existing controller's cursor may land.
     pub fn set_focus(&mut self, controller: EntityId, target: EntityId) -> Result<(), FocusError> {
-        if target == controller || !self.ancestors::<Controls>(target).contains(&controller) {
+        if target == controller
+            || !self
+                .ancestors::<Controls>(target)
+                .any(|id| id == controller)
+        {
             return Err(FocusError::NotControlled);
         }
         self.relate::<Focus>(controller, target)

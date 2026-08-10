@@ -77,6 +77,24 @@ mod tests {
     }
 
     #[test]
+    fn ancestors_stream_immediate_first_and_can_stop_early_or_collect() {
+        let mut w = World::new();
+        let root = container(&mut w, "root");
+        let middle = container(&mut w, "middle");
+        let leaf = item(&mut w, "leaf");
+        let detached = item(&mut w, "detached");
+        w.move_entity(middle, root).unwrap();
+        w.move_entity(leaf, middle).unwrap();
+
+        assert_eq!(
+            w.ancestors::<Containment>(leaf).collect::<Vec<_>>(),
+            [middle, root]
+        );
+        assert_eq!(w.ancestors::<Containment>(leaf).next(), Some(middle));
+        assert_eq!(w.ancestors::<Containment>(detached).next(), None);
+    }
+
+    #[test]
     fn moving_reparents() {
         let mut w = World::new();
         let hall = locus(&mut w, "hall");
@@ -607,7 +625,7 @@ mod tests {
         // Nothing tracked: a set is silent.
         w.set_component(it, "description", serde_json::json!("y"))
             .unwrap();
-        w.insert(it, Description("z".into()));
+        w.insert(it, Description("z".into())).unwrap();
         assert!(w.take_facts().is_empty(), "untracked writes emit nothing");
     }
 
@@ -620,8 +638,8 @@ mod tests {
 
         w.set_component(it, "description", serde_json::json!("y"))
             .unwrap();
-        w.insert(it, Description("z".into()));
-        w.remove::<Description>(it);
+        w.insert(it, Description("z".into())).unwrap();
+        w.remove::<Description>(it).unwrap();
         let facts = w.take_facts();
 
         assert_eq!(changed_tags(&facts), ["description"; 3]);
@@ -658,15 +676,91 @@ mod tests {
         let _ = w.take_facts();
 
         // Present: mutate in place, report true, emit one trigger.
-        assert!(w.modify::<Description>(it, |d| d.0 = "new".into()));
+        assert!(w.modify::<Description>(it, |d| d.0 = "new".into()).unwrap());
         assert_eq!(
             w.component_value(it, "description"),
             Some(serde_json::json!("new"))
         );
 
         // Absent component: no mutation, report false, emit nothing.
-        assert!(!w.modify::<Description>(bare, |d| d.0 = "unreached".into()));
+        assert!(
+            !w.modify::<Description>(bare, |d| d.0 = "unreached".into())
+                .unwrap()
+        );
 
         assert_eq!(changed_tags(&w.take_facts()), ["description"]);
+    }
+
+    #[test]
+    fn typed_mutators_reject_identity_and_registered_relation_components() {
+        struct TestLink;
+        impl Relation for TestLink {
+            const ACYCLIC: bool = false;
+            const ON_TARGET_DESPAWN: Cascade = Cascade::Detach;
+            const TARGET_TAG: &'static str = "test_link";
+        }
+
+        let mut w = World::new();
+        w.register_relation::<TestLink>();
+        let source = item(&mut w, "source");
+        let target = item(&mut w, "target");
+        let other = item(&mut w, "other");
+        w.relate::<TestLink>(source, target).unwrap();
+
+        assert!(matches!(
+            w.insert(source, Id(other)),
+            Err(MutateError::IdentityTag(tag)) if tag == Id::TAG
+        ));
+        assert!(matches!(
+            w.remove::<Id>(source),
+            Err(MutateError::IdentityTag(tag)) if tag == Id::TAG
+        ));
+        assert!(matches!(
+            w.modify::<Id>(source, |id| id.0 = other),
+            Err(MutateError::IdentityTag(tag)) if tag == Id::TAG
+        ));
+        assert_eq!(w.get::<Id>(source).unwrap().0, source);
+
+        assert!(matches!(
+            w.insert(source, RelTarget::<TestLink>::new(other)),
+            Err(MutateError::RelationTag(tag)) if tag == TestLink::TARGET_TAG
+        ));
+        assert!(matches!(
+            w.remove::<RelTarget<TestLink>>(source),
+            Err(MutateError::RelationTag(tag)) if tag == TestLink::TARGET_TAG
+        ));
+        assert!(matches!(
+            w.modify::<RelTarget<TestLink>>(source, |link| link.0 = other),
+            Err(MutateError::RelationTag(tag)) if tag == TestLink::TARGET_TAG
+        ));
+        assert_eq!(w.target_of::<TestLink>(source), Some(target));
+        assert_eq!(w.sources_of::<TestLink>(target), &[source]);
+        assert!(w.sources_of::<TestLink>(other).is_empty());
+    }
+
+    #[test]
+    fn typed_mutator_absence_contract_is_precise() {
+        let mut w = World::new();
+        let entity = w.spawn(EntityBuilder::new());
+        let missing = EntityId(u64::MAX);
+        let _ = w.snapshot();
+        let _ = w.take_facts();
+
+        assert_eq!(w.remove::<Description>(entity).unwrap(), false);
+        assert_eq!(w.modify::<Description>(entity, |_| {}).unwrap(), false);
+        assert!(matches!(
+            w.insert(missing, Description("x".into())),
+            Err(MutateError::NoSuchEntity(id)) if id == missing
+        ));
+        assert!(matches!(
+            w.remove::<Description>(missing),
+            Err(MutateError::NoSuchEntity(id)) if id == missing
+        ));
+        assert!(matches!(
+            w.modify::<Description>(missing, |_| {}),
+            Err(MutateError::NoSuchEntity(id)) if id == missing
+        ));
+        assert!(w.take_facts().is_empty());
+        assert!(w.snapshot().entities.is_empty());
     }
 }
