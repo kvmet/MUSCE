@@ -1,9 +1,9 @@
 # Affordance Migration
 
 > Status: **in progress.** The canonical schema/value substrate, typed state
-> readers, closed-condition evaluation, and qualitative gauge regions are built
-> additively. Immutable affordance registration, shared execution, authoring,
-> planner migration, and the final cutover remain pending.
+> readers, qualitative gauges, immutable registration, and shared execution are
+> built additively. Typed authoring/narration, consumer migration, and the final
+> cutover remain pending.
 
 The running engine still carries the smaller prototype that the canonical
 affordance system replaces. `musce_action` exposes `Term::{Const, Var}`,
@@ -23,8 +23,9 @@ The canonical implementation lands additively beside that runtime until every
 entry point can move together. Stable symbolic ids are suitable for schemas and
 the wire; each parameter's `slot` is a separate dense array index, so internal
 layout cannot silently rename a binding. Typed state readers and gauge evaluators
-already interpret canonical formulas, but no shipped verb, pointing action, or
-planner path executes them yet.
+interpret canonical formulas, and the canonical registry executes them through
+`Ctx` or `SystemCtx`; no shipped verb, pointing action, or planner path uses that
+registry yet.
 
 The prototype is frozen at its current five affordances. No compatibility layer
 becomes a new public design: temporary adapters may translate the existing pointing

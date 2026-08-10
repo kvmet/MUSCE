@@ -1,9 +1,11 @@
 # Affordance Execution Contracts
 
-> Status: **target design specified; implementation pending.** Affordances will
-> declare ordered guards and a deterministic, contested, or opaque resolution
-> mode. Executable oracles will enforce the behavioral guarantees that schema
-> validation cannot prove from Rust handler code.
+> Status: **registration and shared execution built; behavioral oracles pending.**
+> The immutable registry validates the structural and assembled-vocabulary rules,
+> builds the initial reverse effect index, and runs grounding, liveness, authority,
+> ordered guards, handlers, and result validation through one performer. Typed
+> narration, redundant-progress diagnostics, post-commit effect verification, and
+> executable content oracles remain pending.
 
 Logical planning requires more than effects that describe successful outcomes. It
 also requires a contract for when an applicable action succeeds and which effects
@@ -81,32 +83,35 @@ must hold for every successful committed outcome. An outcome-specific state chan
 requires an explicit outcome model in a future extension; it is not silently made
 conditional now.
 
-Narration is not an effect. The affordance's typed narrator receives actor, inputs,
-and successful results after commitment and emits the shared first- and
-third-person account.
+Narration is not an effect. The built performer stages output emitted through
+`PerformCtx` and releases it only after the handler commits with valid result
+bindings; refusal and contract-error paths discard it. The pending typed narrator
+will receive actor, inputs, and successful results after commitment and emit the
+shared first- and third-person account.
 
 ## Schema registration
 
 Affordance registration rejects malformed schemas:
 
-- duplicate parameter names or ids;
+- duplicate parameter ids or mode-local slots, and non-dense slot layouts;
 - a term referring to an undeclared parameter or local;
 - a value sort used in an incompatible condition/effect position;
 - an input or result used in an illegal position;
 - `Create` not targeting exactly one entity result;
 - incompatible assignments to the same state slot;
 - both gauge directions on the same gauge slot;
-- an effect whose value is already guaranteed by the requirements, when it is the
-  affordance's only advertised progress;
 - an effect whose declared state id is not registered;
 - a positive `Exists` condition on an entity input whose grounding already proves
   liveness;
 - an implementation missing for an executable affordance.
 
+These checks are built in `AffordanceRegistryBuilder`; supplying the handler in
+the same registration call makes a missing implementation unrepresentable.
 Non-enumerable inputs are valid. A text command or script may supply them; a
 planner simply cannot form a grounding while one remains unbound. Redundant
-effects in an otherwise progressive affordance are removed or diagnosed so they
-do not pollute the reverse effect index.
+effect/progress analysis remains pending; until it lands, registration rejects
+incompatible assignments but does not diagnose an effect already implied by a
+guard.
 
 Reverse-index construction omits every effect containing a `Result` term until
 fresh-result regression is enabled. This is an indexing rule, not a schema error:
@@ -114,11 +119,14 @@ the effect remains part of the execution contract and of assignment-interference
 analysis.
 
 Validation happens once at registration. Grounding then uses compact ids and typed
-values without repeating schema checks. The macro catches structural and sort
-errors knowable during Rust compilation; registration handles errors that depend
-on the assembled app vocabulary, such as unknown ids or duplicate registrations.
-Executable-oracle tests enforce behavioral contracts that registration cannot
-infer from arbitrary Rust handler code.
+values without repeating schema checks. The pending macro will catch structural
+and sort errors knowable during Rust compilation; registration handles errors that
+depend on the assembled app vocabulary, such as unknown ids or duplicate
+registrations.
+The built performer treats a deterministic handler refusal and malformed result
+bindings as contract errors. Executable-oracle tests will enforce advertised
+post-commit effects that registration cannot infer from arbitrary Rust handler
+code.
 
 ## Behavioral oracles
 

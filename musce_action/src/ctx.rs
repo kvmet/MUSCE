@@ -17,6 +17,8 @@ use crate::audience::{Outbound, resolve};
 use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
 use crate::event::Event;
+use crate::perform::{AffordanceRegistry, PerformError, PerformOutcome};
+use crate::schema::GroundAction;
 
 /// The acting principal a command runs under: the actor entity the connection
 /// drives, the connection that issued the command, and the account-scoped
@@ -149,6 +151,23 @@ impl<'a> Ctx<'a> {
     /// single `&mut self` accessor to either field alone could not satisfy.
     pub fn world_and_out(&mut self) -> (&mut World, &mut Vec<Outbound>) {
         (self.world, self.out)
+    }
+
+    /// Run a canonical action through the shared performer under this command's
+    /// account authority. The action cannot substitute a different actor body.
+    pub fn perform(
+        &mut self,
+        registry: &AffordanceRegistry,
+        action: &GroundAction,
+    ) -> Result<PerformOutcome, PerformError> {
+        if action.actor() != self.actor() {
+            return Err(PerformError::ActorMismatch {
+                caller: self.actor(),
+                action: action.actor(),
+            });
+        }
+        let verdict = self.caller.verdict();
+        registry.perform(self.world, self.out, verdict, action)
     }
 
     /// First-person output, straight to the acting connection.
@@ -297,6 +316,18 @@ impl<'a> SystemCtx<'a> {
     /// an NPC's act narrates to the room from the same code a player's does.
     pub fn world_and_out(&mut self) -> (&mut World, &mut Vec<Outbound>) {
         (self.world, self.out)
+    }
+
+    /// Run an autonomous canonical action through the same performer as a player.
+    /// Systems have no account principal, so the app supplies the deliberate
+    /// default verdict instead of deriving authority from the chosen actor.
+    pub fn perform(
+        &mut self,
+        registry: &AffordanceRegistry,
+        verdict: &Verdict,
+        action: &GroundAction,
+    ) -> Result<PerformOutcome, PerformError> {
+        registry.perform(self.world, self.out, verdict, action)
     }
 }
 

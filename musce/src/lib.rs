@@ -43,6 +43,11 @@ pub mod action {
         Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
     };
     pub use musce_action::{
+        AffordanceHandler, AffordanceRegistry, AffordanceRegistryBuilder, EffectKind,
+        HandlerOutcome, PerformCtx, PerformError, PerformOutcome, Refusal, RegistryError,
+        SchemaError,
+    };
+    pub use musce_action::{
         Caller, CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command,
         dispatch_perform,
     };

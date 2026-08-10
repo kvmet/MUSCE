@@ -194,11 +194,12 @@ moving files.
   fixed.
 - **`execute` / `Action` / `ExecError`.** Already public: the structural mutation
   path an app's rule-checked handlers commit through.
-- **`affordance!` and the canonical affordance types.** The proposed app-facing
-  description language declares typed inputs/results, logical requirements and
-  effects, a resolution contract, and the Rust handler and narrator that implement
-  the act. It generates typed values, adapters, and registration metadata, then lowers to the engine-owned
-  canonical AST; see
+- **The canonical affordance types and proposed `affordance!` surface.** The
+  engine-owned schema, state registry, immutable affordance registry, and shared
+  performer are built. The proposed app-facing description language declares
+  typed inputs/results, logical requirements and effects, a resolution contract,
+  and the Rust handler and narrator that implement the act. It will generate typed
+  values, adapters, and registration metadata, then lower to the canonical AST; see
   [affordance-authoring.md](affordance-authoring.md).
 - **The audience resolver, `Outbound`, and `Actors`.** Engine mechanism the app
   does not touch directly. `dispatch_bare` already takes the command table as a

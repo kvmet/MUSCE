@@ -424,6 +424,12 @@ impl StateRegistry {
         self.symbols.contains_key(id)
     }
 
+    pub fn has_symbol(&self, value: &SymbolValue) -> bool {
+        self.symbols
+            .get(value.domain())
+            .is_some_and(|members| members.contains(value.value()))
+    }
+
     /// Prove that every typed state reader was also registered on this world.
     pub fn validate_world(&self, world: &World) -> Result<(), StateActivationError> {
         let mut missing = Vec::new();

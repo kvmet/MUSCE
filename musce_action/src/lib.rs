@@ -12,6 +12,8 @@
 //!   `dispatch_command` runs them through a [`Ctx`] whose emit API is the surface
 //!   handlers program against; the host points it at the embodiment or admin
 //!   table per the input-stack frame.
+//! - [`AffordanceRegistry`] freezes canonical schemas with their handlers, and
+//!   `Ctx`/`SystemCtx` lend it grounded actions through one shared performer.
 //! - the audience resolver expands room/entity-addressed output into the
 //!   connections that should see it, before anything reaches net.
 
@@ -24,6 +26,7 @@ mod dispatch;
 mod event;
 mod executor;
 mod gauge;
+pub mod perform;
 mod registry;
 pub mod schema;
 pub mod state;
@@ -41,6 +44,10 @@ pub use dispatch::{
 pub use event::{Audience, Event};
 pub use executor::{Action, ActionKind, ExecError, execute};
 pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
+pub use perform::{
+    AffordanceHandler, AffordanceRegistry, AffordanceRegistryBuilder, EffectKind, HandlerOutcome,
+    PerformCtx, PerformError, PerformOutcome, Refusal, RegistryError, SchemaError,
+};
 pub use registry::CapRegistry;
 
 /// The actor's own description, for floor confirmations like "You are now X."

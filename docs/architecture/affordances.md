@@ -1,16 +1,17 @@
 # Affordances, Conditions, and Effects
 
-> Status: **canonical schema and state evaluation built; registration/execution
-> integration pending.** `musce_action::schema` provides stable symbolic affordance and
+> Status: **canonical schema, state evaluation, registration, and execution built;
+> consumer migration pending.** `musce_action::schema` provides stable symbolic affordance and
 > parameter ids, separate dense parameter slots, typed values, input/result
 > declarations, canonical terms, formulas, effects, resolution modes, partial
 > bindings, grounded actions, and outcomes. `musce_action::state` registers typed
 > relation/component readers, finite symbol domains, and qualitative gauge readers,
 > validates their world wiring, and evaluates the closed condition algebra with
-> explicit errors for unknown vocabulary. Affordance schema registration, the shared
-> performer, the `affordance!` macro, wire migration, and planner integration remain
-> pending. The optional `musce_agency` planner consumes this representation but does
-> not own it.
+> explicit errors for unknown vocabulary. `AffordanceRegistryBuilder` validates and
+> freezes schemas with their handlers; `Ctx` and `SystemCtx` lend actions to one
+> authority-, grounding-, guard-, and result-checking performer. The `affordance!`
+> macro, typed narrator, executable effect oracles, wire migration, and planner
+> integration remain pending.
 
 ## Built prototype during migration
 

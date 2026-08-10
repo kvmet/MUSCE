@@ -7,8 +7,8 @@
 > primitives, the off-thread account task, the async auth round-trip with
 > pending-auth rejection, the app login veto, operator bootstrap, and the host
 > command wiring are all implemented and tested. Command authority is enforced
-> by `CommandTable` gates; the canonical affordance authority gate is part of the
-> pending grounded-action integration. Still deferred: operator-set passwords for
+> by `CommandTable` gates and canonical affordance authority by the shared
+> performer before app code runs. Still deferred: operator-set passwords for
 > another account, non-password auth (OAuth), and encrypted remote authentication.
 > Until a transport can prove encryption, password-bearing commands are
 > loopback-only rather than sending credentials in cleartext.
@@ -27,10 +27,11 @@ Authorization is then a `Verdict` resolved from an account's capabilities and it
 superuser bit. `Caller` keeps the actor, connection, and verdict together; the built
 command dispatch seam constructs `Ctx` from that one bundle and consults the verdict
 through a verb's `CommandTable` gate. Handlers retain read-only `verdict`, `permits`,
-and `is_su` queries for scoped rules. The target canonical
-grounded-action performer will likewise consult it through the affordance's own
-gate before app code runs; that integration is not yet built (see
-[affordances.md](affordances.md)).
+and `is_su` queries for scoped rules. The canonical performer likewise consults
+the same verdict through the affordance's own gate before app code runs. Player
+execution is lent through `Ctx`, which also rejects an action naming a different
+actor; autonomous execution is lent through `SystemCtx` with an explicit
+app-supplied verdict (see [affordances.md](affordances.md)).
 
 ## Accounts live in the one store, not a parallel one
 
