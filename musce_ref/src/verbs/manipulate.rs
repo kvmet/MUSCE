@@ -22,7 +22,6 @@ pub(crate) fn do_take(world: &mut World, actor: EntityId, item: EntityId) -> Out
         actor,
         object: Some(item),
         target: None,
-        kind: None,
     };
     if let Some(guard) = crate::agency::take().veto(&frame, world, &RefWorldModel) {
         return Outcome::Refused(guard.reason);
@@ -58,7 +57,6 @@ pub(crate) fn do_drop(world: &mut World, actor: EntityId, item: EntityId) -> Out
         actor,
         object: Some(item),
         target: Some(room),
-        kind: None,
     };
     if let Some(guard) = crate::agency::drop().veto(&frame, world, &RefWorldModel) {
         return Outcome::Refused(guard.reason);
@@ -96,11 +94,9 @@ pub fn take(ctx: &mut Ctx, args: &str) {
         actor,
         object: Some(target),
         target: None,
-        kind: None,
     };
-    let verdict = ctx.verdict();
     let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::take(), &frame, verdict, out);
+    crate::act::perform_narrated(world, actor, &crate::agency::take(), &frame, out);
 }
 
 /// `drop <item>`: put a held thing down into the current room. The verb owns the
@@ -122,9 +118,7 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
         actor,
         object: Some(target),
         target: None,
-        kind: None,
     };
-    let verdict = ctx.verdict();
     let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::drop(), &frame, verdict, out);
+    crate::act::perform_narrated(world, actor, &crate::agency::drop(), &frame, out);
 }

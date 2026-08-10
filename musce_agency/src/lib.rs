@@ -4,7 +4,7 @@
 //! `Driver` (running a plan with replan-on-veto). The affordance vocabulary it
 //! plans over (`Term` / `Predicate` / `Clause` / `Affordance` / `Frame` /
 //! `WorldModel`) lives in the engine, non-optional, in `musce_action`, because a
-//! verb-gate is a dispatch concern independent of planning; this crate re-exports
+//! action guards are shared between execution and planning; this crate re-exports
 //! it for planner-facing consumers. App content, the concrete affordances, the
 //! relation/component vocabulary their predicates name, and the drives that emit
 //! goals, lives in the consumer crate, never here. See `docs/architecture/agency/`
@@ -19,7 +19,7 @@ mod planner;
 pub use arbiter::{Arbiter, Goal, Urgency};
 pub use driver::{Beat, Driver, Progress};
 pub use musce_action::{
-    Affordance, Clause, Frame, Gate, Guard, Literal, Predicate, Term, Var, WorldModel,
+    Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
 };
 pub use planner::{Plan, Planner, Step};
 
@@ -87,7 +87,6 @@ mod tests {
         let take = Affordance {
             name: "take".into(),
             guards: Vec::new(),
-            gate: Gate::Open,
             effect: Clause::default(),
         };
         assert_eq!(UnitCost.cost(EntityId(1), &take, &World::new()), 1);

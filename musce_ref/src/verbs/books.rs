@@ -83,7 +83,7 @@ fn key_of(ctx: &Ctx, entity: EntityId) -> Option<String> {
 mod tests {
     use super::*;
     use crate::kinds::Item;
-    use musce::action::{ColdOp, Outbound, Verdict};
+    use musce::action::{ColdOp, Outbound};
     use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, Locus, Name, World};
@@ -132,8 +132,7 @@ mod tests {
     /// strings. Reads `cold_ops()` before the `Ctx` is dropped.
     fn cold_ops(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<String> {
         let mut out: Vec<Outbound> = Vec::new();
-        let verdict = Verdict::guest();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
         f(&mut ctx);
         ctx.cold_ops()
             .iter()

@@ -7,7 +7,7 @@
 use super::help;
 use crate::exits::{LeadsFrom, LeadsTo};
 use crate::kinds::{Exit, Item, Player};
-use musce::action::{Audience, Ctx, Outbound, Verdict};
+use musce::action::{Audience, Ctx, Outbound};
 use musce::wire::ConnectionId;
 use musce::world::hecs::EntityBuilder;
 use musce::world::{Description, EntityId, Locus, Name, World};
@@ -83,8 +83,7 @@ fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
 /// Run a handler and return its emitted (pre-resolution) outbound buffer.
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
     let mut out = Vec::new();
-    let verdict = Verdict::guest();
-    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
     f(&mut ctx);
     out
 }

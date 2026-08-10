@@ -6,9 +6,11 @@
 > password, and `@operator` remains the passwordless loopback bootstrap. The
 > primitives, the off-thread account task, the async auth round-trip with
 > pending-auth rejection, the app login veto, operator bootstrap, and the host
-> command wiring are all implemented and tested. Still deferred: operator-set
-> passwords for another account, and non-password auth (OAuth). The line-mode
-> transport carries passwords in the clear until a secure transport lands.
+> command wiring are all implemented and tested. Command authority is enforced
+> by `CommandTable` gates; the canonical affordance authority gate is part of the
+> pending grounded-action integration. Still deferred: operator-set passwords for
+> another account, and non-password auth (OAuth). The line-mode transport carries
+> passwords in the clear until a secure transport lands.
 
 Two things are kept apart. **Authentication** proves which account a connection is:
 a credential check that yields an `AccountId`. **Authorization** decides what that
@@ -21,9 +23,11 @@ exist before any character, must not ride the world's snapshot cadence, and must
 be walked by app systems or the reflection admin layer. So they are *not* entities
 in the ECS world. They are a thin, columnar table in the same store as the world.
 Authorization is then a `Verdict` resolved from an account's capabilities and its
-superuser bit, consulted where an act enters: the command dispatch seam (a verb's
-`CommandTable` gate) and the automation seam (an affordance's own `gate`, checked
-by `perform`; see [affordances.md](affordances.md)).
+superuser bit. The built command dispatch seam consults it through a verb's
+`CommandTable` gate before constructing the handler context. The target canonical
+grounded-action performer will likewise consult it through the affordance's own
+gate before app code runs; that integration is not yet built (see
+[affordances.md](affordances.md)).
 
 ## Accounts live in the one store, not a parallel one
 

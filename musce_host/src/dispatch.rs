@@ -423,7 +423,7 @@ mod tests {
             },
             // Echo the affordance name back to the actor so a routing test can
             // observe the seam ran on the resolved actor's Ctx.
-            perform: |ctx, _, name, _, _| {
+            perform: |ctx, name, _, _| {
                 ctx.emit_self(EventKind::Feedback, format!("performed {name}"))
             },
         }
@@ -971,7 +971,7 @@ mod tests {
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
             offers: |_, _, _| Vec::new(),
-            perform: |_, _, _, _, _| {},
+            perform: |_, _, _, _| {},
         };
         let dispatch = Dispatch::new(app);
         let mut world = World::new();

@@ -15,7 +15,6 @@ use musce_proto::{ConnectionId, EventKind, Outgoing};
 
 use crate::audience::{Outbound, resolve};
 use crate::bindings::Actors;
-use crate::caps::{CapId, Verdict};
 use crate::event::Event;
 
 /// A handler's request to the cold content store ([`musce_persistence::KvStore`]),
@@ -44,18 +43,12 @@ pub enum ColdOp {
 /// The per-command context handed to a handler: the world it mutates, the actor
 /// it acts through, the connection that issued it, and the output buffer it emits
 /// into. The actor is explicit so handlers are callable directly in tests and,
-/// later, by AI and sequences.
-///
-/// It also carries the resolved authorization [`Verdict`], read-only, so an app's
-/// inline rules can be superuser-aware (waving su through a scoped check the flat
-/// gate cannot express) exactly as the gate is. The verdict keys off the account,
-/// never the actor, so reading it here cannot borrow authority from a possessed
-/// body.
+/// later, by AI and sequences. Command authority is checked by the dispatcher
+/// before constructing this context.
 pub struct Ctx<'a> {
     pub world: &'a mut World,
     pub actor: EntityId,
     pub conn: ConnectionId,
-    verdict: &'a Verdict,
     out: &'a mut Vec<Outbound>,
     /// Cold-store requests the handler recorded. Owned (not a borrowed sink like
     /// `out`) because a cold op is self-contained and needs no world/actor
@@ -70,33 +63,15 @@ impl<'a> Ctx<'a> {
         world: &'a mut World,
         actor: EntityId,
         conn: ConnectionId,
-        verdict: &'a Verdict,
         out: &'a mut Vec<Outbound>,
     ) -> Self {
         Ctx {
             world,
             actor,
             conn,
-            verdict,
             out,
             cold: Vec::new(),
         }
-    }
-
-    /// Whether superuser is in force for this command. An app's inline rule reads
-    /// this to wave su through a restriction the flat gate cannot express.
-    pub fn is_su(&self) -> bool {
-        self.verdict.is_su()
-    }
-
-    /// The acting principal's authorization, for an app routine that must pass it
-    /// onward: a shared narrating-perform runs the affordance's gate, so a verb
-    /// handler routing through it must hand it the same verdict a bare
-    /// `agency::perform` would check, or a cap-gated affordance-verb would lose the
-    /// player's authority. Returns the borrow with its own lifetime, not tied to
-    /// `&self`, so a handler can read it and still call [`Ctx::world_and_out`].
-    pub fn verdict(&self) -> &'a Verdict {
-        self.verdict
     }
 
     /// The world and the raw output buffer together. The seam a shared app routine
@@ -108,12 +83,6 @@ impl<'a> Ctx<'a> {
     /// single `&mut self` accessor to either field alone could not satisfy.
     pub fn world_and_out(&mut self) -> (&mut World, &mut Vec<Outbound>) {
         (self.world, self.out)
-    }
-
-    /// Whether this command's account holds `cap` (or su is in force). Lets an inline
-    /// rule ask the same question a `Gate::Cap` asks.
-    pub fn has_cap(&self, cap: CapId) -> bool {
-        self.verdict.permits(cap)
     }
 
     /// First-person output, straight to the acting connection.

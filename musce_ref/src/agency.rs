@@ -4,8 +4,7 @@
 //! generic mechanism lives in `musce_agency`; only this crate knows what
 //! `"contained_by"` means. See `docs/architecture/agency/`.
 
-use musce::action::Verdict;
-use musce::agency::{Affordance, Clause, Frame, Gate, Guard, Predicate, Term, WorldModel};
+use musce::agency::{Affordance, Clause, Frame, Guard, Predicate, Term, WorldModel};
 use musce::world::{EntityId, World};
 
 use crate::verbs::{MoveOutcome, Outcome, do_drop, do_eat, do_move, do_put, do_take};
@@ -27,7 +26,6 @@ use crate::verbs::{MoveOutcome, Outcome, do_drop, do_eat, do_move, do_put, do_ta
 pub fn take() -> Affordance {
     Affordance {
         name: "take".into(),
-        gate: Gate::Open,
         guards: vec![Guard {
             clause: Clause(vec![
                 Predicate::Tag {
@@ -68,7 +66,6 @@ pub fn take() -> Affordance {
 pub fn drop() -> Affordance {
     Affordance {
         name: "drop".into(),
-        gate: Gate::Open,
         guards: vec![Guard {
             clause: Clause(vec![
                 Predicate::Related {
@@ -107,7 +104,6 @@ pub fn drop() -> Affordance {
 pub fn put() -> Affordance {
     Affordance {
         name: "put".into(),
-        gate: Gate::Open,
         guards: vec![
             Guard {
                 clause: Clause(vec![
@@ -159,7 +155,6 @@ pub fn put() -> Affordance {
 pub fn eat() -> Affordance {
     Affordance {
         name: "eat".into(),
-        gate: Gate::Open,
         guards: vec![Guard {
             clause: Clause(vec![
                 Predicate::Related {
@@ -202,7 +197,6 @@ pub fn eat() -> Affordance {
 pub fn go() -> Affordance {
     Affordance {
         name: "go".into(),
-        gate: Gate::Open,
         guards: vec![Guard {
             clause: Clause(vec![
                 Predicate::Tag {
@@ -284,21 +278,7 @@ pub fn known_here(world: &World, actor: EntityId) -> Vec<EntityId> {
 /// first). Movement's richer `MoveOutcome` is collapsed to the uniform result
 /// here, since a plan step reads only committed-or-refused.
 ///
-/// `verdict` is the acting principal's authority: this is the automation entry, so
-/// the affordance's [`gate`](musce::agency::Affordance::gate) is checked here (a
-/// player verb's command checks its `CommandTable` gate instead). Non-connection
-/// automation passes [`Verdict::guest`], so a cap-gated act is unavailable until a
-/// game hands the automation a stronger verdict. A gate refusal short-circuits
-/// before the grounded action runs, so nothing commits.
-pub(crate) fn perform(
-    world: &mut World,
-    affordance: &Affordance,
-    frame: &Frame,
-    verdict: &Verdict,
-) -> Outcome {
-    if !affordance.permits(verdict) {
-        return Outcome::Refused("You aren't allowed to do that.");
-    }
+pub(crate) fn perform(world: &mut World, affordance: &Affordance, frame: &Frame) -> Outcome {
     match affordance.name.as_str() {
         "take" => match frame.object {
             Some(item) => do_take(world, frame.actor, item),

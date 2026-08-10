@@ -1,9 +1,9 @@
 //! The affordance vocabulary: the symbolic shape a verb's precondition and effect
 //! are written in, and the [`WorldModel`] seam that reads it against the world.
-//! This lives in the engine, non-optional, because a verb-gate ("may this actor
-//! do this now, and if not, why?") is a dispatch concern that exists whether or
-//! not anything plans. The GOAP planner in `musce_agency` is one *consumer* of
-//! this vocabulary, not its owner. See `docs/architecture/affordances.md`.
+//! This lives in the engine, non-optional, because gameplay guards are shared by
+//! player execution and planning whether or not an app enables autonomous agents.
+//! The GOAP planner in `musce_agency` is one *consumer* of this vocabulary, not
+//! its owner. See `docs/architecture/affordances.md`.
 //!
 //! App content, the concrete affordances and the relation/component vocabulary
 //! their predicates name, lives in the consumer crate, never here. The engine
@@ -17,9 +17,6 @@
 //! optimization, not built.
 
 use musce_core::{EntityId, World};
-
-use crate::caps::Verdict;
-use crate::dispatch::Gate;
 
 /// A predicate argument: a bound entity, or a variable the planner binds by
 /// enumeration. `Const` vs `Var` is the fungibility axis: a non-fungible want
@@ -190,16 +187,13 @@ impl Clause {
 
 /// The case frame: which entities fill an affordance's roles for one grounded
 /// instance. The parser fills it from a command line, the planner by
-/// unification. Its arity is fixed: `actor`, two object slots (`object`,
-/// `target`), and a relation `kind` (the preposition). That is the shape the
-/// parser and the structural `Action` already carry; a third object slot would
-/// be a migration, so it is deliberately absent (see the affordances doc).
+/// unification. Its current prototype has three entity roles: `actor`, `object`,
+/// and `target`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub actor: EntityId,
     pub object: Option<EntityId>,
     pub target: Option<EntityId>,
-    pub kind: Option<String>,
 }
 
 impl Frame {
@@ -253,14 +247,6 @@ pub struct Affordance {
     /// truth and re-checks at execution (the structural invariants the executor
     /// owns are deliberately *not* expressed here; see the affordances doc).
     pub guards: Vec<Guard>,
-    /// The authority required to perform this act. `Open` for an act any actor may
-    /// attempt; `Cap` gates it on a capability the performer's [`Verdict`] must
-    /// admit. This is the *act's* requirement, separate from the gameplay `guards`:
-    /// enforced on the automation entry (`perform` checks it against the actor's
-    /// verdict, guest by default), while a player verb's command still carries its
-    /// own `CommandTable` gate, so both entries express the same requirement at
-    /// their own boundary. See the affordances doc.
-    pub gate: Gate,
     /// The predicates the action makes true, so the planner can chain backward
     /// toward a goal. Declared explicitly rather than projected off the
     /// committed `Action`, keeping the executor's internals out of the
@@ -270,14 +256,6 @@ pub struct Affordance {
 }
 
 impl Affordance {
-    /// Whether `verdict` may perform this act: `Open` admits everyone, `Cap` admits
-    /// a verdict that holds the capability (or su). The authority half of
-    /// performing, separate from the gameplay [`Affordance::veto`]. An automation
-    /// entry checks this against the acting principal's verdict before it commits.
-    pub fn permits(&self, verdict: &Verdict) -> bool {
-        self.gate.permits(verdict)
-    }
-
     /// The first guard that vetoes this action for `frame` in `world`, or `None` if
     /// every guard holds. Grounds each guard's clause against the frame and reads it
     /// through the app-supplied `model`, returning the whole failing [`Guard`] so
@@ -404,7 +382,6 @@ mod tests {
         let take = Affordance {
             name: "take".into(),
             guards: Vec::new(),
-            gate: Gate::Open,
             effect: Clause(vec![
                 Predicate::Related {
                     a: var("actor"),
@@ -433,7 +410,6 @@ mod tests {
             actor: EntityId(1),
             object: Some(EntityId(2)),
             target: None,
-            kind: None,
         };
         assert_eq!(
             effect.bind(&frame),
@@ -462,7 +438,6 @@ mod tests {
             actor: EntityId(1),
             object: None,
             target: None,
-            kind: None,
         };
         assert_eq!(c.bind(&frame), c);
     }

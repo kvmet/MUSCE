@@ -182,7 +182,6 @@ fn frame_for(actor: EntityId, clicked: EntityId, focus: Role) -> Frame {
         actor,
         object: None,
         target: None,
-        kind: None,
     };
     match focus {
         Role::Object => frame.object = Some(clicked),
@@ -310,7 +309,6 @@ mod tests {
             actor: f.actor,
             object: Some(object),
             target: Some(f.chest),
-            kind: None,
         };
         assert_eq!(
             classify(&put(), &full(f.coin), &f.world, &RefWorldModel),

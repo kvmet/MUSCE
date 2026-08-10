@@ -102,7 +102,7 @@ impl<'a> Driver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Gate, Guard, UnitCost};
+    use crate::{Guard, UnitCost};
     use musce_action::{Affordance, Predicate, Term, WorldModel};
     use std::cell::RefCell;
     use std::collections::HashSet;
@@ -141,7 +141,6 @@ mod tests {
     fn take() -> Affordance {
         Affordance {
             name: "take".into(),
-            gate: Gate::Open,
             guards: Vec::new(),
             effect: Clause(vec![
                 Predicate::Related {
@@ -156,7 +155,6 @@ mod tests {
     fn put() -> Affordance {
         Affordance {
             name: "put".into(),
-            gate: Gate::Open,
             guards: vec![
                 Guard {
                     clause: Clause(vec![

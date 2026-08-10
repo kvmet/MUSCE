@@ -144,7 +144,7 @@ fn attacker_strength(world: &World, actor: musce::world::EntityId) -> u8 {
 mod tests {
     use super::*;
     use crate::kinds::{Creature, Item, Player};
-    use musce::action::{Audience, Ctx, Outbound, Verdict};
+    use musce::action::{Audience, Ctx, Outbound};
     use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, EntityId, Fact, Locus, Name, World};
@@ -200,8 +200,7 @@ mod tests {
 
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
         let mut out = Vec::new();
-        let verdict = Verdict::guest();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
         f(&mut ctx);
         out
     }

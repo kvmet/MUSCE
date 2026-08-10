@@ -252,8 +252,10 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
   **sim-side** (it needs world state and the connection-to-entity map), done by the
   action layer's audience resolver, which produces `Delivery`s; an unresolved
   audience therefore cannot reach net by construction, rather than being caught by a
-  runtime guard. The conn->actor map the resolver consumes is derived from the
-  floor's session attachments, which own it.
+  runtime guard. A locus audience selects bindings whose driven actor has that
+  `enclosing_locus`, so containment beneath ordinary containers stays visible and
+  a nested locus remains a perception boundary. The conn->actor map the resolver
+  consumes is derived from the floor's session attachments, which own it.
 - A single sim-side dispatcher (`musce_host`, `dispatch.rs`) is the one entry
   point the tick loop calls as it drains the inbox; it owns the input-stack
   routing above and takes `&mut World`. The `@`-namespace and connection lifecycle

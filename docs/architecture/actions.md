@@ -262,10 +262,13 @@ feedback (to the acting connection, or `to_entity(actor)` when the act's narrati
 must serve a connless performer too), a directed line to a specific entity, and
 third-person narration to the actor's locus excluding a set of parties (the actor
 alone, or the actor and a target both, so a directed act like `wave at` never shows
-either party the bystander view they already received). The audience resolver expands
-`Locus`/`Entity` into the connections that should see it and drops the excluded
-entities' connections, producing connection-bound `Delivery`s before anything
-reaches net. Net is left a pure pipe that can never receive an unresolved audience.
+either party the bystander view they already received). The audience resolver
+expands `Entity` through the actor bindings and expands `Locus` to every connected
+actor whose `enclosing_locus` is that locus. This keeps nested non-locus containers
+inside the perception scope while a nested locus forms a new boundary. It drops
+the excluded entities' connections and produces connection-bound `Delivery`s
+before anything reaches net. Net is left a pure pipe that can never receive an
+unresolved audience.
 
 The full structural action set (`Create`/`Destroy`/`SetComponent`/
 `RemoveComponent`), the type-erased reflection primitives it rides

@@ -21,12 +21,11 @@ pub type Handler = fn(&mut Ctx, &str);
 
 /// An app's grounded-act function: perform an affordance whose entities are already
 /// bound (a pointing client clicked them), so there is no noun to resolve. Receives
-/// the command context, the acting principal's `verdict` (to gate the affordance),
-/// the affordance name, the clicked `focus` entity, and any second entity a role
-/// sub-pick supplied. The app maps `focus`/`with` onto the affordance's roles,
-/// since which role the focus fills is app policy. An app writes this and the
-/// engine only invokes it, through [`dispatch_perform`].
-pub type PerformHandler = fn(&mut Ctx, &Verdict, &str, EntityId, Option<EntityId>);
+/// the command context, the affordance name, the clicked `focus` entity, and any
+/// second entity a role sub-pick supplied. The app maps `focus`/`with` onto the
+/// affordance's roles, since which role the focus fills is app policy. An app
+/// writes this and the engine only invokes it, through [`dispatch_perform`].
+pub type PerformHandler = fn(&mut Ctx, &str, EntityId, Option<EntityId>);
 
 /// A grounded act's bound parts: the affordance name and the entities a pointing
 /// client clicked (the `focus`, and any second entity a role sub-pick supplied).
@@ -148,7 +147,7 @@ pub fn dispatch_command(
     // its tail hands back the cold-store requests the handler queued (a plain move,
     // since a cold op needs no world/actor resolution).
     let cold = {
-        let mut ctx = Ctx::new(world, caller.actor, caller.conn, caller.verdict, &mut out);
+        let mut ctx = Ctx::new(world, caller.actor, caller.conn, &mut out);
         match table.lookup(&word.to_lowercase()) {
             Some(verb) if verb.gate.permits(caller.verdict) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
@@ -169,8 +168,8 @@ pub fn dispatch_command(
 /// same Ctx-and-audience machinery `dispatch_command` runs, entered with a bound
 /// affordance frame instead of a parsed line, so a click narrates through exactly
 /// the path a verb does. Table lookup and parsing are absent (the client did that
-/// by clicking); the gate is the affordance's own, checked inside the handler
-/// against `caller.verdict`.
+/// by clicking). The canonical affordance performer and its authority check are
+/// still pending; this entry point only routes the grounded callback.
 pub fn dispatch_perform(
     world: &mut World,
     actors: &Actors,
@@ -181,14 +180,8 @@ pub fn dispatch_perform(
 ) -> Vec<ColdOp> {
     let mut out: Vec<Outbound> = Vec::new();
     let cold = {
-        let mut ctx = Ctx::new(world, caller.actor, caller.conn, caller.verdict, &mut out);
-        handler(
-            &mut ctx,
-            caller.verdict,
-            act.affordance,
-            act.focus,
-            act.with,
-        );
+        let mut ctx = Ctx::new(world, caller.actor, caller.conn, &mut out);
+        handler(&mut ctx, act.affordance, act.focus, act.with);
         ctx.take_cold()
     };
 

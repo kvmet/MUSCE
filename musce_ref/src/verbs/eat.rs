@@ -32,7 +32,6 @@ pub(crate) fn do_eat(world: &mut World, actor: EntityId, food: EntityId) -> Outc
         actor,
         object: Some(food),
         target: None,
-        kind: None,
     };
     if let Some(guard) = eat_affordance().veto(&frame, world, &RefWorldModel) {
         return Outcome::Refused(guard.reason);
@@ -61,11 +60,9 @@ pub fn eat(ctx: &mut Ctx, args: &str) {
         actor,
         object: Some(target),
         target: None,
-        kind: None,
     };
-    let verdict = ctx.verdict();
     let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::eat(), &frame, verdict, out);
+    crate::act::perform_narrated(world, actor, &crate::agency::eat(), &frame, out);
 }
 
 #[cfg(test)]
@@ -163,15 +160,14 @@ mod tests {
     /// The room hears a third-person line when a being eats; the eater reads its own.
     #[test]
     fn the_room_hears_the_eating() {
-        use musce::action::{Audience, Outbound, Verdict};
+        use musce::action::{Audience, Outbound};
         use musce::wire::ConnectionId;
 
         let mut f = fixture();
         f.world.move_entity(f.crumb, f.mouse).unwrap();
 
-        let verdict = Verdict::guest();
         let mut out: Vec<Outbound> = Vec::new();
-        let mut ctx = Ctx::new(&mut f.world, f.mouse, ConnectionId(1), &verdict, &mut out);
+        let mut ctx = Ctx::new(&mut f.world, f.mouse, ConnectionId(1), &mut out);
         eat(&mut ctx, "bread");
 
         let room_lines: Vec<String> = out

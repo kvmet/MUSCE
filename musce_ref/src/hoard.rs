@@ -17,7 +17,7 @@
 
 use std::cell::RefCell;
 
-use musce::action::{SystemCtx, Verdict};
+use musce::action::SystemCtx;
 use musce::agency::{
     Arbiter, Beat, Clause, Driver, Goal, Planner, Predicate, Progress, Term, UnitCost,
 };
@@ -283,7 +283,7 @@ fn pursue_goal(world: &mut World, bird: EntityId, goal: &Clause) -> (Progress, O
     // the bird acted on after the pursuit frees the world borrow.
     let acted: RefCell<Option<EntityId>> = RefCell::new(None);
     let progress = driver.pursue(bird, goal, &known, world, |world, step| {
-        let out = perform(world, &step.affordance, &step.frame, &Verdict::guest());
+        let out = perform(world, &step.affordance, &step.frame);
         if matches!(out, Outcome::Committed)
             && let Some(item) = step.frame.object
         {

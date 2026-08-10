@@ -44,7 +44,7 @@ impl Outbound {
 /// Expand one `Outbound` into connection-bound `Delivery`s, pushing each through
 /// `emit`. A `Connection` audience passes through; `Entity` fans out to every
 /// connection driving that entity; `Locus` fans out to every connection whose
-/// actor stands directly in the locus.
+/// actor's enclosing perception locus is that locus.
 pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl FnMut(Outgoing)) {
     let Outbound { event, exclude } = out;
 
@@ -70,8 +70,8 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
             }
         }
         Audience::Locus(locus) => {
-            for &occupant in world.contents(locus) {
-                for conn in actors.conns_for(occupant) {
+            for (conn, actor) in actors.bindings() {
+                if world.enclosing_locus(actor) == Some(locus) {
                     deliver(conn);
                 }
             }
@@ -129,6 +129,88 @@ mod tests {
             .collect();
         assert!(conns.contains(&ConnectionId(1)));
         assert!(conns.contains(&ConnectionId(2)));
+    }
+
+    #[test]
+    fn locus_event_reaches_actor_inside_a_non_locus_container() {
+        let mut w = World::new();
+        let locus = {
+            let mut b = EntityBuilder::new();
+            b.add(Locus);
+            w.spawn(b)
+        };
+        let container = w.spawn(EntityBuilder::new());
+        let alice = player(&mut w);
+        w.move_entity(container, locus).unwrap();
+        w.move_entity(alice, container).unwrap();
+
+        let mut actors = Actors::default();
+        actors.bind(ConnectionId(1), alice);
+
+        let events = collect(
+            &w,
+            &actors,
+            Outbound::new(Event::to_locus(locus, EventKind::Narration, "a bell rings")),
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            Outgoing::Event(Delivery {
+                to: ConnectionId(1),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn nested_locus_is_a_perception_boundary() {
+        let mut w = World::new();
+        let outer = {
+            let mut b = EntityBuilder::new();
+            b.add(Locus);
+            w.spawn(b)
+        };
+        let inner = {
+            let mut b = EntityBuilder::new();
+            b.add(Locus);
+            w.spawn(b)
+        };
+        let outer_actor = player(&mut w);
+        let inner_actor = player(&mut w);
+        w.move_entity(inner, outer).unwrap();
+        w.move_entity(outer_actor, outer).unwrap();
+        w.move_entity(inner_actor, inner).unwrap();
+
+        let mut actors = Actors::default();
+        actors.bind(ConnectionId(1), outer_actor);
+        actors.bind(ConnectionId(2), inner_actor);
+
+        let outer_events = collect(
+            &w,
+            &actors,
+            Outbound::new(Event::to_locus(outer, EventKind::Narration, "outside")),
+        );
+        let inner_events = collect(
+            &w,
+            &actors,
+            Outbound::new(Event::to_locus(inner, EventKind::Narration, "inside")),
+        );
+
+        assert!(matches!(
+            outer_events.as_slice(),
+            [Outgoing::Event(Delivery {
+                to: ConnectionId(1),
+                ..
+            })]
+        ));
+        assert!(matches!(
+            inner_events.as_slice(),
+            [Outgoing::Event(Delivery {
+                to: ConnectionId(2),
+                ..
+            })]
+        ));
     }
 
     #[test]

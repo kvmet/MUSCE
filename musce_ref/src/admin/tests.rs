@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::kinds::{Container, Creature, Item, Player};
-use musce::action::{Audience, Outbound, Verdict};
+use musce::action::{Audience, Outbound};
 use musce::wire::ConnectionId;
 use musce::world::hecs::EntityBuilder;
 use musce::world::{Description, Locus};
@@ -45,10 +45,7 @@ fn world_with_builder() -> (World, EntityId, EntityId) {
 
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
     let mut out = Vec::new();
-    // A handler-level verdict; these tests exercise the verbs past the gate, and the
-    // admin handlers read no authority of their own.
-    let verdict = Verdict::guest();
-    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+    let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
     f(&mut ctx);
     out
 }

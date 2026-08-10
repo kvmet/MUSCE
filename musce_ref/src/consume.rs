@@ -16,7 +16,7 @@
 //! content over `musce_agency`'s generic mechanism; the mid-search binding it leans
 //! on is the one new engine-side capability.
 
-use musce::action::{Outbound, SystemCtx, Verdict};
+use musce::action::{Outbound, SystemCtx};
 use musce::agency::{Beat, Clause, Driver, Goal, Planner, Predicate, Term, UnitCost};
 use musce::world::{Controls, EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
@@ -115,8 +115,6 @@ fn pursue_goal(world: &mut World, out: &mut Vec<Outbound>, eater: EntityId, goal
     let known = known_here(world, eater);
     let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
     let driver = Driver::new(&planner);
-    let verdict = Verdict::guest();
-
     driver.pursue(
         eater,
         goal,
@@ -127,7 +125,6 @@ fn pursue_goal(world: &mut World, out: &mut Vec<Outbound>, eater: EntityId, goal
             eater,
             &step.affordance,
             &step.frame,
-            &verdict,
             out,
         ) {
             Outcome::Committed => Beat::Committed,

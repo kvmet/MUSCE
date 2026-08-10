@@ -1,5 +1,5 @@
 //! The narrated act: the single owner of *default* affordance narration. One
-//! `perform_narrated` runs the silent, guarded, gate-checked act
+//! `perform_narrated` runs the silent, guarded act
 //! ([`crate::agency::perform`]) and, on the outcome, emits the first- and
 //! third-person prose an affordance produces, so a typed verb, a clicked control,
 //! and an autonomous agent all narrate the same act the same way. Before this, the
@@ -23,7 +23,7 @@
 //! line, suppressing the default rather than layering on it. See
 //! `docs/architecture/actions.md`.
 
-use musce::action::{Event, Outbound, Verdict};
+use musce::action::{Event, Outbound};
 use musce::agency::{Affordance, Frame};
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
@@ -35,7 +35,7 @@ use crate::verbs::Outcome;
 /// outcome into `out`: on commit, the first-person line to the actor and the
 /// third-person line to the room; on refusal, the reason to the actor. Returns the
 /// [`Outcome`] so a driver can read committed-or-refused for its next beat. The act
-/// itself (gate, guards, mutation) is the shared [`crate::agency::perform`]; this
+/// itself (guards and mutation) is the shared [`crate::agency::perform`]; this
 /// adds only the prose, so a verb, a click, and a plan step cannot narrate the same
 /// act differently.
 pub(crate) fn perform_narrated(
@@ -43,13 +43,12 @@ pub(crate) fn perform_narrated(
     actor: EntityId,
     affordance: &Affordance,
     frame: &Frame,
-    verdict: &Verdict,
     out: &mut Vec<Outbound>,
 ) -> Outcome {
     // Read the prose before the act mutates, so a name the act consumes or moves is
     // still the thing the actor reached for.
     let (first, third) = narrate(world, actor, &affordance.name, frame);
-    let outcome = crate::agency::perform(world, affordance, frame, verdict);
+    let outcome = crate::agency::perform(world, affordance, frame);
     match outcome {
         Outcome::Committed => {
             out.push(Outbound::new(Event::to_entity(

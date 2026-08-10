@@ -1,10 +1,7 @@
 # Gauges
 
-> Status: **foundational raw value types built; qualitative planning layer
-> specified and pending.** `musce_action` provides `GaugeLevel`,
-> `GaugeDirection`, `GaugeId`, and raw `GaugeTarget`. The target representation
-> adds registered qualitative regions, gauge evaluation, threshold conditions,
-> strict directional effects, and bounded QSIM regression.
+> Status: **specified; implementation pending.** No runtime gauge types,
+> evaluator registry, predicates, effects, or planner integration are built.
 
 Component presence and relations describe categorical facts. They do not describe
 an ordered quantity such as health, hunger, temperature, or affinity without
@@ -76,7 +73,7 @@ gameplay, not merely to make a numeric amount visible to predicates.
 
 ## Runtime targets and planner thresholds
 
-The built raw `GaugeTarget` remains useful for handler calculations and imperative
+The proposed raw `GaugeTarget` would serve handler calculations and imperative
 queries:
 
 ```rust

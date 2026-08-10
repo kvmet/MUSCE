@@ -404,7 +404,6 @@ fn unify(effect: &Predicate, goal: &Predicate, actor: EntityId) -> Option<Frame>
         actor,
         object: None,
         target: None,
-        kind: None,
     };
     match (effect, goal) {
         (
@@ -508,7 +507,7 @@ impl PartialOrd for Frontier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Gate, Guard, UnitCost};
+    use crate::{Guard, UnitCost};
 
     // A ground-fact stub standing in for an app's reading: `holds` answers from a
     // fixed set of true relations and tags, ignoring the (empty) `World`. It plays
@@ -547,7 +546,6 @@ mod tests {
     fn take() -> Affordance {
         Affordance {
             name: "take".into(),
-            gate: Gate::Open,
             guards: vec![Guard {
                 clause: Clause(vec![
                     Predicate::Tag {
@@ -571,7 +569,6 @@ mod tests {
     fn put() -> Affordance {
         Affordance {
             name: "put".into(),
-            gate: Gate::Open,
             guards: vec![
                 Guard {
                     clause: Clause(vec![
@@ -613,7 +610,6 @@ mod tests {
     fn eat() -> Affordance {
         Affordance {
             name: "eat".into(),
-            gate: Gate::Open,
             guards: vec![Guard {
                 clause: Clause(vec![
                     Predicate::Related {
@@ -864,7 +860,6 @@ mod tests {
                 actor: ACTOR,
                 object: Some(COIN),
                 target: Some(target),
-                kind: None,
             },
         };
 

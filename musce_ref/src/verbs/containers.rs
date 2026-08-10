@@ -31,7 +31,6 @@ pub(crate) fn do_put(
         actor,
         object: Some(item),
         target: Some(container),
-        kind: None,
     };
     if let Some(guard) = crate::agency::put().veto(&frame, world, &RefWorldModel) {
         return Outcome::Refused(guard.reason);
@@ -82,11 +81,9 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         actor,
         object: Some(item),
         target: Some(container),
-        kind: None,
     };
-    let verdict = ctx.verdict();
     let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::put(), &frame, verdict, out);
+    crate::act::perform_narrated(world, actor, &crate::agency::put(), &frame, out);
 }
 
 /// `give <item> to <someone>`: hand a held thing to a being in the room.
@@ -187,7 +184,7 @@ fn is_being(world: &World, entity: EntityId) -> bool {
 mod tests {
     use super::*;
     use crate::kinds::{Container, Creature, Item, Player};
-    use musce::action::{Audience, Ctx, Outbound, Verdict};
+    use musce::action::{Audience, Ctx, Outbound};
     use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, EntityId, Locus, Name, World};
@@ -251,8 +248,7 @@ mod tests {
 
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
         let mut out = Vec::new();
-        let verdict = Verdict::guest();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
         f(&mut ctx);
         out
     }
@@ -404,7 +400,6 @@ mod tests {
                 actor: f.actor,
                 object: Some(f.coin),
                 target: Some(f.chest),
-                kind: None,
             };
             let veto = put_aff()
                 .veto(&frame, &f.world, &RefWorldModel)
@@ -424,7 +419,6 @@ mod tests {
                 actor: f.actor,
                 object: Some(f.coin),
                 target: Some(f.rat),
-                kind: None,
             };
             let veto = put_aff()
                 .veto(&frame, &f.world, &RefWorldModel)
@@ -446,7 +440,6 @@ mod tests {
                 actor: f.actor,
                 object: Some(f.chest),
                 target: Some(f.chest),
-                kind: None,
             };
             let veto = put_aff()
                 .veto(&frame, &f.world, &RefWorldModel)
@@ -475,7 +468,6 @@ mod tests {
             actor: f.actor,
             object: Some(bag),
             target: Some(bag),
-            kind: None,
         };
         let veto = put_aff()
             .veto(&frame, &f.world, &RefWorldModel)
@@ -505,7 +497,6 @@ mod tests {
                 actor: f.actor,
                 object: Some(f.coin),
                 target: Some(f.room),
-                kind: None,
             };
             let veto = drop_aff()
                 .veto(&frame, &f.world, &RefWorldModel)
@@ -524,7 +515,6 @@ mod tests {
                 actor: f.actor,
                 object: Some(f.chest),
                 target: Some(f.room),
-                kind: None,
             };
             let veto = drop_aff()
                 .veto(&frame, &f.world, &RefWorldModel)

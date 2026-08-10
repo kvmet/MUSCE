@@ -23,7 +23,6 @@ mod ctx;
 mod dispatch;
 mod event;
 mod executor;
-mod gauge;
 mod registry;
 
 use musce_core::{EntityId, World};
@@ -39,7 +38,6 @@ pub use dispatch::{
 };
 pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};
-pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 pub use registry::CapRegistry;
 
 /// The actor's own description, for floor confirmations like "You are now X."

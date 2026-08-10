@@ -15,7 +15,7 @@
 //! See `docs/architecture/networking-and-sessions.md` and
 //! `docs/architecture/offers.md`.
 
-use musce::action::{Ctx, Verdict};
+use musce::action::Ctx;
 use musce::agency::Frame;
 use musce::wire::{Entity, EventKind, Offer, OfferStatus, Role, SnapshotData};
 use musce::world::{Description, EntityId, Locus, World};
@@ -138,13 +138,7 @@ fn to_wire_role(role: offers::Role) -> Role {
 ///
 /// The third pointing seam, but an act, not a read: it mutates and narrates. See
 /// `docs/architecture/networking-and-sessions.md`.
-pub fn perform(
-    ctx: &mut Ctx,
-    verdict: &Verdict,
-    name: &str,
-    focus: EntityId,
-    with: Option<EntityId>,
-) {
+pub fn perform(ctx: &mut Ctx, name: &str, focus: EntityId, with: Option<EntityId>) {
     // The click carries raw ids, so gate every supplied entity through the actor's
     // perceivable set before grounding. Without this the click path would be
     // strictly more powerful than the typed verbs, whose name resolution is
@@ -176,7 +170,6 @@ pub fn perform(
         actor: ctx.actor,
         object,
         target,
-        kind: None,
     };
     // The client is the enumerator now and can omit a role the affordance needs (a
     // `put` with no object sub-picked). Refuse cleanly here rather than routing an
@@ -191,7 +184,7 @@ pub fn perform(
     }
     let actor = ctx.actor;
     let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &affordance, &frame, verdict, out);
+    crate::act::perform_narrated(world, actor, &affordance, &frame, out);
 }
 
 /// Whether `actor` can perceive `id`: it shares the actor's enclosing locus, the
@@ -222,12 +215,10 @@ mod tests {
     use crate::kinds::{Container, Creature, Item};
 
     /// Run a Ctx closure and return its emitted (pre-resolution) outbound buffer, so
-    /// a perform test reads the actor feedback the seam emits. A guest verdict, which
-    /// passes the `Gate::Open` affordances a client can click.
+    /// a perform test reads the actor feedback the seam emits.
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
         let mut out = Vec::new();
-        let verdict = Verdict::guest();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &verdict, &mut out);
+        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
         f(&mut ctx);
         out
     }
@@ -417,7 +408,7 @@ mod tests {
         let mut f = fixture();
         let rock = f.rock;
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "take", rock, None);
+            perform(ctx, "take", rock, None);
         });
         assert_eq!(f.world.container_of(rock), Some(f.actor));
         assert!(
@@ -438,7 +429,7 @@ mod tests {
         let mut f = fixture();
         let rock = f.rock;
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "take", rock, None);
+            perform(ctx, "take", rock, None);
         });
         assert!(
             room_narration(&out)
@@ -463,7 +454,7 @@ mod tests {
         let rock = f.rock;
         let before = f.world.container_of(rock);
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "drop", rock, None);
+            perform(ctx, "drop", rock, None);
         });
         assert!(
             feedback(&out)
@@ -492,7 +483,7 @@ mod tests {
         f.world.move_entity(far_item, elsewhere).unwrap();
 
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "take", far_item, None);
+            perform(ctx, "take", far_item, None);
         });
         assert!(
             feedback(&out)
@@ -554,7 +545,7 @@ mod tests {
         f.world.move_entity(crumb, mouse).unwrap();
 
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "take", crumb, None);
+            perform(ctx, "take", crumb, None);
         });
         assert!(
             feedback(&out).iter().any(|t| t == "You can't reach that."),
@@ -574,7 +565,7 @@ mod tests {
         let coin = f.coin;
         let held = f.world.container_of(coin);
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, &Verdict::guest(), "put", chest, None);
+            perform(ctx, "put", chest, None);
         });
         assert!(
             feedback(&out)
