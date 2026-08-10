@@ -101,8 +101,9 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   wires its serialization and cascade; `register` runs before load and seed.
 - **`caps: CapRegistry`** the app's capability vocabulary, interned to `CapId`s as
   it wires its `Gate::Cap` gates. The runtime resolves account grant strings against
-  this same registry (see [authorization.md](authorization.md)). Empty for an app
-  with no capability-gated verbs.
+  this same registry (see [authorization.md](authorization.md)); opaque ids carry
+  registry provenance so accidentally mixing registries fails closed. Empty for an
+  app with no capability-gated verbs.
 - **`snapshot: fn(&World, EntityId) -> web::SnapshotData`** and
   **`offers: fn(&World, EntityId, EntityId) -> Vec<web::Offer>`** the pointing web
   client's reads: the perceivable containment tree for an actor, rooted at its locus

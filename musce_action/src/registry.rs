@@ -9,15 +9,32 @@
 //! account axis, not a capability); every name here is the app's.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{CapId, CapSet};
 
 /// A name -> [`CapId`] interner. Built once while the app wires its gates, then read
 /// to resolve grants; it does not shrink, so an id, once minted, stays valid for the
 /// run.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CapRegistry {
+    provenance: u64,
     ids: HashMap<String, CapId>,
+}
+
+static NEXT_REGISTRY_PROVENANCE: AtomicU64 = AtomicU64::new(1);
+
+impl Default for CapRegistry {
+    fn default() -> Self {
+        Self {
+            provenance: NEXT_REGISTRY_PROVENANCE
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    current.checked_add(1)
+                })
+                .expect("capability registry provenance exhausted"),
+            ids: HashMap::new(),
+        }
+    }
 }
 
 impl CapRegistry {
@@ -32,7 +49,8 @@ impl CapRegistry {
         if let Some(&id) = self.ids.get(name) {
             return id;
         }
-        let id = CapId::from_index(self.ids.len() as u32);
+        let index = u32::try_from(self.ids.len()).expect("capability registry slots exhausted");
+        let id = CapId::new(self.provenance, index);
         self.ids.insert(name.to_owned(), id);
         id
     }
@@ -90,6 +108,24 @@ mod tests {
         let teleport = reg.register("teleport");
         assert_ne!(build, teleport, "distinct names get distinct ids");
         assert_eq!(reg.len(), 2, "the repeat did not mint a third id");
+    }
+
+    #[test]
+    fn ids_from_different_registries_never_alias() {
+        let mut a = CapRegistry::new();
+        let mut b = CapRegistry::new();
+        let granted = a.register("build");
+        let gated = b.register("ban");
+
+        assert_ne!(
+            granted, gated,
+            "equal slot numbers need registry provenance"
+        );
+        let verdict = crate::Verdict::new([granted].into_iter().collect(), false);
+        assert!(
+            !verdict.permits(gated),
+            "a foreign registry grant must fail closed"
+        );
     }
 
     #[test]

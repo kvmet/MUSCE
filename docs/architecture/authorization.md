@@ -94,6 +94,14 @@ that one registry, so a gate's id and a grant's id denote one capability. The
 **engine registers no capabilities of its own** (su and status are columns, not
 caps); every name is the app's.
 
+A `CapId` includes a private process-unique provenance token minted by its
+`CapRegistry`, in addition to its registry-local slot. Two registries' first ids
+therefore cannot compare equal accidentally: wiring a gate from one registry to a
+grant set resolved by another fails closed. Names remain idempotent within one
+registry and the token is runtime-only; persisted grants are still strings. Both
+the provenance counter and registry-local slot allocation fail closed on exhaustion
+rather than wrapping an identity.
+
 Because ids are runtime handles, grants persist as *names* and resolve at load.
 `CapRegistry::resolve_set` returns any names it could not resolve *separately* from
 the ones it could, so vocabulary drift (a grant naming a capability the current

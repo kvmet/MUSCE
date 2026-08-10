@@ -11,11 +11,14 @@ use std::collections::HashSet;
 /// only compared here. Equality is identity, so two ids name the same capability iff
 /// they came from the same registration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct CapId(u32);
+pub struct CapId {
+    registry: u64,
+    index: u32,
+}
 
 impl CapId {
-    pub(crate) const fn from_index(index: u32) -> Self {
-        Self(index)
+    pub(crate) const fn new(registry: u64, index: u32) -> Self {
+        Self { registry, index }
     }
 }
 
@@ -123,8 +126,8 @@ mod tests {
 
     #[test]
     fn permits_is_membership_without_su() {
-        let build = CapId(0);
-        let ban = CapId(1);
+        let build = CapId::new(1, 0);
+        let ban = CapId::new(1, 1);
         let verdict = Verdict::new([build].into_iter().collect(), false);
         assert!(verdict.permits(build), "granted cap is admitted");
         assert!(!verdict.permits(ban), "ungranted cap is refused");
@@ -134,7 +137,7 @@ mod tests {
     #[test]
     fn su_bypasses_the_grant_set() {
         // su in force admits a cap the account was never granted.
-        let ban = CapId(1);
+        let ban = CapId::new(1, 1);
         let verdict = Verdict::new(CapSet::new(), true);
         assert!(verdict.permits(ban), "su bypasses the empty grant set");
         assert!(verdict.is_su());
@@ -142,7 +145,7 @@ mod tests {
 
     #[test]
     fn guest_admits_nothing() {
-        let build = CapId(0);
+        let build = CapId::new(1, 0);
         let guest = Verdict::guest();
         assert!(!guest.permits(build));
         assert!(!guest.is_su());
@@ -152,7 +155,7 @@ mod tests {
     fn quell_drops_to_guest() {
         // A quelled connection becomes its character: an su account that also holds a
         // cap loses both under quell, evaluated as a plain user.
-        let build = CapId(0);
+        let build = CapId::new(1, 0);
         let v = Verdict::resolved([build].into_iter().collect(), true, true);
         assert!(!v.is_su(), "quell sets aside su");
         assert!(!v.permits(build), "quell sets aside granted caps too");
@@ -160,7 +163,7 @@ mod tests {
 
     #[test]
     fn unquelled_su_is_in_force() {
-        let ban = CapId(1);
+        let ban = CapId::new(1, 1);
         let v = Verdict::resolved(CapSet::new(), true, false);
         assert!(v.is_su());
         assert!(v.permits(ban), "su in force bypasses the empty grant set");
@@ -168,7 +171,7 @@ mod tests {
 
     #[test]
     fn unquelled_caps_are_in_force() {
-        let build = CapId(0);
+        let build = CapId::new(1, 0);
         let v = Verdict::resolved([build].into_iter().collect(), false, false);
         assert!(!v.is_su());
         assert!(v.permits(build), "a granted cap holds when not quelled");
