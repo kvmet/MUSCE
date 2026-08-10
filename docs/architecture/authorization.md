@@ -135,8 +135,8 @@ Two rules it holds:
 
 The table is columnar, one column per field
 ([accounts_table_ddl](../../musce_persistence/src/lib.rs)): `id`, `username`
-(`UNIQUE`), `credential` (nullable), `caps` (JSON text), `su` (`INTEGER` on SQLite),
-`status`, and `app_data` (JSON
+(`UNIQUE`), `credential` (nullable), `caps` (JSON text), `su` (the dialect's boolean
+word, `INTEGER` on SQLite / `BOOLEAN` on Postgres), `status`, and `app_data` (JSON
 text). Columnar over a JSON blob so the row is legible and `username`/`su` are real
 indexed columns rather than fields buried in a document.
 
@@ -211,7 +211,8 @@ Built and tested:
 - The `Account` record and its `AccountId` / `AccountStatus`, with the columnar
   reconstruction API (`from_stored`, `AccountId: Display + FromStr`,
   `AccountStatus::as_str`).
-- The `accounts` table and `AccountStore` (including `account_by_id`) on SQLite.
+- The `accounts` table and `AccountStore` (including `account_by_id`) on SQLite and
+  Postgres.
 - The `CapRegistry` interner and `Verdict::resolved` (the quell rule).
 - The off-thread account task and its ops (authenticate, create, grant/revoke), the
   async round-trip with pending-auth rejection, the app login veto, operator

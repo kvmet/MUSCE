@@ -119,9 +119,10 @@ Built:
   non-persisted singletons (type-keyed, snapshot-excluded; see indexes.md).
   (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
-- `musce_persistence`: World-as-truth save/load through the SQLite `WorldStore`
-  (the per-component-row layout, `data` as JSON text), plus the cold content store
-  (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB` table) for large,
+- `musce_persistence`: World-as-truth save/load behind one `WorldStore` handle
+  chosen by URL scheme, with SQLite and Postgres backends sharing one schema (the
+  per-component-row layout, `data` as JSON text), plus the cold content store
+  (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB`/`BYTEA` table) for large,
   rarely-read payloads kept off-heap, plus the `accounts` table (`AccountStore`:
   columnar per-account rows, `account_by_username`/`account_upsert`/`any_superuser`)
   holding the auth layer's records in the same store (see authorization.md).

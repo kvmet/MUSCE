@@ -48,8 +48,9 @@ pub mod action {
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
 }
 
-/// Durable storage. `WorldStore` is the app-facing SQLite handle; the store traits
-/// preserve the abstraction boundary for another backend when one is needed.
+/// Durable storage. `WorldStore` is the app-facing handle, chosen by URL scheme
+/// at connect time; the concrete backends stay internal so an app names one type
+/// whether it runs on SQLite or Postgres.
 pub mod store {
     pub use musce_persistence::{Error, KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
 }

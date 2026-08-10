@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use musce_auth::{Account, AccountId};
 use musce_core::Snapshot;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::{QueryBuilder, Row};
 
 use crate::{
@@ -11,39 +11,30 @@ use crate::{
     world_tables_ddl,
 };
 
-/// The most bound parameters allowed in one statement. SQLite's default
-/// `SQLITE_MAX_VARIABLE_NUMBER` is 999 on builds before 3.32; staying under it
-/// keeps a batch valid regardless of which library version sqlx was compiled
-/// against. Row chunks divide this by their param count (2 for a roster row, 3 for
-/// a component row, 1 for a delete id).
-const MAX_VARS: usize = 999;
+/// The most bound parameters allowed in one statement. Postgres caps bound
+/// parameters at 65535 per statement. Row chunks divide this by their param count
+/// (2 for a roster row, 3 for a component row, 1 for a delete id).
+const MAX_VARS: usize = 65535;
 
 #[derive(Clone)]
-pub struct SqliteStore {
-    pub(crate) pool: SqlitePool,
+pub struct PostgresStore {
+    pub(crate) pool: PgPool,
 }
 
-impl SqliteStore {
-    /// Connect (creating the file if missing). Use `"sqlite::memory:"` for an
-    /// in-memory database. A single connection keeps the writer serialized and
-    /// keeps in-memory databases consistent across queries. `foreign_keys` is
-    /// enabled here (SQLite defaults it off per connection) so the component ->
-    /// entity reference is enforced on every pooled connection.
+impl PostgresStore {
+    /// Connect to an existing Postgres database. Unlike SQLite there is no
+    /// create-if-missing: the database must already exist (the deployment or CI
+    /// provisions it); `init` only creates tables within it. A single connection
+    /// keeps the writer serialized, mirroring the SQLite store.
     pub async fn connect(url: &str) -> Result<Self> {
-        let opts = SqliteConnectOptions::from_str(url)?
-            .create_if_missing(true)
-            .foreign_keys(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts)
-            .await?;
+        let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
         Ok(Self { pool })
     }
 }
 
-impl Persistence for SqliteStore {
+impl Persistence for PostgresStore {
     async fn init(&self) -> Result<()> {
-        for ddl in world_tables_ddl("INTEGER") {
+        for ddl in world_tables_ddl("BIGINT") {
             sqlx::query(sqlx::AssertSqlSafe(ddl))
                 .execute(&self.pool)
                 .await?;
@@ -55,11 +46,9 @@ impl Persistence for SqliteStore {
         let mut tx = self.pool.begin().await?;
 
         // Flatten the snapshot into row sets once, so the writes below are plain
-        // batched inserts. The blob is always a `{tag: value}` object (the
-        // registry's `serialize_entity` produces one); a non-object is a producer
-        // bug, surfaced rather than written as a component-less entity. Component
-        // `data` is the JSON text of the value; a marker's `null` becomes the text
-        // `"null"` (satisfying NOT NULL), never a bound SQL NULL.
+        // batched inserts. The blob is always a `{tag: value}` object; a non-object
+        // is a producer bug, surfaced rather than written. Component `data` is the
+        // JSON text of the value (`"null"` for a marker, never a SQL NULL).
         let mut entity_rows: Vec<(i64, Option<i64>)> = Vec::with_capacity(snapshot.entities.len());
         let mut comp_rows: Vec<(i64, &str, String)> = Vec::new();
         for blob in &snapshot.entities {
@@ -83,8 +72,7 @@ impl Persistence for SqliteStore {
         }
 
         // Replace each live entity's whole component set: clear its old rows, then
-        // insert the current ones. An upsert would leave rows for tags dropped since
-        // the last save (e.g. a `RelTarget` removed by `clear_target`), which would
+        // insert the current ones, so a tag dropped since the last save does not
         // resurrect on reload. One bound param per id.
         for chunk in entity_rows.chunks(MAX_VARS) {
             let mut qb = QueryBuilder::new("DELETE FROM components WHERE entity_id IN (");
@@ -105,8 +93,6 @@ impl Persistence for SqliteStore {
             qb.build().execute(&mut *tx).await?;
         }
 
-        // Despawned entities: drop children before the parent (the FK is RESTRICT,
-        // not CASCADE, so correctness never depends on the pragma being on).
         for chunk in snapshot.deletes.chunks(MAX_VARS) {
             let mut qb = QueryBuilder::new("DELETE FROM components WHERE entity_id IN (");
             let mut sep = qb.separated(", ");
@@ -126,18 +112,15 @@ impl Persistence for SqliteStore {
         }
 
         sqlx::query(
-            "INSERT INTO meta (key, value) VALUES (?, ?)
+            "INSERT INTO meta (key, value) VALUES ($1, $2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .bind(NEXT_ID_KEY)
         .bind(snapshot.next_id.to_string())
         .execute(&mut *tx)
         .await?;
-
-        // Stamp the schema version every world is written at, so a later load can
-        // tell whether the data needs migrating up to the current vocabulary.
         sqlx::query(
-            "INSERT INTO meta (key, value) VALUES (?, ?)
+            "INSERT INTO meta (key, value) VALUES ($1, $2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .bind(SCHEMA_VERSION_KEY)
@@ -150,8 +133,6 @@ impl Persistence for SqliteStore {
     }
 
     async fn load(&self) -> Result<Loaded> {
-        // Extract primitives from the driver, then hand the backend-free
-        // `assemble` the grouping, invariant checks, and next_id floor.
         let roster = sqlx::query("SELECT entity_id, zone FROM entities")
             .fetch_all(&self.pool)
             .await?
@@ -179,18 +160,16 @@ impl Persistence for SqliteStore {
             .fetch_one(&self.pool)
             .await?
             .get("m");
-        let marker = read_meta(&self.pool, NEXT_ID_KEY).await?;
-        let schema_version = read_meta(&self.pool, SCHEMA_VERSION_KEY).await?;
+        let marker = read_meta_pg(&self.pool, NEXT_ID_KEY).await?;
+        let schema_version = read_meta_pg(&self.pool, SCHEMA_VERSION_KEY).await?;
 
         assemble(roster, comp_rows, max_id, marker, schema_version)
     }
 }
 
-/// Read a `meta` value and parse it, `None` when the row is missing or does not
-/// parse (a restored dump without meta, a hand-edited store). SQLite-side; the
-/// Postgres store has its own `$1`-placeholder twin.
-async fn read_meta<T: FromStr>(pool: &SqlitePool, key: &str) -> Result<Option<T>> {
-    Ok(sqlx::query("SELECT value FROM meta WHERE key = ?")
+/// The Postgres twin of `read_meta`: a `$1`-placeholder read of a `meta` value.
+async fn read_meta_pg<T: FromStr>(pool: &PgPool, key: &str) -> Result<Option<T>> {
+    Ok(sqlx::query("SELECT value FROM meta WHERE key = $1")
         .bind(key)
         .fetch_optional(pool)
         .await?
@@ -198,16 +177,16 @@ async fn read_meta<T: FromStr>(pool: &SqlitePool, key: &str) -> Result<Option<T>
         .and_then(|s| s.parse().ok()))
 }
 
-impl KvStore for SqliteStore {
+impl KvStore for PostgresStore {
     async fn kv_init(&self) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(kv_table_ddl("BLOB")))
+        sqlx::query(sqlx::AssertSqlSafe(kv_table_ddl("BYTEA")))
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
     async fn kv_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let row = sqlx::query("SELECT value FROM kv WHERE key = ?")
+        let row = sqlx::query("SELECT value FROM kv WHERE key = $1")
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
@@ -216,7 +195,7 @@ impl KvStore for SqliteStore {
 
     async fn kv_put(&self, key: &str, value: &[u8]) -> Result<()> {
         sqlx::query(
-            "INSERT INTO kv (key, value) VALUES (?, ?)
+            "INSERT INTO kv (key, value) VALUES ($1, $2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .bind(key)
@@ -227,9 +206,9 @@ impl KvStore for SqliteStore {
     }
 }
 
-impl AccountStore for SqliteStore {
+impl AccountStore for PostgresStore {
     async fn accounts_init(&self) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(accounts_table_ddl("INTEGER")))
+        sqlx::query(sqlx::AssertSqlSafe(accounts_table_ddl("BOOLEAN")))
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -238,7 +217,7 @@ impl AccountStore for SqliteStore {
     async fn account_by_username(&self, username: &str) -> Result<Option<Account>> {
         let row = sqlx::query(
             "SELECT id, username, credential, caps, su, status, app_data
-             FROM accounts WHERE username = ?",
+             FROM accounts WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -249,7 +228,7 @@ impl AccountStore for SqliteStore {
     async fn account_by_id(&self, id: &AccountId) -> Result<Option<Account>> {
         let row = sqlx::query(
             "SELECT id, username, credential, caps, su, status, app_data
-             FROM accounts WHERE id = ?",
+             FROM accounts WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -260,7 +239,7 @@ impl AccountStore for SqliteStore {
     async fn account_upsert(&self, account: &Account) -> Result<()> {
         sqlx::query(
             "INSERT INTO accounts (id, username, credential, caps, su, status, app_data)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT(id) DO UPDATE SET
                  username   = excluded.username,
                  credential = excluded.credential,
@@ -282,17 +261,18 @@ impl AccountStore for SqliteStore {
     }
 
     async fn any_superuser(&self) -> Result<bool> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE su = ?)")
-            .bind(true)
-            .fetch_one(&self.pool)
-            .await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE su = $1)")
+                .bind(true)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(exists)
     }
 }
 
 /// Reassemble one `SELECT`ed row into an [`Account`] through the shared, backend-free
 /// [`assemble_account`], so both stores enforce the same parse checks.
-fn account_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Account> {
+fn account_from_row(row: sqlx::postgres::PgRow) -> Result<Account> {
     assemble_account(
         row.get("id"),
         row.get("username"),

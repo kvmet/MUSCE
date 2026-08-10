@@ -34,7 +34,8 @@ npx vite            # dev server; open the printed URL
 Append `?mock` to the URL to run the in-browser stand-in with no server. See
 [webclient/README.md](webclient/README.md).
 
-`MUSCE_DB` is a SQLite URL (`sqlite://…`; `sqlite://musce.db` by default).
+The backend is chosen by the `MUSCE_DB` URL scheme (`sqlite://…` default,
+`postgres://…`); the app code is identical either way.
 
 ## Workspace
 
@@ -45,8 +46,8 @@ Append `?mock` to the URL to run the in-browser stand-in with no server. See
   relation layer, containment, and the JSON snapshot model. Pure (no I/O).
 - `musce_index` — a generic secondary index over one component (`key ->
   entities`), so the world answers "which entities key to X" without a scan.
-- `musce_persistence` — World-as-truth save/load in SQLite; an entity shredded to
-  one row per component behind storage traits.
+- `musce_persistence` — World-as-truth save/load; an entity shredded to one row
+  per component. SQLite and Postgres behind one trait.
 - `musce_proto` — the wire vocabulary crossing the net/sim boundary: commands in,
   events out, and the web envelope. Transport-free; TS bindings behind the `ts`
   feature.
