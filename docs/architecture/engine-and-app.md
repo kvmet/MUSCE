@@ -1,7 +1,6 @@
 # Engine and App
 
-> Status: **engine/app boundary and canonical registry injection built; typed
-> pointing-perform seam pending.** The
+> Status: **built, including generic canonical pointing.** The
 > runtime (`musce_host`) is a library parameterized by an
 > injected `App`; the engine crates carry no app content; the reference app
 > `musce_ref` owns the verbs, the seed world, name resolution, the `@play` actor
@@ -111,29 +110,24 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   this same registry (see [authorization.md](authorization.md)); opaque ids carry
   registry provenance so accidentally mixing registries fails closed. Empty for an
   app with no capability-gated verbs.
-- **`snapshot: fn(&World, EntityId) -> web::SnapshotData`** and
-  **`offers: fn(&World, EntityId, EntityId) -> Vec<web::Offer>`** the pointing web
-  client's reads: the perceivable containment tree for an actor, rooted at its locus
+- **`snapshot: fn(&World, EntityId) -> web::SnapshotData`** is the pointing web
+  client's world projection: the perceivable containment tree for an actor, rooted at its locus
   and including that locus's relation-backed exits as clickable nodes (a click has
   no `go` box to type into), each node carrying the passive detail it perceives by
-  presence, such as a `Description`; and the
-  affordances available on a clicked entity. App policy because names, kinds, the
-  detail projection, and the affordance set are all app vocabulary; the engine only
-  routes a read `Query` to them and serializes the wire result (see
+  presence, such as a `Description`. This is app policy because names, kinds, and
+  detail projection are app vocabulary; the engine only routes the read and
+  serializes the result (see
   [networking-and-sessions.md](networking-and-sessions.md) and
   [offers.md](offers.md)). An app with no pointing client returns empty projections.
-- **`perform: PerformHandler`** the pointing client's *act*: validate a partial
-  substitution of typed input ids to values, complete the inputs, and run the
-  resulting affordance with no name to resolve. Results are produced only by the
-  handler. The actor comes from the authenticated session's live embodiment and is
-  never supplied by the request. App policy decides which
-  affordances a selected entity participates in and which parameter receives it;
-  the parameter declaration travels in-band rather than relying on a global role.
-  The current callback is `fn(&mut Ctx, Grounded<'_>)`: affordance name, focus, and
-  optional second selection travel as one value and the app destructures it. The
-  engine routes the act through `dispatch_perform` (the same
-  `Ctx`-and-audience path a verb narrates through). Distinct from the two reads:
-  it mutates and narrates. An app with no pointing client supplies a no-op.
+- **`interactions: InteractionPolicy`** owns the pointing client's app-specific
+  exposure boundary. Its read-only `offers` function maps a clicked entity to
+  partial canonical groundings and optional candidates. Its `validate` function
+  may narrow each complete, untrusted client grounding before execution. The host
+  performs schema, sort, liveness, authority, and guard checks itself and invokes
+  the same canonical performer used by commands and systems; the policy has no
+  alternate mutation path. Actor identity comes from the authenticated session's
+  live embodiment and is never supplied by the request. An app with no pointing
+  surface uses `InteractionPolicy::none()`.
 
 ### The component boundary
 

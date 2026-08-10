@@ -84,19 +84,24 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
         Input::Query(Query::Offers { clicked }) if clicked == "42"
     ));
 
-    // A perform envelope arrives as a typed `Input::Perform`, its optional second
-    // role carried through.
+    // A perform envelope arrives as a typed `Input::Perform`; app-defined
+    // parameter names and typed values survive the transport unchanged.
     client
         .send(Message::text(
-            r#"{"t":"perform","name":"put","focus":"9","with":"42"}"#,
+            r#"{"t":"perform","affordance":"give","inputs":[{"parameter":"item","value":{"kind":"entity","id":"42"}},{"parameter":"recipient","value":{"kind":"entity","id":"9"}}]}"#,
         ))
         .await
         .unwrap();
     let perform = next_cmd(&cmd_rx).await;
+    let Input::Perform(Perform { affordance, inputs }) = perform.input else {
+        panic!("expected perform input");
+    };
+    assert_eq!(affordance, "give");
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0].parameter, "item");
     assert!(matches!(
-        perform.input,
-        Input::Perform(Perform { name, focus, with: Some(with) })
-            if name == "put" && focus == "9" && with == "42"
+        &inputs[0].value,
+        musce_proto::AffordanceValue::Entity { id } if id == "42"
     ));
 
     // A sim event arrives as one `{"t":"event",...}` frame.
@@ -120,7 +125,11 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
             ServerMsg::Offers {
                 clicked: "42".into(),
                 offers: vec![Offer {
-                    name: "take".into(),
+                    affordance: "give".into(),
+                    display_name: "Give".into(),
+                    parameters: Vec::new(),
+                    bindings: Vec::new(),
+                    candidates: Vec::new(),
                     status: OfferStatus::Available,
                 }],
             },
@@ -129,7 +138,7 @@ async fn websocket_speaks_the_json_envelope_both_ways() {
     let reply = next_json(&mut client).await;
     assert_eq!(reply["t"], "offers");
     assert_eq!(reply["clicked"], "42");
-    assert_eq!(reply["offers"][0]["name"], "take");
+    assert_eq!(reply["offers"][0]["affordance"], "give");
     assert_eq!(reply["offers"][0]["status"]["kind"], "available");
 
     // Closing the client surfaces as a disconnect on the same connection.

@@ -12,17 +12,17 @@
 <section aria-labelledby="offers-heading">
   <h2 id="offers-heading">Do to {subject}</h2>
   <ul class="offers">
-    {#each offers as offer (offer.name)}
+    {#each offers as offer, index (`${offer.affordance}-${index}`)}
       <li>
         {#if offer.status.kind === "available"}
-          <button class="offer available" onclick={() => onAct(offer)}>{offer.name}</button>
-        {:else if offer.status.kind === "needsRole"}
+          <button class="offer available" onclick={() => onAct(offer)}>{offer.display_name}</button>
+        {:else if offer.status.kind === "needs"}
           <button class="offer needs" onclick={() => onAct(offer)}>
-            {offer.name}<span class="hint">choose {offer.status.role}…</span>
+            {offer.display_name}<span class="hint">choose {offer.status.parameters.join(", ")}…</span>
           </button>
         {:else}
           <button class="offer vetoed" disabled aria-disabled="true" title={offer.status.reason}>
-            {offer.name}<span class="hint">{offer.status.reason}</span>
+            {offer.display_name}<span class="hint">{offer.status.reason}</span>
           </button>
         {/if}
       </li>

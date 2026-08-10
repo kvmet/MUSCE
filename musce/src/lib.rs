@@ -50,8 +50,7 @@ pub mod action {
         Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
     };
     pub use musce_action::{
-        Caller, CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command,
-        dispatch_perform,
+        Caller, CommandTable, Gate, Handler, dispatch_command, dispatch_perform,
     };
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
@@ -81,7 +80,8 @@ pub mod store {
 /// event kinds a handler emits.
 pub mod wire {
     pub use musce_proto::{
-        ConnectionId, Entity, EventKind, Offer, OfferStatus, Role, SnapshotData,
+        AffordanceValue, ConnectionId, Entity, EventKind, InputCandidates, Offer, OfferStatus,
+        ParameterBinding, ParameterDecl, ParameterMode, ParameterSort, Performed, SnapshotData,
     };
 }
 
@@ -115,8 +115,8 @@ pub mod agency {
 
 // The composition-root API: what an app's `main` wires up and hands to `run`.
 pub use musce_host::{
-    App, BuildAffordances, ChooseActor, Config, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed,
-    TICK_INTERVAL, TickCtx, WS_LISTEN_ADDR, run,
+    App, BuildAffordances, ChooseActor, Config, InteractionCtx, InteractionPolicy, LISTEN_ADDR,
+    Register, RunReport, SAVE_EVERY, Seed, TICK_INTERVAL, TickCtx, WS_LISTEN_ADDR, run,
 };
 
 /// The high-frequency surface, for `use musce::prelude::*;`. Curated, not a glob

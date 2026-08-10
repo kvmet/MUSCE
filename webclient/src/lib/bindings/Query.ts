@@ -2,7 +2,6 @@
 
 /**
  * A read the client asks of the world, answered by a [`ServerMsg`] reply; it never
- * mutates. Acting on an entity (`perform`) is a command, not a query, and lands in
- * a later slice.
+ * mutates. Performing an offered action is a command, not a query.
  */
 export type Query = { "q": "snapshot" } | { "q": "offers", clicked: string, };

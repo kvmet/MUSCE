@@ -2,11 +2,11 @@
 
 /**
  * One node of the containment tree: a projection of the world's containment
- * relation plus the game's name and kinds for the entity, never new state.
+ * relation plus the app's name and kinds for the entity, never new state.
  */
 export type Entity = { id: string, name: string, 
 /**
- * Game kind tags (e.g. "container", "item", "exit", "locked").
+ * App kind tags (e.g. "container", "item", "exit", "locked").
  */
 kinds: Array<string>, 
 /**
@@ -14,8 +14,8 @@ kinds: Array<string>,
  */
 contents: Array<string>, 
 /**
- * Game-projected passive detail as ordered `(label, value)` pairs (e.g. a
- * `("description", ...)`). Opaque to the wire: the game decides what an actor
+ * App-projected passive detail as ordered `(label, value)` pairs (e.g. a
+ * `("description", ...)`). Opaque to the wire: the app decides what an actor
  * perceives by presence and the client just paints the pairs. This is the
  * same prose a narrated `examine` reveals, delivered silently as part of the
  * read, so the pointing client renders a focused entity without a round-trip.

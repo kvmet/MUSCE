@@ -25,7 +25,9 @@ use serde::Serialize;
 
 mod web;
 pub use web::{
-    ClientMsg, Entity, Offer, OfferStatus, Perform, Query, Role, ServerMsg, SnapshotData,
+    AffordanceValue, ClientMsg, Entity, InputCandidates, Offer, OfferStatus, ParameterBinding,
+    ParameterDecl, ParameterMode, ParameterSort, Perform, Performed, Query, ServerMsg,
+    SnapshotData,
 };
 
 /// Net-local identity for one live connection. Monotonic and never reused, so a
@@ -83,9 +85,9 @@ pub enum Input {
     /// JSON envelope by the transport). Answered by an `Outgoing::Reply`; the sim
     /// runs it as a pure read, never through the verb/action path.
     Query(Query),
-    /// A grounded act from a pointing client: perform an affordance on a clicked
-    /// entity by id, skipping name resolution. Enters the verb/action path (it
-    /// mutates and narrates), unlike a `Query`.
+    /// A canonical act from a structured client: app-defined affordance id plus
+    /// complete typed, named inputs. Enters the action path (it mutates and
+    /// narrates), unlike a `Query`.
     Perform(Perform),
     /// Net lost the connection (client closed, or net closed it after `Close`).
     Disconnected,

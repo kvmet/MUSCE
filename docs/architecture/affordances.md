@@ -11,9 +11,10 @@
 > freezes schemas with typed definitions; `Ctx` and `SystemCtx` lend actions to one
 > authority-, grounding-, guard-, result-, and post-commit-narration performer.
 > The host builds the app registry once after world-type registration and injects
-> it into every command and system context. The `affordance!` macro, executable effect oracles, wire
-> migration, and planner integration remain pending. The reference `give` verb is
-> the first canonical consumer.
+> it into every command and system context. Generic offer classification, app
+> exposure policy, and the typed perform wire execute through that registry. The
+> `affordance!` macro, executable effect oracles, and planner integration remain
+> pending. The reference `give` verb and pointing surface are canonical consumers.
 
 ## Built prototype during migration
 

@@ -14,7 +14,6 @@ mod exits;
 mod hoard;
 mod kinds;
 mod names;
-pub mod offers;
 mod pointing;
 mod seed;
 mod sequences;
@@ -66,10 +65,12 @@ pub fn app() -> App {
             String::from_utf8(bytes.to_vec()).map_err(|_| "The text is unreadable.".to_string())
         },
         // The pointing web client's seams: the containment snapshot and the
-        // affordance offers (reads), and perform (the act on a clicked entity).
+        // app-owned exposure/grounding policy around canonical actions.
         snapshot: pointing::snapshot,
-        offers: pointing::offers,
-        perform: pointing::perform,
+        interactions: musce::InteractionPolicy {
+            offers: pointing::offers,
+            validate: pointing::validate,
+        },
     }
 }
 

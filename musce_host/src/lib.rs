@@ -5,9 +5,11 @@
 
 mod accounts;
 mod dispatch;
+mod interaction;
 mod session;
 
 pub use accounts::{AccountView, LoginVeto};
+pub use interaction::{InteractionCtx, InteractionPolicy};
 pub use musce_auth::AccountId;
 
 use std::net::SocketAddr;
@@ -144,18 +146,10 @@ pub struct App {
     /// only routes the read query to it. Returns the wire snapshot the reply
     /// carries. See `docs/architecture/networking-and-sessions.md`.
     pub snapshot: fn(&World, EntityId) -> musce_proto::SnapshotData,
-    /// Enumerate the affordances available on a clicked entity for an actor: the
-    /// reactionary "what can I do to this?" read behind the pointing client's offer
-    /// list. App content, the same affordance set `perform` dispatches. See
-    /// `docs/architecture/offers.md`.
-    pub offers: fn(&World, EntityId, EntityId) -> Vec<musce_proto::Offer>,
-    /// Perform a grounded act a pointing client clicked: the affordance name, the
-    /// clicked focus entity, and any second entity a role sub-pick supplied. App
-    /// content, because the affordance set and its roles are app vocabulary; the
-    /// engine only routes the act through `dispatch_perform` (a Ctx and audience,
-    /// the same path a verb narrates through). See
-    /// `docs/architecture/networking-and-sessions.md`.
-    pub perform: musce_action::PerformHandler,
+    /// App policy for the pointing front end. Concrete affordances and execution
+    /// live only in `affordances`; this chooses exposed partial groundings and
+    /// candidates and validates untrusted client bindings.
+    pub interactions: InteractionPolicy,
 }
 
 /// Per-tick context handed to systems. Carries both clocks: `tick` (deterministic
@@ -586,8 +580,7 @@ mod tests {
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
-            offers: |_, _, _| Vec::new(),
-            perform: |_, _| {},
+            interactions: InteractionPolicy::none(),
         }
     }
 

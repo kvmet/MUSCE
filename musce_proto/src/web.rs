@@ -34,9 +34,7 @@ pub enum ClientMsg {
     Line { line: String },
     /// A read query: pure, no world mutation, no narration.
     Query(Query),
-    /// Act on a clicked entity by id, skipping name resolution: the affordance
-    /// the client picked, the entity it clicked, and any second entity a
-    /// role sub-pick supplied.
+    /// Perform an app-defined affordance with typed, named input bindings.
     Perform(Perform),
 }
 
@@ -51,24 +49,18 @@ impl ClientMsg {
     }
 }
 
-/// A grounded act request: the client already holds the entity id, so this carries
-/// the affordance name and its bound entities directly, with no noun to resolve.
-/// `focus` is the clicked entity; `with` is the optional second entity a role
-/// sub-pick supplied (the object to `put`, once the container is the focus). Which
-/// role `focus` fills is app policy, so the app maps `focus`/`with` onto the
-/// affordance's roles.
+/// A complete canonical act request. Bindings name app-defined input parameters;
+/// there are no engine-defined roles or fixed arity. Actor identity comes from the
+/// authenticated session and results are server-produced only.
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Perform {
-    pub name: String,
-    pub focus: String,
-    #[serde(default)]
-    pub with: Option<String>,
+    pub affordance: String,
+    pub inputs: Vec<ParameterBinding>,
 }
 
 /// A read the client asks of the world, answered by a [`ServerMsg`] reply; it never
-/// mutates. Acting on an entity (`perform`) is a command, not a query, and lands in
-/// a later slice.
+/// mutates. Performing an offered action is a command, not a query.
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "q", rename_all = "lowercase")]
@@ -93,6 +85,8 @@ pub enum ServerMsg {
     Snapshot(SnapshotData),
     /// The reply to [`Query::Offers`].
     Offers { clicked: String, offers: Vec<Offer> },
+    /// Typed results from a successfully committed [`Perform`] request.
+    Performed(Performed),
 }
 
 /// One node of the containment tree: a projection of the world's containment
@@ -125,33 +119,90 @@ pub struct SnapshotData {
     pub entities: Vec<Entity>,
 }
 
-/// One enumerated act on a clicked entity: the affordance name and its status. The
-/// wire form of `musce_ref::offers::Offer`.
+/// One app-exposed partial canonical grounding and its engine classification.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Offer {
-    pub name: String,
+    pub affordance: String,
+    pub display_name: String,
+    pub parameters: Vec<ParameterDecl>,
+    pub bindings: Vec<ParameterBinding>,
+    pub candidates: Vec<InputCandidates>,
     pub status: OfferStatus,
 }
 
-/// How an affordance stands for the clicked entity: a live control, a greyed one
-/// carrying the reason, or one that opens a sub-pick for a still-unbound role.
+/// Current classification of an app-exposed partial grounding.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OfferStatus {
     Available,
     Vetoed { reason: String },
-    NeedsRole { role: Role },
+    Needs { parameters: Vec<String> },
 }
 
-/// The frame role a still-unbound pick fills.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// Canonical parameter mode. The client may bind inputs only; results are shown
+/// in signatures and returned by the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "lowercase")]
-pub enum Role {
-    Object,
-    Target,
+pub enum ParameterMode {
+    Input,
+    Result,
+}
+
+/// Canonical value sort in a wire-safe representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ParameterSort {
+    Entity,
+    Text,
+    Symbol { domain: String },
+}
+
+/// One app-defined parameter declaration carried in an offer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ParameterDecl {
+    pub id: String,
+    pub label: String,
+    pub sort: ParameterSort,
+    pub mode: ParameterMode,
+}
+
+/// One typed canonical value. Entity ids remain strings to preserve all u64 bits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AffordanceValue {
+    Entity { id: String },
+    Text { text: String },
+    Symbol { domain: String, value: String },
+}
+
+/// A value bound to one stable app-defined parameter id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ParameterBinding {
+    pub parameter: String,
+    pub value: AffordanceValue,
+}
+
+/// App-selected presentation candidates for one missing input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct InputCandidates {
+    pub parameter: String,
+    pub values: Vec<AffordanceValue>,
+}
+
+/// Successful typed results from one committed affordance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct Performed {
+    pub affordance: String,
+    pub results: Vec<ParameterBinding>,
 }
 
 #[cfg(test)]
@@ -184,16 +235,21 @@ mod tests {
             "{server}"
         );
         assert!(server.contains(r#""t": "offers""#), "{server}");
+        assert!(server.contains(r#""t": "performed""#), "{server}");
 
         let status = OfferStatus::decl(&cfg);
         assert!(status.contains(r#""kind": "available""#), "{status}");
         assert!(status.contains(r#""kind": "vetoed""#), "{status}");
-        assert!(status.contains(r#""kind": "needsRole""#), "{status}");
+        assert!(status.contains(r#""kind": "needs""#), "{status}");
 
         // Entity ids cross as strings (see the module note), so ts-rs renders them
         // `string`, not the `bigint` its default u64 mapping would emit.
         let perform = Perform::decl(&cfg);
-        assert!(perform.contains("focus: string"), "{perform}");
+        assert!(perform.contains("affordance: string"), "{perform}");
+        assert!(
+            perform.contains("inputs: Array<ParameterBinding>"),
+            "{perform}"
+        );
         let snapshot = SnapshotData::decl(&cfg);
         assert!(snapshot.contains("root: string"), "{snapshot}");
     }
@@ -217,24 +273,18 @@ mod tests {
         assert!(matches!(line.into_input(), Input::Line(l) if l == "look"));
     }
 
-    /// A perform frame flattens its fields under the `t` tag, and `with` is optional
-    /// (a single-role act omits it, a sub-pick supplies it).
+    /// A perform request carries stable parameter ids and typed values, with no
+    /// engine-defined role or fixed arity.
     #[test]
-    fn perform_frame_parses_with_an_optional_second_role() {
-        let take: ClientMsg = serde_json::from_str(r#"{"t":"perform","name":"take","focus":"5"}"#)
-            .expect("take frame parses");
+    fn perform_parses_generic_typed_bindings() {
+        let give: ClientMsg = serde_json::from_str(
+            r#"{"t":"perform","affordance":"give","inputs":[{"parameter":"item","value":{"kind":"entity","id":"5"}},{"parameter":"recipient","value":{"kind":"entity","id":"9"}}]}"#,
+        )
+        .expect("give grounding parses");
         assert!(matches!(
-            take.into_input(),
-            Input::Perform(Perform { name, focus, with: None }) if name == "take" && focus == "5"
-        ));
-
-        let put: ClientMsg =
-            serde_json::from_str(r#"{"t":"perform","name":"put","focus":"9","with":"5"}"#)
-                .expect("put frame parses");
-        assert!(matches!(
-            put.into_input(),
-            Input::Perform(Perform { name, focus, with: Some(with) })
-                if name == "put" && focus == "9" && with == "5"
+            give.into_input(),
+            Input::Perform(Perform { affordance, inputs })
+                if affordance == "give" && inputs.len() == 2
         ));
     }
 
@@ -262,13 +312,38 @@ mod tests {
         let offers = ServerMsg::Offers {
             clicked: "42".into(),
             offers: vec![Offer {
-                name: "put".into(),
-                status: OfferStatus::NeedsRole { role: Role::Object },
+                affordance: "give".into(),
+                display_name: "Give".into(),
+                parameters: vec![ParameterDecl {
+                    id: "item".into(),
+                    label: "item".into(),
+                    sort: ParameterSort::Entity,
+                    mode: ParameterMode::Input,
+                }],
+                bindings: Vec::new(),
+                candidates: Vec::new(),
+                status: OfferStatus::Needs {
+                    parameters: vec!["item".into()],
+                },
             }],
         };
         let json = serde_json::to_string(&offers).unwrap();
         assert!(json.contains(r#""t":"offers""#));
-        assert!(json.contains(r#""kind":"needsRole""#));
-        assert!(json.contains(r#""role":"object""#));
+        assert!(json.contains(r#""kind":"needs""#));
+        assert!(json.contains(r#""parameters":["item"]"#));
+
+        let performed = ServerMsg::Performed(Performed {
+            affordance: "label".into(),
+            results: vec![ParameterBinding {
+                parameter: "old_label".into(),
+                value: AffordanceValue::Text {
+                    text: "crate".into(),
+                },
+            }],
+        });
+        let json = serde_json::to_string(&performed).unwrap();
+        assert!(json.contains(r#""t":"performed""#));
+        assert!(json.contains(r#""parameter":"old_label""#));
+        assert!(json.contains(r#""kind":"text","text":"crate""#));
     }
 }

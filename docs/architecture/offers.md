@@ -1,9 +1,9 @@
 # Offers: Partial Grounding for Pointing Clients
 
-> Status: **canonical partial-grounding validation and classification built;
-> app/host/wire cutover pending.** Offers expose an affordance signature plus a
-> partial typed input substitution. The client supplies missing inputs;
-> successful execution may return typed results.
+> Status: **built.** Canonical partial-grounding validation and classification,
+> app-owned exposure policy, the generic host path, typed wire bindings, and the
+> pointing client are integrated. Offers expose an affordance signature plus a
+> partial typed input substitution; successful execution may return typed results.
 
 A text parser starts with a verb and maps noun phrases onto affordance parameters.
 A pointing client starts with an entity and asks which affordances can accept it.
@@ -73,9 +73,9 @@ An unbound input is not a false predicate. A guard is evaluated only when every
 term used by that guard is ground. This prevents "choose an item" from being
 misreported as "you aren't carrying that."
 
-After each pick, the client sends the expanded partial substitution for
-reclassification. A complete input substitution becomes the same `GroundAction`
-used by text commands, scripts, and plans.
+The client fills the named inputs from the app's candidates. A complete input
+substitution becomes the same `GroundAction` used by text commands, scripts, and
+plans; the host revalidates the whole substitution immediately before execution.
 
 ## Types and candidate choices
 
@@ -118,6 +118,7 @@ Offer {
     affordance,
     parameters: [ParameterDecl], // includes Input/Result mode
     bindings: [ParameterBinding],
+    candidates: [InputCandidates],
     status,
 }
 
@@ -127,14 +128,16 @@ Perform {
 }
 
 Performed {
+    affordance,
     results: [ParameterBinding],
 }
 ```
 
 Bindings name parameters by their stable schema id and carry a typed wire value.
 The client supplies only input bindings; results come only from the successful
-server outcome. The server validates ids, modes, sorts, completeness, visibility,
-and guards; the client cannot gain authority by manufacturing a binding.
+server outcome. The server validates ids, modes, sorts, completeness, liveness,
+authority, and guards. The app independently validates its interaction exposure
+policy on every complete request, so candidates are hints rather than authority.
 
 The actor is derived from the authenticated session's live embodiment. It is
 never a wire field or caller-supplied parameter binding.
@@ -156,13 +159,14 @@ app owns:
 The division keeps the wire generic without teaching the engine what a chest,
 exit, picture, or fastener means.
 
-`AffordanceRegistry::classify_offer` is the built engine half. It validates named
+`AffordanceRegistry::classify_offer` validates named
 bindings and app-supplied candidates against the registered signature, caller
 authority, value sorts, entity liveness, and symbol domains. It evaluates each
 guard as soon as every input that guard references is bound, reports the earliest
 currently provable veto, and otherwise distinguishes `Needs` from `Available`.
-The app still decides which `OfferProposal`s and candidate values enter that
-classifier; candidates are presentation hints and never grant perform authority.
+The app's `InteractionPolicy` decides which `OfferProposal`s and candidate values
+enter that classifier, then validates each complete untrusted grounding before
+the host invokes the canonical performer. No app callback executes the action.
 
 ## Relation to the other docs
 

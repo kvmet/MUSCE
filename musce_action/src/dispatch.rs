@@ -6,7 +6,7 @@
 //! mechanism; the verbs themselves are app content. See
 //! `docs/architecture/actions.md`.
 
-use musce_core::{EntityId, World};
+use musce_core::World;
 use musce_proto::Outgoing;
 
 use crate::audience::{self, Outbound};
@@ -14,28 +14,13 @@ use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
 use crate::ctx::{Caller, ColdOp, Ctx};
 use crate::perform::AffordanceRegistry;
+use crate::perform::{PerformError, PerformOutcome};
+use crate::schema::GroundAction;
 
 /// A verb's parse-and-act function. Receives the command context and the
 /// argument tail (everything after the verb word). An app writes these and
 /// registers them; the engine only invokes them.
 pub type Handler = fn(&mut Ctx, &str);
-
-/// An app's grounded-act function: perform an affordance whose entities are already
-/// bound (a pointing client clicked them), so there is no noun to resolve. The
-/// bound values travel as one [`Grounded`] value so additions cannot drift across
-/// positional arguments. The app maps `focus`/`with` onto roles, since which role
-/// the focus fills is app policy.
-pub type PerformHandler = fn(&mut Ctx, Grounded<'_>);
-
-/// A grounded act's bound parts: the affordance name and the entities a pointing
-/// client clicked (the `focus`, and any second entity a role sub-pick supplied).
-/// What a name resolver would produce for a typed verb, handed in ready-made.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Grounded<'a> {
-    pub affordance: &'a str,
-    pub focus: EntityId,
-    pub with: Option<EntityId>,
-}
 
 /// Permission required to run a verb, checked at dispatch before the handler runs.
 /// `Open` is every in-app verb; `Cap` gates a verb on an account capability. The
@@ -170,34 +155,27 @@ pub fn dispatch_command(
     cold
 }
 
-/// Perform a grounded act: build a [`Ctx`], run the app's `perform` handler with
-/// the already-bound entities, then resolve the events it emits to connections. The
-/// same Ctx-and-audience machinery `dispatch_command` runs, entered with a bound
-/// affordance frame instead of a parsed line, so a click narrates through exactly
-/// the path a verb does. Table lookup and parsing are absent (the client did that
-/// by clicking). The canonical affordance performer and its authority check are
-/// still pending; this entry point only routes the grounded callback.
+/// Perform one complete canonical action and audience-resolve its post-commit
+/// narration. Front ends ground named typed inputs before entering this function;
+/// no app callback or fixed role vocabulary participates in execution.
 pub fn dispatch_perform(
     world: &mut World,
     affordances: &AffordanceRegistry,
     actors: &Actors,
     caller: Caller,
-    handler: PerformHandler,
-    act: Grounded,
+    action: &GroundAction,
     emit: &mut impl FnMut(Outgoing),
-) -> Vec<ColdOp> {
+) -> Result<PerformOutcome, PerformError> {
     let mut out: Vec<Outbound> = Vec::new();
-    let cold = {
+    let outcome = {
         let mut ctx = Ctx::new(world, affordances, caller, &mut out);
-        handler(&mut ctx, act);
-        ctx.take_cold()
+        ctx.perform(action)
     };
 
     for ob in out {
         audience::resolve(world, actors, ob, emit);
     }
-
-    cold
+    outcome
 }
 
 #[cfg(test)]
@@ -205,7 +183,7 @@ mod tests {
     use super::*;
     use crate::CapSet;
     use musce_core::hecs::EntityBuilder;
-    use musce_core::{Description, Locus};
+    use musce_core::{Description, EntityId, Locus};
     use musce_proto::{ConnectionId, Delivery, EventKind};
 
     /// Test verbs over the public emit API, standing in for app content so the
@@ -419,39 +397,5 @@ mod tests {
             matches!(&out[..], [Outgoing::Event(Delivery { text, .. })] if text.contains("zap")),
             "su should bypass the gate, got: {out:?}"
         );
-    }
-
-    #[test]
-    fn grounded_act_reaches_the_handler_as_one_complete_value() {
-        let (mut world, actors, actor, conn) = world_with_player();
-        let second = world.spawn(EntityBuilder::new());
-        let verdict = Verdict::guest();
-        let affordances = AffordanceRegistry::empty(&world).unwrap();
-        let mut out = Vec::new();
-        dispatch_perform(
-            &mut world,
-            &affordances,
-            &actors,
-            Caller::new(actor, conn, &verdict),
-            |ctx, grounded| {
-                ctx.feedback(format!(
-                    "{}:{}:{}",
-                    grounded.affordance,
-                    grounded.focus.0,
-                    grounded.with.unwrap().0
-                ));
-            },
-            Grounded {
-                affordance: "put",
-                focus: actor,
-                with: Some(second),
-            },
-            &mut |outgoing| out.push(outgoing),
-        );
-        assert!(matches!(
-            &out[..],
-            [Outgoing::Event(Delivery { text, .. })]
-                if text == &format!("put:{}:{}", actor.0, second.0)
-        ));
     }
 }

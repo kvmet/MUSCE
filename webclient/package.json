@@ -2,7 +2,7 @@
   "name": "webclient",
   "version": "1.0.0",
   "type": "module",
-  "description": "A thin, pointing client graybox: a containment tree, an offers panel driven by the `musce_ref::offers` semantics (the three-way status and the `NeedsRole` sub-pick), and a command bar, all in semantic DOM. It runs against an in-browser mock connection, so it works before the WebSocket transport exists; swapping to the real server is one file (`src/lib/connection.ts`).",
+  "description": "A thin pointing-client graybox for app-defined canonical affordance offers and typed input picks.",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "check": "svelte-check"

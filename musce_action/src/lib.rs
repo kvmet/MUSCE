@@ -39,9 +39,7 @@ pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};
 pub use ctx::{Caller, ColdOp, Ctx, System, SystemCtx, run_systems};
-pub use dispatch::{
-    CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command, dispatch_perform,
-};
+pub use dispatch::{CommandTable, Gate, Handler, dispatch_command, dispatch_perform};
 pub use event::{Audience, Event};
 pub use executor::{Action, ActionKind, ExecError, execute};
 pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};

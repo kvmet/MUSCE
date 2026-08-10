@@ -7,17 +7,20 @@
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-app.md`.
 
 use musce_action::{
-    AffordanceRegistry, Caller, ColdOp, CommandTable, Grounded, RegistryError, dispatch_command,
-    dispatch_perform, run_systems,
+    AffordanceRegistry, Caller, ColdOp, CommandTable, PerformOutcome, RegistryError,
+    dispatch_command, dispatch_perform, run_systems,
 };
-use musce_core::{EntityId, World};
+use musce_core::World;
 use musce_proto::{
     Command, ConnectionId, Delivery, EventKind, Input, Outgoing, Perform, Query, ServerMsg,
 };
 
 use crate::accounts::{AccountOp, AccountOutcome};
+use crate::interaction::{
+    classified_to_wire, grounding_from_wire, parse_wire_id, performed_to_wire, refusal_text,
+};
 use crate::session::{Sessions, resolve_actor};
-use crate::{App, TickCtx};
+use crate::{App, InteractionCtx, TickCtx};
 
 /// A host-level async op a command produced, routed by the sim loop to the task
 /// that owns the resource it touches: a cold read/write to the cold task, or an
@@ -151,7 +154,8 @@ impl Dispatch {
         let reply = match query {
             Query::Snapshot => ServerMsg::Snapshot((self.app.snapshot)(world, actor)),
             Query::Offers { clicked } => {
-                let Some(target) = parse_wire_id(&clicked) else {
+                let Some(target) = parse_wire_id(&clicked).filter(|target| world.contains(*target))
+                else {
                     emit(Outgoing::Event(Delivery::new(
                         id,
                         EventKind::Feedback,
@@ -159,21 +163,34 @@ impl Dispatch {
                     )));
                     return;
                 };
-                ServerMsg::Offers {
-                    offers: (self.app.offers)(world, actor, target),
-                    clicked,
-                }
+                let verdict = self.floor.verdict_of(id);
+                let ctx = InteractionCtx::new(world, &self.affordances, actor, &verdict);
+                let offers = (self.app.interactions.offers)(&ctx, target)
+                    .into_iter()
+                    .filter_map(|proposal| {
+                        match self
+                            .affordances
+                            .classify_offer(world, &verdict, actor, proposal)
+                        {
+                            Ok(offer) => Some(classified_to_wire(&self.affordances, offer)),
+                            Err(error) => {
+                                tracing::error!(error = %error, "app proposed an invalid offer");
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                ServerMsg::Offers { offers, clicked }
             }
         };
         emit(Outgoing::Reply(id, reply));
     }
 
-    /// Perform a grounded act for the connection's actor: resolve its character to
-    /// the live actor, then route the click through the app's `perform` seam on the
-    /// same Ctx-and-audience path a verb runs (it mutates and narrates, unlike a
-    /// read query). A connection with no character is told to `@play`, exactly as a
-    /// bare command is. The verdict is the connection's cached authorization, never
-    /// the resolved body, so the affordance gate the seam checks cannot be borrowed.
+    /// Perform a grounded act for the connection's actor: decode and validate the
+    /// app-defined input bindings, apply the app's exposure policy, then execute
+    /// through the shared canonical performer. A connection with no character is
+    /// told to `@play`, exactly as a bare command is. The verdict is the
+    /// connection's cached authorization, never the resolved body.
     fn handle_perform(
         &mut self,
         id: ConnectionId,
@@ -203,48 +220,71 @@ impl Dispatch {
             )));
             return Vec::new();
         };
-        // Parse the wire ids before doing any work: a malformed id is a client bug,
-        // answered with feedback, not a dispatch. `with` is present-and-malformed
-        // (Some(None)) versus absent (None); only the former is an error.
-        let Some(focus) = parse_wire_id(&perform.focus) else {
-            emit(Outgoing::Event(Delivery::new(
-                id,
-                EventKind::Feedback,
-                "No such thing.",
-            )));
-            return Vec::new();
-        };
-        let with = match perform.with.as_deref().map(parse_wire_id) {
-            None => None,
-            Some(Some(w)) => Some(w),
-            Some(None) => {
+        let grounding = match grounding_from_wire(perform) {
+            Ok(grounding) => grounding,
+            Err(error) => {
+                tracing::warn!(%error, "client sent a malformed affordance grounding");
                 emit(Outgoing::Event(Delivery::new(
                     id,
                     EventKind::Feedback,
-                    "No such thing.",
+                    "That action is malformed.",
                 )));
                 return Vec::new();
             }
         };
         let actor = resolve_actor(world, character);
+        let action = match self.affordances.ground_action(world, actor, &grounding) {
+            Ok(action) => action,
+            Err(error) => {
+                tracing::warn!(%error, "client grounding did not match the affordance schema");
+                emit(Outgoing::Event(Delivery::new(
+                    id,
+                    EventKind::Feedback,
+                    "You can't do that.",
+                )));
+                return Vec::new();
+            }
+        };
         let verdict = self.floor.verdict_of(id);
+        let interaction = InteractionCtx::new(world, &self.affordances, actor, &verdict);
+        if let Err(reason) = (self.app.interactions.validate)(&interaction, &action) {
+            emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                reason,
+            )));
+            return Vec::new();
+        }
         let actors = self.floor.audience_index(world);
-        dispatch_perform(
+        match dispatch_perform(
             world,
             &self.affordances,
             &actors,
             Caller::new(actor, id, &verdict),
-            self.app.perform,
-            Grounded {
-                affordance: &perform.name,
-                focus,
-                with,
-            },
+            &action,
             emit,
-        )
-        .into_iter()
-        .map(HostOp::Cold)
-        .collect()
+        ) {
+            Ok(PerformOutcome::Committed(outcome)) => {
+                emit(Outgoing::Reply(
+                    id,
+                    ServerMsg::Performed(performed_to_wire(&self.affordances, &action, &outcome)),
+                ));
+            }
+            Ok(PerformOutcome::Refused(refusal)) => emit(Outgoing::Event(Delivery::new(
+                id,
+                EventKind::Feedback,
+                refusal_text(refusal),
+            ))),
+            Err(error) => {
+                tracing::error!(error = %error, "canonical perform failed");
+                emit(Outgoing::Event(Delivery::new(
+                    id,
+                    EventKind::Feedback,
+                    "You can't do that.",
+                )));
+            }
+        }
+        Vec::new()
     }
 
     fn handle_line(
@@ -312,15 +352,6 @@ impl Dispatch {
     }
 }
 
-/// Parse a wire id (the string an entity id crosses the web envelope as) back into
-/// an `EntityId`. `None` only for a malformed string, which a well-behaved client
-/// never sends: it echoes ids the server minted, so a non-id is a client bug,
-/// surfaced as feedback rather than dropped. A well-formed id for a vanished entity
-/// parses fine and is refused downstream, exactly as a stale click always was.
-fn parse_wire_id(s: &str) -> Option<EntityId> {
-    s.parse::<u64>().ok().map(EntityId)
-}
-
 /// Resolve a connection's character to its live actor and run `line` against
 /// `table`. The character is session state; the driven actor is derived live from
 /// its `Focus` (so piloting redirects bare commands and admin verbs alike). A
@@ -363,11 +394,18 @@ fn dispatch_through_actor(
 mod tests {
     use super::*;
     use crate::accounts::Authorization;
-    use musce_action::{CapId, CapRegistry, CapSet, Ctx, Gate};
+    use musce_action::schema::{
+        ActionOutcome, AffordanceId, AffordanceSchema, GroundAction, PartialGrounding, Resolution,
+    };
+    use musce_action::state::StateRegistry;
+    use musce_action::{
+        AffordanceRegistryBuilder, CapId, CapRegistry, CapSet, Ctx, Gate, HandlerOutcome,
+        OfferProposal,
+    };
     use musce_auth::AccountId;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, EntityId, Id, Locus};
-    use musce_proto::Capabilities;
+    use musce_proto::{Capabilities, OfferStatus as WireOfferStatus, Performed};
     use std::net::SocketAddr;
     use std::sync::Arc;
 
@@ -417,6 +455,54 @@ mod tests {
             ctx.emit_self(EventKind::Feedback, "poked");
         }
 
+        fn affordances(
+            world: &World,
+            _caps: &CapRegistry,
+        ) -> Result<AffordanceRegistry, RegistryError> {
+            let mut builder = AffordanceRegistryBuilder::new(StateRegistry::new());
+            builder.register(
+                AffordanceSchema::new(
+                    AffordanceId::new("ping").expect("static affordance id"),
+                    "Ping",
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Gate::Open,
+                    Resolution::Deterministic,
+                ),
+                |_, _| HandlerOutcome::committed(ActionOutcome::empty()),
+            )?;
+            builder.register(
+                AffordanceSchema::new(
+                    AffordanceId::new("hidden").expect("static affordance id"),
+                    "Hidden",
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Gate::Open,
+                    Resolution::Deterministic,
+                ),
+                |_, _| HandlerOutcome::committed(ActionOutcome::empty()),
+            )?;
+            builder.build(world)
+        }
+
+        fn offers(_ctx: &InteractionCtx<'_>, _clicked: EntityId) -> Vec<OfferProposal> {
+            vec![OfferProposal::new(
+                PartialGrounding::new(
+                    AffordanceId::new("ping").expect("static affordance id"),
+                    Vec::new(),
+                ),
+                Vec::new(),
+            )]
+        }
+
+        fn validate(_ctx: &InteractionCtx<'_>, action: &GroundAction) -> Result<(), String> {
+            (action.affordance().as_str() == "ping")
+                .then_some(())
+                .ok_or_else(|| "not exposed".into())
+        }
+
         let mut commands = CommandTable::new();
         commands.register("look", Gate::Open, look);
         let mut caps = CapRegistry::new();
@@ -430,31 +516,17 @@ mod tests {
             choose_actor,
             systems: vec![],
             register: |_| {},
-            affordances: |world, _| AffordanceRegistry::empty(world),
+            affordances,
             caps: Arc::new(caps),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
-            // Echo the resolved actor so a query test can assert `@play` resolution,
-            // and hand back one sentinel offer so a reply is observable.
+            // Echo the resolved actor so a query test can assert `@play` resolution.
             snapshot: |_, actor| musce_proto::SnapshotData {
                 root: "0".into(),
                 actor: actor.0.to_string(),
                 entities: Vec::new(),
             },
-            offers: |_, _, _| {
-                vec![musce_proto::Offer {
-                    name: "take".into(),
-                    status: musce_proto::OfferStatus::Available,
-                }]
-            },
-            // Echo the affordance name back to the actor so a routing test can
-            // observe the seam ran on the resolved actor's Ctx.
-            perform: |ctx, grounded| {
-                ctx.emit_self(
-                    EventKind::Feedback,
-                    format!("performed {}", grounded.affordance),
-                )
-            },
+            interactions: crate::InteractionPolicy { offers, validate },
         }
     }
 
@@ -521,7 +593,7 @@ mod tests {
         out
     }
 
-    /// Drive one perform frame and collect the connection-facing output.
+    /// Drive one canonical perform request and collect connection-facing output.
     fn perform(d: &mut Dispatch, world: &mut World, id: ConnectionId, p: Perform) -> Vec<Outgoing> {
         let mut out = Vec::new();
         d.handle(
@@ -682,7 +754,7 @@ mod tests {
     }
 
     /// An offers query echoes the clicked id (host-set, so the client can match the
-    /// reply to its request) and carries the app seam's offers.
+    /// reply to its request) and carries the app policy's offers.
     #[test]
     fn an_offers_query_echoes_the_clicked_id_and_carries_the_offers() {
         let app = test_app();
@@ -692,13 +764,19 @@ mod tests {
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
+        let clicked_id = world
+            .query::<(&Id, &Avatar)>()
+            .iter()
+            .next()
+            .map(|(id, _)| id.0.0.to_string())
+            .unwrap();
 
         let out = query(
             &mut d,
             &mut world,
             id,
             Query::Offers {
-                clicked: "42".into(),
+                clicked: clicked_id.clone(),
             },
         );
         let (clicked, offers) = out
@@ -710,12 +788,13 @@ mod tests {
                 _ => None,
             })
             .expect("an offers reply");
-        assert_eq!(clicked, "42");
+        assert_eq!(clicked, clicked_id);
         assert_eq!(offers.len(), 1);
-        assert_eq!(offers[0].name, "take");
+        assert_eq!(offers[0].affordance, "ping");
+        assert!(matches!(offers[0].status, WireOfferStatus::Available));
     }
 
-    /// A perform frame before `@play` has no actor to act through: the same `@play`
+    /// A perform request before `@play` has no actor to act through: the same `@play`
     /// hint a bare command gets, and nothing routed to the seam.
     #[test]
     fn a_perform_without_a_character_is_refused_with_a_play_hint() {
@@ -729,18 +808,17 @@ mod tests {
             &mut world,
             id,
             Perform {
-                name: "take".into(),
-                focus: "1".into(),
-                with: None,
+                affordance: "ping".into(),
+                inputs: Vec::new(),
             },
         );
         assert!(conn_texts(&out).iter().any(|t| t.contains("@play")));
     }
 
-    /// A perform frame after `@play` routes to the app's perform seam on the
-    /// resolved actor's Ctx: the stub echoes the affordance name back as feedback.
+    /// A perform request after `@play` is validated by the app policy, executed by
+    /// the canonical performer, and acknowledged with typed results.
     #[test]
-    fn a_perform_routes_to_the_game_seam() {
+    fn a_perform_executes_through_the_canonical_registry() {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
@@ -754,14 +832,43 @@ mod tests {
             &mut world,
             id,
             Perform {
-                name: "take".into(),
-                focus: "7".into(),
-                with: None,
+                affordance: "ping".into(),
+                inputs: Vec::new(),
             },
         );
         assert!(
-            conn_texts(&out).iter().any(|t| t == "performed take"),
+            matches!(
+                out.as_slice(),
+                [Outgoing::Reply(_, ServerMsg::Performed(Performed { affordance, results }))]
+                    if affordance == "ping" && results.is_empty()
+            ),
             "got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_registered_but_unexposed_affordance_is_refused_by_app_policy() {
+        let app = test_app();
+        let mut world = World::new();
+        (app.seed)(&mut world);
+        let mut dispatch = Dispatch::new(app, &world).unwrap();
+        let id = ConnectionId(1);
+        connect(&mut dispatch, &mut world, id);
+        line(&mut dispatch, &mut world, id, "@play");
+
+        let out = perform(
+            &mut dispatch,
+            &mut world,
+            id,
+            Perform {
+                affordance: "hidden".into(),
+                inputs: Vec::new(),
+            },
+        );
+        assert!(conn_texts(&out).iter().any(|text| text == "not exposed"));
+        assert!(
+            out.iter()
+                .all(|outgoing| !matches!(outgoing, Outgoing::Reply(_, ServerMsg::Performed(_))))
         );
     }
 
@@ -887,9 +994,8 @@ mod tests {
             &mut world,
             id,
             Perform {
-                name: "take".into(),
-                focus: "7".into(),
-                with: None,
+                affordance: "ping".into(),
+                inputs: Vec::new(),
             },
         );
         assert!(
@@ -1000,8 +1106,7 @@ mod tests {
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
-            offers: |_, _, _| Vec::new(),
-            perform: |_, _| {},
+            interactions: crate::InteractionPolicy::none(),
         };
         let mut world = World::new();
         let dispatch = Dispatch::new(app, &world).unwrap();

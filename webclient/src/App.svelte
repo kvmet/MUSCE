@@ -1,7 +1,9 @@
 <script lang="ts">
   import { MockConn, WsConn, type Conn } from "./lib/connection";
   import { toSnapshot, type Snapshot } from "./lib/snapshot";
+  import type { AffordanceValue } from "./lib/bindings/AffordanceValue";
   import type { Offer } from "./lib/bindings/Offer";
+  import type { ParameterBinding } from "./lib/bindings/ParameterBinding";
   import type { ServerMsg } from "./lib/bindings/ServerMsg";
   import EntityTree from "./components/EntityTree.svelte";
   import Offers from "./components/Offers.svelte";
@@ -21,18 +23,18 @@
   let snap = $state<Snapshot | null>(null);
   let offersReply = $state<{ clicked: string; offers: Offer[] } | null>(null);
   let selected = $state<string | null>(null);
-  // A pending act awaiting a second role (the `put` object sub-pick).
-  let pending = $state<{ offer: Offer; clicked: string } | null>(null);
+  // A partial app-defined grounding awaiting one or more typed input picks.
+  let pending = $state<{
+    offer: Offer;
+    parameters: string[];
+    inputs: ParameterBinding[];
+  } | null>(null);
+  let textInput = $state("");
   let lines = $state<string[]>(["Pointing client. Click a thing to see what you can do to it."]);
 
   // Offers reflect the current selection only: a reply for a since-changed selection
   // is stale and dropped.
   const offers = $derived(offersReply && offersReply.clicked === selected ? offersReply.offers : []);
-  const inventory = $derived.by(() => {
-    if (!snap) return [];
-    const me = snap.entities.get(snap.actor);
-    return (me?.contents ?? []).map((id) => snap!.entities.get(id)).filter((e) => e !== undefined);
-  });
   const subjectName = $derived(selected && snap ? (snap.entities.get(selected)?.name ?? "") : "");
 
   conn.subscribe((msg: ServerMsg) => {
@@ -52,6 +54,9 @@
         break;
       case "offers":
         offersReply = { clicked: msg.clicked, offers: msg.offers };
+        break;
+      case "performed":
+        refresh();
         break;
     }
   });
@@ -73,26 +78,53 @@
   function select(id: string) {
     selected = id;
     pending = null;
+    textInput = "";
     conn.send({ t: "query", q: "offers", clicked: id });
   }
 
   function act(offer: Offer) {
-    if (selected === null) return;
-    if (offer.status.kind === "needsRole") {
-      // Open the sub-pick instead of acting: the client supplies the missing role.
-      pending = { offer, clicked: selected };
+    if (offer.status.kind === "needs") {
+      pending = {
+        offer,
+        parameters: [...offer.status.parameters],
+        inputs: [...offer.bindings],
+      };
+      textInput = "";
       return;
     }
-    conn.send({ t: "perform", name: offer.name, focus: selected, with: null });
-    refresh();
+    conn.send({ t: "perform", affordance: offer.affordance, inputs: offer.bindings });
   }
 
-  // Fill the pending act's missing role with `objectId` and run it.
-  function pick(objectId: string) {
+  function pick(value: AffordanceValue) {
     if (!pending) return;
-    conn.send({ t: "perform", name: pending.offer.name, focus: pending.clicked, with: objectId });
-    pending = null;
-    refresh();
+    const [parameter, ...parameters] = pending.parameters;
+    const inputs = [...pending.inputs, { parameter, value }];
+    if (parameters.length) {
+      pending = { ...pending, parameters, inputs };
+      textInput = "";
+    } else {
+      conn.send({ t: "perform", affordance: pending.offer.affordance, inputs });
+      pending = null;
+    }
+  }
+
+  function candidates(offer: Offer, parameter: string): AffordanceValue[] {
+    return offer.candidates.find((set) => set.parameter === parameter)?.values ?? [];
+  }
+
+  function pickText() {
+    pick({ kind: "text", text: textInput });
+  }
+
+  function valueLabel(value: AffordanceValue): string {
+    switch (value.kind) {
+      case "entity":
+        return snap?.entities.get(value.id)?.name ?? `#${value.id}`;
+      case "text":
+        return value.text;
+      case "symbol":
+        return value.value;
+    }
   }
 
   function say(line: string) {
@@ -127,19 +159,34 @@
       {:else}
         <Offers subject={subjectName} {offers} onAct={act} />
         {#if pending}
+          {@const current = pending}
+          {@const values = candidates(current.offer, current.parameters[0])}
+          {@const declaration = current.offer.parameters.find(
+            (parameter) => parameter.id === current.parameters[0],
+          )}
           <section class="picker" aria-labelledby="picker-heading">
             <h2 id="picker-heading">
-              {pending.offer.status.kind === "needsRole" ? pending.offer.status.role : "object"} for
-              {pending.offer.name}
+              {declaration?.label ?? current.parameters[0]}
+              for {current.offer.display_name}
             </h2>
-            {#if inventory.length}
+            {#if values.length}
               <ul>
-                {#each inventory as item (item.id)}
-                  <li><button onclick={() => pick(item.id)}>{item.name}</button></li>
+                {#each values as value, index (`${value.kind}-${index}`)}
+                  <li><button onclick={() => pick(value)}>{valueLabel(value)}</button></li>
                 {/each}
               </ul>
+            {:else if declaration?.sort.kind === "text"}
+              <form
+                onsubmit={(event) => {
+                  event.preventDefault();
+                  pickText();
+                }}
+              >
+                <input aria-label={declaration.label} bind:value={textInput} />
+                <button type="submit">Choose</button>
+              </form>
             {:else}
-              <p class="empty">You are carrying nothing.</p>
+              <p class="empty">No choices are available.</p>
             {/if}
             <button class="cancel" onclick={() => (pending = null)}>Cancel</button>
           </section>

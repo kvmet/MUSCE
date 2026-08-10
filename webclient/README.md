@@ -1,8 +1,8 @@
 # MUSCE web client
 
-A thin, pointing client graybox: a containment tree, an offers panel driven by the
-`musce_ref::offers` semantics (the three-way status and the `NeedsRole` sub-pick),
-and a command bar, all in semantic DOM. By default it connects to the server's
+A thin, pointing client graybox: a containment tree, an offers panel driven by
+app-defined canonical partial groundings, typed missing-input picks, and a command
+bar, all in semantic DOM. By default it connects to the server's
 WebSocket (`ws://<host>:4001`, overridable with `VITE_WS_URL`) and drives the same
 command stream as the text MUD.
 
@@ -37,11 +37,11 @@ npx vite            # dev server; open the printed URL
 
 ## What it demonstrates
 
-- Click an entity → its offers, each `Available` / greyed `Vetoed` (with the
-  reason) / `NeedsRole`.
-- Click the chest → `put` shows `NeedsRole(object)` → pick a held item → it
-  resolves to `Available` (held) and performs, or `Vetoed` with the real reason.
-- Click the locked `north` gate → `go` is greyed with "It's locked."
+- Click an entity → its app-selected offers, each `Available`, greyed `Vetoed`
+  (with the reason), or `Needs` one or more named typed inputs.
+- Click the brass drone → `give` asks for its `item` input using the app-supplied
+  inventory candidates → pick the coin → the canonical action performs.
+- Click the chest → `give` is greyed with the canonical recipient-guard reason.
 - The command bar (`look`) shares the same log, proving the text path coexists
   with clicking. That coexistence is the accessibility guarantee.
 

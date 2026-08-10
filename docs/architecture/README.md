@@ -85,8 +85,8 @@ These hold across every subsystem:
   registration, structural schema validation, reverse effect indexing, the shared
   performer, its typed execution/observation/narration boundary, and one boot-time
   registry injected into command and system contexts. Macro
-  authoring, a reusable effect-oracle harness, and further consumer migration
-  pending; reference `give` is migrated.)*
+  authoring, a reusable effect-oracle harness, and text/agency consumer migration
+  pending; reference `give` and generic pointing are migrated.)*
 - [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
   additive canonical build, cutover boundary, and legacy removal condition.
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
@@ -106,8 +106,7 @@ These hold across every subsystem:
   oracles, and planner integration pending.)*
 - [offers.md](offers.md): parameter-aware affordance enumeration for pointing
   clients, partial typed input substitutions, result declarations,
-  missing-input picks, and the generic perform wire shape. *(Built: canonical
-  partial-grounding and offer classification; app/host/wire cutover pending.)*
+  missing-input picks, and the generic perform wire shape. *(Built.)*
 - [agency/](agency/README.md): autonomous behavior on the shared affordance layer:
   drives, goal arbitration, backward planning over comparable effects, knowledge-
   scoped parameter binding, QSIM gauges, and grounded execution with replanning.
