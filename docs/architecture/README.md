@@ -119,10 +119,9 @@ Built:
   non-persisted singletons (type-keyed, snapshot-excluded; see indexes.md).
   (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
-- `musce_persistence`: World-as-truth save/load behind one `WorldStore` handle
-  chosen by URL scheme, with SQLite and Postgres backends sharing one schema (the
-  per-component-row layout, `data` as JSON text), plus the cold content store
-  (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB`/`BYTEA` table) for large,
+- `musce_persistence`: World-as-truth save/load through the SQLite `WorldStore`
+  (the per-component-row layout, `data` as JSON text), plus the cold content store
+  (`KvStore`: `kv_get`/`kv_put` over a `key -> BLOB` table) for large,
   rarely-read payloads kept off-heap, plus the `accounts` table (`AccountStore`:
   columnar per-account rows, `account_by_username`/`account_upsert`/`any_superuser`)
   holding the auth layer's records in the same store (see authorization.md).
@@ -211,8 +210,8 @@ Built:
   three-way `OfferStatus`; see offers.md); builds the `App`
   and has `main` plus the end-to-end test. A real app forks this crate.
 - `musce_index`: a generic, type-agnostic secondary index over a component (a key
-  function per index, `Multi`/`Unique` policy, exact `get` plus on-request
-  `conflicts`), maintained incrementally off the `ComponentChanged` trigger and
+  function per index and exact `get`), maintained incrementally off the
+  `ComponentChanged` trigger and
   `Destroyed`, homed in a `World` resource (transient, never persisted). Its
   reference consumer is `musce_ref`'s coordinate layer: an integer `Xyz` on rooms,
   the `xyz_cell`/`xyz_level` indexes, `near` range queries, and the
@@ -239,14 +238,15 @@ Deferred (with seams in place where noted):
   (`@tel`/`@goto`/`@summon`/`@create`/`@dig`/`@set`/`@destroy`/`@purge`/`@possess`/`@unpossess`)
   are built, riding the structural action set through the capability-gated admin
   frame.
-- Networking: WebSocket/SSH transports, a secure (encrypted) transport so passwords
-  are not sent in the clear, OAuth as an additional auth method, the
+- Networking: encrypted remote authentication, SSH, OAuth as an additional auth
+  method, the
   gameplay possess-gate, the `p1`/`p2` multi-puppet slots, and modal overlays
   (designed in networking-and-sessions.md). Raw TCP, the session floor, the session
   attachment that `@play` sets, durable `Controls`/`Focus` embodiment, and the
   `@possess`/`@unpossess` admin verbs are built. The account/authorization layer is
   built, including real password login (argon2 verify on `@login`, hash on `@account
   new`, both off-thread) and self-service password change (`@password`/`@pw`), with
+  every password-bearing command loopback-only until encryption lands and
   `@operator` the passwordless loopback bootstrap; operator-set passwords and OAuth
   are deferred (see authorization.md).
 - Doors: the optional `Portal`/`Through` layer over the built exit entities (a

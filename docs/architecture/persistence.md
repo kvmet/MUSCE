@@ -71,8 +71,7 @@ components (
 meta (key TEXT PRIMARY KEY, value TEXT)  -- next_id high-water mark, schema version
 ```
 
-`data` is **JSON text** on both backends: human-readable while the schema churns
-(JSONB on Postgres is a deferred optimization, see Backends). A component's value is
+`data` is **JSON text**: human-readable while the schema churns. A component's value is
 stored as its JSON string, so a marker (which
 serializes to `null`) is the text `"null"`, never a SQL `NULL`. The `entities` roster
 carries entity-level columns (only `zone` today) and anchors existence for load; the
@@ -114,8 +113,8 @@ the pending-delete set is the *only* record of it. Therefore:
   despawned id deletes its component rows then its roster row (the FK is RESTRICT, so
   correctness never rides on the `foreign_keys` pragma being on). The roster upserts,
   the per-entity component clears, and the component inserts are each issued as
-  **batched multi-row** statements (chunked to stay under the backend's bind-variable
-  limit: 999 on SQLite, 65535 on Postgres), not row-at-a-time, so save cost is bound by
+  **batched multi-row** statements (chunked to stay under SQLite's 999-variable
+  compatibility limit), not row-at-a-time, so save cost is bound by
   the number of batches, not the number of rows. The delete-then-insert semantics are
   unchanged: the batched form clears every live entity's old rows (`DELETE ... WHERE
   entity_id IN (…)`) before inserting the current set.
@@ -184,9 +183,11 @@ and warned, not silently trusted.
   version marker exists from the start precisely so the *first* migration is
   possible; retrofitting versioning onto already-written worlds is the harder
   problem it avoids. No transforms exist yet (the schema has only ever been at
-  version 1), and the seam is a no-op for a current-version world; a world written
-  before versioning existed has no marker and is read as current (those are
-  dev-only worlds carrying today's schema). The seam takes the full
+  version 1), and the seam is a no-op for a current-version world. A nonempty
+  world with no marker, or any version without an explicit transform, is a hard
+  boot failure. Loading it unchanged could succeed and let the next save stamp the
+  current version over untransformed data. A truly empty database may omit the
+  marker because it contains no vocabulary to migrate. The seam takes the full
   `&mut Vec<EntityBlob>` (not a fixed slice), so a transform can add or drop whole
   entities, not just mutate them in place; whole-world or structural migrations
   (splitting an entity, not just renaming a tag) are still deferred until a concrete
@@ -199,39 +200,15 @@ and warned, not silently trusted.
   today that means recreating the DB; a real layout migration would be a one-time
   operational step outside the seam.
 
-## Backends
+## Backend
 
-Two backends exist behind the `Persistence` + `KvStore` traits: `SqliteStore`
-(dev and embedded) and `PostgresStore` (production). The runtime holds a
-`WorldStore` enum that forwards to whichever the connection URL's scheme names
-(`sqlite://…` / `sqlite::memory:` vs `postgres://…`), so app code, `run`, and the
-persistence task never name a backend. The account store has the same shape
-(`AccountBackend` over `AccountStore`/`PostgresAccountStore`); world and accounts
-select independently by their own URLs.
+SQLite is the sole built backend, used for both file-backed and in-memory stores.
+`WorldStore` aliases `SqliteStore`; the runtime and app still program against the
+separate `Persistence`, `KvStore`, and `AccountStore` traits, so adding a second
+backend later does not change their contracts. Keeping one implementation avoids
+paying every schema change twice before a deployment requires another database.
 
-The schema is **logically identical** across backends and stays that way by
-construction: each table is written once as a template whose only variable is the
-dialect's type word, so structural drift is impossible. The forced differences are
-exactly three, dictated by Postgres's type system and how sqlx maps Rust types:
-
-| Column kind | SQLite | Postgres |
-|-------------|--------|----------|
-| 64-bit ids  | `INTEGER` | `BIGINT` (SQLite `INTEGER` is already 64-bit; PG's is 32) |
-| cold bytes (`kv.value`) | `BLOB` | `BYTEA` (PG has no `BLOB`) |
-| `is_su` flag | `INTEGER` | `BOOLEAN` (sqlx binds a Rust `bool` per dialect) |
-
-Everything else, including `data` as **JSON text** on both, is identical. JSONB is a
-Postgres-specific optimization left deferred behind the trait, not used yet; the two
-backends stay parallel until a concrete need earns it.
-
-The risky load logic (the id-less and orphan checks, the `next_id` floor, the
-account schema-version refusal) is a single backend-free function each store hands
-its extracted rows, so both inherit the same invariants and it is unit-tested
-without a database. Cross-backend parity is verified in CI, which reruns the
-black-box store tests against a real Postgres.
-
-**Deployment note:** unlike SQLite (`create_if_missing`), Postgres has no
-create-on-connect. The database must already exist; `init` only creates tables
-within it. A remote Postgres only adds latency to the async save path, never to the
-tick, which is the intended growth lever: move the DB off-box before sharding the
-sim.
+The risky load logic (id-less and orphan checks, the `next_id` floor, and schema
+version refusal) remains backend-free and unit-tested without a database. A future
+backend should extract the same primitives and hand them to that shared assembly
+function rather than duplicate the invariants.

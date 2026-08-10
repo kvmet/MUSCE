@@ -13,8 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .init();
 
-    // The URL scheme picks the backend: `sqlite://…` (the default) or
-    // `postgres://…`. The game code is identical either way.
+    // SQLite is the built store. The URL selects its file or in-memory database.
     let db_url = std::env::var("MUSCE_DB").unwrap_or_else(|_| "sqlite://musce.db".into());
     let store = WorldStore::connect(&db_url).await?;
     tracing::info!(%db_url, "connected");

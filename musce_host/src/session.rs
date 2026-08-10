@@ -288,8 +288,8 @@ impl Sessions {
     }
 
     /// `@login <username> <password>`: authenticate as `username`, verified against
-    /// the stored credential by the account task. Unlike `@operator` this is not
-    /// loopback-gated: a real password is the credential, so it works from anywhere.
+    /// the stored credential by the account task. Password-bearing commands are
+    /// loopback-only until an encrypted transport can mark a remote session secure.
     fn login(
         &mut self,
         id: ConnectionId,
@@ -300,6 +300,14 @@ impl Sessions {
     ) {
         if username.is_empty() || password.is_none() {
             feedback(id, "Log in: @login <username> <password>.", emit);
+            return;
+        }
+        if !self.map.get(&id).is_some_and(|session| session.loopback) {
+            feedback(
+                id,
+                "Password authentication requires a local connection until encrypted transport is available.",
+                emit,
+            );
             return;
         }
         self.begin_auth(id, username.to_string(), password.map(str::to_string), ops);
@@ -321,6 +329,14 @@ impl Sessions {
             feedback(id, "Change your password: @password <old> <new>.", emit);
             return;
         };
+        if !self.map.get(&id).is_some_and(|session| session.loopback) {
+            feedback(
+                id,
+                "Password changes require a local connection until encrypted transport is available.",
+                emit,
+            );
+            return;
+        }
         let Some(account) = self.map.get(&id).and_then(|s| s.account) else {
             feedback(id, "Log in before changing your password.", emit);
             return;
@@ -350,6 +366,14 @@ impl Sessions {
         }
         if sub != "new" || username.is_empty() || password.is_none() {
             feedback(id, "Usage: @account new <username> <password>.", emit);
+            return;
+        }
+        if !self.map.get(&id).is_some_and(|session| session.loopback) {
+            feedback(
+                id,
+                "Account passwords require a local connection until encrypted transport is available.",
+                emit,
+            );
             return;
         }
         ops.push(AccountOp::Create {
@@ -424,7 +448,8 @@ impl Sessions {
         choose_actor: ChooseActor,
         emit: &mut impl FnMut(Outgoing),
     ) {
-        match choose_actor(world) {
+        let account = self.map.get(&id).and_then(|session| session.account);
+        match choose_actor(world, account) {
             Some(actor) => {
                 self.attach(id, actor);
                 let name =
@@ -456,12 +481,16 @@ mod tests {
         Some("127.0.0.1:9000".parse().unwrap())
     }
 
-    fn first_player_choose(world: &World) -> Option<EntityId> {
+    fn first_player_choose(world: &World, _account: Option<AccountId>) -> Option<EntityId> {
         world
             .query::<(&Id, &Avatar)>()
             .iter()
             .next()
             .map(|(id, _)| id.0)
+    }
+
+    fn authenticated_player_choose(world: &World, account: Option<AccountId>) -> Option<EntityId> {
+        account.and_then(|account| first_player_choose(world, Some(account)))
     }
 
     fn spawn_avatar(world: &mut World) -> EntityId {
@@ -538,6 +567,38 @@ mod tests {
     }
 
     #[test]
+    fn play_passes_the_authenticated_account_to_app_policy() {
+        let mut sessions = Sessions::default();
+        let mut world = World::new();
+        let avatar = spawn_avatar(&mut world);
+        let conn = ConnectionId(4);
+        sessions.connect(conn, loopback(), &mut |_| {});
+
+        let mut out = Vec::new();
+        let mut ops = Vec::new();
+        sessions.account_command(
+            conn,
+            "play",
+            &world,
+            authenticated_player_choose,
+            &mut ops,
+            &mut |event| out.push(event),
+        );
+        assert_eq!(sessions.character_of(conn), None, "guest has no character");
+
+        sessions.bind(conn, su_authz());
+        sessions.account_command(
+            conn,
+            "play",
+            &world,
+            authenticated_player_choose,
+            &mut ops,
+            &mut |event| out.push(event),
+        );
+        assert_eq!(sessions.character_of(conn), Some(avatar));
+    }
+
+    #[test]
     fn unknown_at_command_is_unhandled_and_silent() {
         let mut s = Sessions::default();
         let world = World::new();
@@ -602,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn login_requires_a_password_but_is_not_loopback_gated() {
+    fn login_requires_a_password_and_a_local_connection() {
         let mut s = Sessions::default();
         let world = World::new();
 
@@ -617,13 +678,18 @@ mod tests {
                 .any(|t| t.contains("@login <username> <password>"))
         );
 
-        // With a password, a peerless (non-loopback) connection still logs in:
-        // password auth is not loopback-gated the way `@operator` is.
+        // With a password, a peerless (non-loopback) connection is refused until
+        // the transport can prove encryption.
         let remote = ConnectionId(2);
         s.connect(remote, None, &mut |_| {});
-        let (_, ops) = cmd(&mut s, &world, remote, "login builder secret");
-        assert!(matches!(ops.as_slice(), [AccountOp::Authenticate { .. }]));
-        assert!(s.is_pending(remote));
+        let (out, ops) = cmd(&mut s, &world, remote, "login builder secret");
+        assert!(ops.is_empty());
+        assert!(!s.is_pending(remote));
+        assert!(
+            conn_texts(&out)
+                .iter()
+                .any(|text| text.contains("local connection"))
+        );
     }
 
     #[test]
@@ -658,7 +724,7 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let id = ConnectionId(1);
-        s.connect(id, None, &mut |_| {});
+        s.connect(id, loopback(), &mut |_| {});
 
         // Unauthenticated: refused, no op.
         let (out, ops) = cmd(&mut s, &world, id, "password old new");
@@ -686,7 +752,7 @@ mod tests {
         let mut s = Sessions::default();
         let world = World::new();
         let id = ConnectionId(1);
-        s.connect(id, None, &mut |_| {});
+        s.connect(id, loopback(), &mut |_| {});
         s.bind(id, su_authz());
 
         let (out, ops) = cmd(&mut s, &world, id, "password only-old");

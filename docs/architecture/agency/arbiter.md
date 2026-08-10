@@ -45,9 +45,10 @@ which a naive `holds` pass could not answer without redoing the planner's bindin
   `eat` urgency falls to the floor, so the goal simply loses the ranking. Drives own
   "is this need pressing," which is exactly a satisfaction reading of the NPC's own
   state.
-- **Downstream:** an already-true goal produces an *empty plan*, which the
-  [execution driver](execution.md) reports as `Progress::Achieved`. An imperative caller
-  then calls `Arbiter::release`, dropping the commitment so the next `select` re-picks.
+- **Downstream:** an already-true goal produces an *empty plan*, and every completed
+  plan is checked against the live goal; only a true result becomes
+  `Progress::Achieved`. An imperative caller then calls `Arbiter::release`, dropping
+  the commitment so the next `select` re-picks.
   A drive loop instead lets the commitment retire by fading urgency (see "Cross-tick
   commitment"), so it never calls `release`.
 
@@ -89,7 +90,7 @@ let mut arbiter = Arbiter::new(hysteresis);
 loop {                                   // once per agent tick (wiring deferred)
     let Some(goal) = arbiter.select(&candidate_goals) else { continue };
     match driver.pursue(actor, &goal.condition, &known, world, run) {
-        Progress::Achieved | Progress::Abandoned => arbiter.release(),
+        Progress::Achieved | Progress::Unmet | Progress::Abandoned => arbiter.release(),
     }
 }
 ```

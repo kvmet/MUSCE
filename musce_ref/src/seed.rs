@@ -250,9 +250,10 @@ fn program(world: &mut World, steps: Vec<Step>) -> EntityId {
 }
 
 /// The `@play` policy: choose which actor a connection comes to drive. The floor
-/// records the attachment; this only selects. For now that is the seeded player
-/// avatar; the real flow will resolve the account's chosen character.
-pub fn choose_actor(world: &World) -> Option<EntityId> {
+/// records the attachment; this only selects. For now every principal gets the
+/// seeded player avatar; a real app can use the supplied account identity to
+/// select one of that account's characters.
+pub fn choose_actor(world: &World, _account: Option<musce::auth::AccountId>) -> Option<EntityId> {
     find_player(world)
 }
 
@@ -357,8 +358,8 @@ mod tests {
     fn choose_actor_selects_the_seeded_avatar() {
         let mut w = World::new();
         seed(&mut w);
-        assert_eq!(choose_actor(&w), find_player(&w));
-        assert!(choose_actor(&w).is_some());
+        assert_eq!(choose_actor(&w, None), find_player(&w));
+        assert!(choose_actor(&w, None).is_some());
     }
 
     #[test]

@@ -82,6 +82,12 @@ Every transport reduces to a bidirectional stream plus capability flags (line- v
 - **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-app VI, WASD movement. (`russh` for an in-process server.)
 - **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
 
+Neither built transport proves encryption. They therefore remain useful for local
+development and non-secret commands, but the session floor refuses `@login`,
+`@password`/`@pw`, and password-bearing account creation from non-loopback peers.
+Remote password authentication remains unavailable until an encrypted transport
+can attest that property to the session.
+
 Output renders `Event`s to the connection's format (ANSI text first). Keep events semantic where reasonable so a web client can render richly later.
 
 ## Input mode: a connection state, not a separate port
@@ -212,7 +218,9 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
    - **Built.** The session attachment: `@play` records which actor a connection
      drives as **session state** on the floor; the audience resolver derives its
      conn->actor index from those attachments. Which actor `@play` chooses is app
-     policy, injected by the `App`'s `choose_actor` (see
+     policy, injected by the `App`'s `choose_actor`, which receives the session's
+     authenticated `AccountId` (or `None` for a guest), so account ownership can
+     constrain selection (see
      [engine-and-app.md](engine-and-app.md)); the floor (`@quit`/`@who`/`@help`)
      stays engine.
    - **Built (the first embodiment slice).** The `Controls` and `Focus` relations

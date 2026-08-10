@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 musce_core = { workspace = true }
 musce_action = { workspace = true }
+tracing = { workspace = true }

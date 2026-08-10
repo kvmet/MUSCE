@@ -6,6 +6,14 @@
 > affordance inputs/results, functional state slots, and explicit resolution
 > contracts.
 
+The existing `musce_agency` crate is nevertheless built and used. It runs a
+bounded, add-only `Predicate::{Related, Tag}` planner over fixed
+`Frame { actor, object, target }` steps, an arbiter, and a replan-on-veto driver;
+the reference hoard and consume systems invoke it. The driver rechecks the live
+goal after the final beat, so committed steps cannot report a false achievement.
+This is the prototype being migrated, described in the "Built prototype" section
+of [affordances.md](../affordances.md).
+
 Agency lets an entity pursue a world-state goal through the same gameplay acts a
 player uses. It adds selection and planning, not a second mutation or rule path.
 

@@ -35,7 +35,7 @@ fn setup() -> Bench {
     let mut world = World::new();
     register(&mut world);
     seed(&mut world);
-    let actor = choose(&world).expect("the seed places a player avatar");
+    let actor = choose(&world, None).expect("the seed places a player avatar");
 
     let mut actors = Actors::default();
     actors.bind(CONN, actor);

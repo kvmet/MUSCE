@@ -80,9 +80,11 @@ below the action layer as a leaf rather than in a line above `musce_core`.
 - **`seed: fn(&mut World)`** builds the starting world when the database loads
   empty; a loaded world is left untouched.
 - **`choose_actor`** the `@play` policy: which actor a connection comes to drive.
-  The stub finds the seeded avatar; the persisted `Controls`/`Focus` embodiment
-  (see [networking-and-sessions.md](networking-and-sessions.md)) replaces the body
-  of this hook later without changing the interface.
+  It receives the authenticated `AccountId`, or `None` for a guest, so an app can
+  select only that principal's characters. The reference stub still returns its
+  single seeded avatar. Persisted `Controls`/`Focus` then resolves which body that
+  selected character drives (see
+  [networking-and-sessions.md](networking-and-sessions.md)).
 - **`systems: Vec<fn(&mut SystemCtx)>`** the tick-loop systems the runtime carries
   on the phase pipeline, run in order every tick (see
   [concurrency.md](concurrency.md)). A `Vec`, so the runtime runs N by

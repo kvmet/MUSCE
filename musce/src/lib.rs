@@ -48,9 +48,8 @@ pub mod action {
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
 }
 
-/// Durable storage. `WorldStore` is the app-facing handle, chosen by URL scheme
-/// at connect time; the concrete backends stay internal so an app names one type
-/// whether it runs on SQLite or Postgres.
+/// Durable storage. `WorldStore` is the app-facing SQLite handle; the store traits
+/// preserve the abstraction boundary for another backend when one is needed.
 pub mod store {
     pub use musce_persistence::{Error, KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
 }
@@ -68,7 +67,7 @@ pub mod wire {
 /// authorization concern), and account identity/hashing under `musce_auth`, exposed
 /// here once an app needs to build real credentials.
 pub mod auth {
-    pub use musce_host::{AccountView, LoginVeto};
+    pub use musce_host::{AccountId, AccountView, LoginVeto};
 }
 
 /// Generic secondary indexes over a component, behind the `musce_index` feature. An

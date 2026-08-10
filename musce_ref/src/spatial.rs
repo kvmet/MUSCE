@@ -14,7 +14,7 @@
 //! it persists. See `docs/architecture/indexes.md`.
 
 use musce::action::SystemCtx;
-use musce::index::{IndexRegistry, Policy};
+use musce::index::IndexRegistry;
 use musce::world::{EntityId, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
@@ -67,8 +67,8 @@ pub(crate) fn register(world: &mut World) {
 /// build and the benchmarks, so both exercise the same indexes: `xyz_cell` (the
 /// spatial hash) and `xyz_level` (one bucket per z-level), both over `xyz`.
 pub fn register_indexes(reg: &mut IndexRegistry) {
-    reg.register::<Xyz, Cell>(CELL_INDEX, Policy::Multi, cell_of);
-    reg.register::<Xyz, i64>(LEVEL_INDEX, Policy::Multi, |p| p.z);
+    reg.register::<Xyz, Cell>(CELL_INDEX, cell_of);
+    reg.register::<Xyz, i64>(LEVEL_INDEX, |p| p.z);
 }
 
 /// The index maintainer, registered first in `App.systems` so later systems in

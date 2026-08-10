@@ -4,6 +4,13 @@
 > bounded backward-regression search over typed affordance inputs/results and the
 > closed functional state-slot algebra.
 
+The built prototype already performs bounded backward regression over add-only
+`Related`/`Tag` predicates and fixed frames, with one free variable at most. It
+returns no plan at depth 8 or after 10,000 settled nodes and logs when either bound
+causes pruning, so resource exhaustion is distinguishable from an ordinary
+unreachable goal in operations. The representation and regression rules below are
+its pending replacement.
+
 The planner finds a minimum-cost sequence of affordance steps whose contracted
 successful execution makes a goal condition hold. It manipulates the same canonical
 representation used by player verbs, pointing clients, and scripts, while real

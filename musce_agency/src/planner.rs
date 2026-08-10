@@ -139,6 +139,34 @@ impl<'a> Planner<'a> {
         result.map(|(_, plan)| plan)
     }
 
+    /// Whether `goal` holds for `actor` in the live world. Mirrors the planner's
+    /// supported grounding scope: no free variable is tested directly; one free
+    /// variable is existentially tested over `known`; more than one is unsupported.
+    /// The driver calls this after execution so a committed plan is not mistaken
+    /// for an achieved goal when add-only regression missed interference.
+    pub(crate) fn goal_holds(
+        &self,
+        actor: EntityId,
+        goal: &Clause,
+        known: &[EntityId],
+        world: &World,
+    ) -> bool {
+        let goal = goal.substitute(&Var("actor".to_string()), actor);
+        match free_vars(&goal).as_slice() {
+            [] => goal
+                .0
+                .iter()
+                .all(|literal| literal.holds(world, self.model)),
+            [var] => known.iter().copied().any(|candidate| {
+                goal.substitute(var, candidate)
+                    .0
+                    .iter()
+                    .all(|literal| literal.holds(world, self.model))
+            }),
+            _ => false,
+        }
+    }
+
     /// The literals of `goal` that mention `var` and that no affordance can make
     /// true (no positive effect shares their shape), so they must already hold: the
     /// static constraint that filters candidate bindings for `var`. A negated literal
@@ -229,6 +257,7 @@ impl<'a> Planner<'a> {
         });
 
         let mut settled = 0;
+        let mut hit_depth_bound = false;
         while let Some(node) = heap.pop() {
             // Settle-on-pop: the cheapest path to this subgoal is now final.
             if !visited.insert(canonical(&node.subgoal)) {
@@ -236,6 +265,10 @@ impl<'a> Planner<'a> {
             }
             settled += 1;
             if settled > MAX_SETTLED {
+                tracing::warn!(
+                    max_settled = MAX_SETTLED,
+                    "planner search hit its settled-node bound; returning no plan"
+                );
                 return None;
             }
 
@@ -257,6 +290,7 @@ impl<'a> Planner<'a> {
                 continue;
             }
             if node.steps.len() >= MAX_DEPTH {
+                hit_depth_bound = true;
                 continue;
             }
 
@@ -299,6 +333,12 @@ impl<'a> Planner<'a> {
                     }
                 }
             }
+        }
+        if hit_depth_bound {
+            tracing::warn!(
+                max_depth = MAX_DEPTH,
+                "planner search exhausted after pruning at its depth bound"
+            );
         }
         None
     }

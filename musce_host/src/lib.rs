@@ -8,6 +8,7 @@ mod dispatch;
 mod session;
 
 pub use accounts::{AccountView, LoginVeto};
+pub use musce_auth::AccountId;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -72,10 +73,11 @@ pub struct RunReport {
 /// left untouched.
 pub type Seed = fn(&mut World);
 
-/// The `@play` policy: which actor a connection comes to drive. Pure selection;
-/// the floor records the attachment as session state. Returns `None` if the app
-/// has no character to give.
-pub type ChooseActor = fn(&World) -> Option<EntityId>;
+/// The `@play` policy: which actor a connection comes to drive for the authenticated
+/// account, or for a guest when the account is `None`. Pure selection; the floor
+/// records the attachment as session state. Returns `None` if the app has no
+/// character to give that principal.
+pub type ChooseActor = fn(&World, Option<AccountId>) -> Option<EntityId>;
 
 /// World-type registration the runtime runs against a fresh `World` before it
 /// loads or seeds, so an app's own component types are known to the deserializer
@@ -379,7 +381,15 @@ fn sim_loop(
 
     // Bring persisted blobs up to the current schema before deserializing them.
     let mut entities = loaded.entities;
-    migrate_blobs(loaded.schema_version, &mut entities);
+    if let Err(msg) = migrate_blobs(loaded.schema_version, &mut entities) {
+        tracing::error!(
+            from = loaded.schema_version,
+            to = SCHEMA_VERSION,
+            "no persisted-world migration path; refusing to boot"
+        );
+        let _ = done_tx.send(Err(msg));
+        return;
+    }
 
     if let Err(e) = world.load(&entities, loaded.next_id) {
         // Blobs the current schema cannot read (a removed or renamed component
@@ -498,18 +508,16 @@ fn sim_loop(
 /// lives: renaming or reshaping a persisted component means bumping
 /// `SCHEMA_VERSION` and adding a transform here, keyed by the version it migrates
 /// from. No transforms exist yet (the schema has only ever been at version 1), so
-/// a current-version world is a no-op; an older version with no transform falls
-/// through unchanged and the subsequent load fails loudly rather than silently
-/// dropping data. See `docs/architecture/persistence.md`.
-fn migrate_blobs(from: u32, _entities: &mut Vec<EntityBlob>) {
+/// a current-version world is a no-op and every other version is a hard boot
+/// failure. Loading unknown blobs unchanged could succeed and let the next save
+/// falsely stamp them as current. See `docs/architecture/persistence.md`.
+fn migrate_blobs(from: u32, _entities: &mut Vec<EntityBlob>) -> Result<(), String> {
     if from == SCHEMA_VERSION {
-        return;
+        return Ok(());
     }
-    tracing::warn!(
-        from,
-        to = SCHEMA_VERSION,
-        "no schema migration defined for this version; loading blobs unchanged"
-    );
+    Err(format!(
+        "no persisted-world migration from schema {from} to {SCHEMA_VERSION}; refusing to boot"
+    ))
 }
 
 fn apply_ack(world: &mut World, ack: Ack, pending: &mut u32) {
@@ -553,7 +561,7 @@ mod tests {
             commands: CommandTable::new(),
             admin: CommandTable::new(),
             seed: |_| {},
-            choose_actor: |_| None,
+            choose_actor: |_, _| None,
             systems: vec![],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),
@@ -590,6 +598,14 @@ mod tests {
             vec![id],
             "a failed delta re-enters the next snapshot"
         );
+    }
+
+    #[test]
+    fn unknown_schema_version_has_no_implicit_migration() {
+        let mut entities = Vec::new();
+        assert!(migrate_blobs(SCHEMA_VERSION, &mut entities).is_ok());
+        assert!(migrate_blobs(SCHEMA_VERSION + 1, &mut entities).is_err());
+        assert!(migrate_blobs(SCHEMA_VERSION.saturating_sub(1), &mut entities).is_err());
     }
 
     #[tokio::test]

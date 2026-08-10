@@ -4,6 +4,12 @@
 > The driver executes canonical actions, binds results, and replans around
 > contested outcomes or changed live state.
 
+The built prototype driver executes fixed-frame steps and replans around a refused
+beat. After every beat in a plan commits, it evaluates the original goal against
+the live world (including its supported single existential binding) and returns
+`Achieved` only when the goal actually holds; `Unmet` exposes interference or a
+broken effect contract. Canonical result bindings remain pending below.
+
 The driver is the executing half of agency. Given a committed goal, it asks the
 planner for a transient plan, runs its steps through the app's shared affordance
 implementation, and replans when a contested step fails or live state invalidates
@@ -79,7 +85,7 @@ own node/depth bounds. `MAX_REPLANS` provides an outer bound.
 The driver therefore reports:
 
 ```text
-Progress = Achieved | Abandoned
+Progress = Achieved | Unmet | Abandoned
 ```
 
 An already-satisfied goal produces an empty plan and `Achieved`. Exhausting every

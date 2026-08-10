@@ -22,24 +22,12 @@ use std::hash::Hash;
 
 use musce_core::{EntityId, Fact, Id, NamedComponent, World};
 
-/// Whether an index expects at most one entity per key. `Multi` is the default
-/// (many entities may share a key). `Unique` records the intent that a key
-/// identifies one entity; it does not enforce it (a rebuilt read model cannot
-/// intercept writes), so a violation is detected on request via
-/// [`Index::conflicts`], never acted on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Policy {
-    Multi,
-    Unique,
-}
-
 type ReadKey<K> = Box<dyn Fn(&World, EntityId) -> Option<K> + Send + Sync>;
 type Enumerate = Box<dyn Fn(&World) -> Vec<EntityId> + Send + Sync>;
 
 /// One secondary index, generic over its key type `K`. The source component type
 /// is erased into `read_key` and `enumerate`, so this type never names it.
 pub struct Index<K> {
-    policy: Policy,
     source_tag: &'static str,
     read_key: ReadKey<K>,
     enumerate: Enumerate,
@@ -61,27 +49,9 @@ impl<K: Eq + Hash + Clone> Index<K> {
         self.reverse.get(&entity)
     }
 
-    pub fn policy(&self) -> Policy {
-        self.policy
-    }
-
     /// The tag of the component this index reads.
     pub fn source_tag(&self) -> &'static str {
         self.source_tag
-    }
-
-    /// Entities that share a key under a `Unique` policy, computed on request (not
-    /// maintained). Empty for a `Multi` index, where shared keys are expected.
-    pub fn conflicts(&self) -> Vec<EntityId> {
-        if self.policy != Policy::Unique {
-            return Vec::new();
-        }
-        self.forward
-            .values()
-            .filter(|bucket| bucket.len() > 1)
-            .flatten()
-            .copied()
-            .collect()
     }
 
     /// Reconcile one entity against the current world: reread its key and move it
@@ -180,7 +150,6 @@ impl IndexRegistry {
     pub fn register<C, K>(
         &mut self,
         name: &'static str,
-        policy: Policy,
         key: impl Fn(&C) -> K + Send + Sync + 'static,
     ) where
         C: NamedComponent,
@@ -200,7 +169,6 @@ impl IndexRegistry {
                 .collect()
         });
         let index = Index {
-            policy,
             source_tag: C::TAG,
             read_key,
             enumerate,
@@ -320,7 +288,7 @@ mod tests {
 
     fn cell_index() -> IndexRegistry {
         let mut reg = IndexRegistry::default();
-        reg.register::<Cell, i64>("cell", Policy::Multi, |c| c.0);
+        reg.register::<Cell, i64>("cell", |c| c.0);
         reg
     }
 
@@ -444,8 +412,8 @@ mod tests {
 
         let mut reg = IndexRegistry::default();
         // Two indexes over the same component, different keys.
-        reg.register::<Cell, i64>("cell_exact", Policy::Multi, |c| c.0);
-        reg.register::<Cell, i64>("cell_band", Policy::Multi, |c| c.0 / 10);
+        reg.register::<Cell, i64>("cell_exact", |c| c.0);
+        reg.register::<Cell, i64>("cell_band", |c| c.0 / 10);
         reg.baseline(&world);
 
         world.insert(a, Cell(25));
@@ -464,8 +432,8 @@ mod tests {
         let a = world.spawn(b);
 
         let mut reg = IndexRegistry::default();
-        reg.register::<Cell, i64>("cell", Policy::Multi, |c| c.0);
-        reg.register::<Level, i64>("level", Policy::Multi, |l| l.0);
+        reg.register::<Cell, i64>("cell", |c| c.0);
+        reg.register::<Level, i64>("level", |l| l.0);
         reg.baseline(&world);
 
         // A "cell" change must not disturb the "level" index.
@@ -477,28 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn unique_reports_conflicts_on_request() {
-        let mut world = World::new();
-        let a = spawn_cell(&mut world, 1);
-        let b = spawn_cell(&mut world, 1);
-        let mut reg = IndexRegistry::default();
-        reg.register::<Cell, i64>("cell", Policy::Unique, |c| c.0);
-        reg.baseline(&world);
-
-        let mut conflicts = reg.index::<i64>("cell").unwrap().conflicts();
-        conflicts.sort();
-        let mut expected = vec![a, b];
-        expected.sort();
-        assert_eq!(conflicts, expected);
-    }
-
-    #[test]
     fn maintain_bootstraps_then_applies_via_resource() {
         let mut world = World::new();
         let a = spawn_cell(&mut world, 5);
 
         let init = |reg: &mut IndexRegistry| {
-            reg.register::<Cell, i64>("cell", Policy::Multi, |c| c.0);
+            reg.register::<Cell, i64>("cell", |c| c.0);
         };
 
         // First call: builds the registry, baselines, homes it in the resource.

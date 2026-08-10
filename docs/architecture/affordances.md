@@ -6,6 +6,23 @@
 > and a Rust `affordance!` authoring macro. The optional `musce_agency` planner
 > consumes this representation but does not own it.
 
+## Built prototype during migration
+
+The running engine still carries the smaller prototype that the target replaces.
+`musce_action` exposes `Term::{Const, Var}`, `Predicate::{Related, Tag}`, `Clause`,
+ordered `Guard`s, a fixed `Frame { actor, object, target }`, and
+`Affordance { name, guards, effect }`. There is no affordance registry or stable
+affordance id. `musce_ref` constructs five affordances (`take`, `drop`, `put`,
+`eat`, `go`) and its performer, narrator, offer mapper, and planner tables join
+them by name. The web wire remains `Perform { name, focus, with }`.
+
+`musce_agency` is also real, not merely proposed: its bounded add-only regression
+planner supports at most one free variable, its driver replans around vetoed steps
+and verifies the live goal after committed beats, and two reference NPC systems
+exercise it. This prototype is frozen at the existing five affordances while the
+typed registry below replaces it; it is migration source, not a second design to
+extend.
+
 An **affordance** describes an attempt an actor can make: the values that identify
 the attempt, the world conditions under which it is applicable, the state changes
 it advertises to planners, its authority requirement, and the app implementation

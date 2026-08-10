@@ -371,7 +371,7 @@ mod tests {
             world.move_entity(avatar, room).unwrap();
         }
 
-        fn choose_actor(world: &World) -> Option<EntityId> {
+        fn choose_actor(world: &World, _account: Option<AccountId>) -> Option<EntityId> {
             world
                 .query::<(&Id, &Avatar)>()
                 .iter()
@@ -963,7 +963,7 @@ mod tests {
             commands: CommandTable::new(),
             admin: CommandTable::new(),
             seed: |_| {},
-            choose_actor: |_| None,
+            choose_actor: |_, _| None,
             systems: vec![add_a, add_b],
             register: |_| {},
             caps: Arc::new(CapRegistry::new()),

@@ -43,10 +43,8 @@ impl SqliteStore {
 
 impl Persistence for SqliteStore {
     async fn init(&self) -> Result<()> {
-        for ddl in world_tables_ddl("INTEGER") {
-            sqlx::query(sqlx::AssertSqlSafe(ddl))
-                .execute(&self.pool)
-                .await?;
+        for ddl in world_tables_ddl() {
+            sqlx::query(ddl).execute(&self.pool).await?;
         }
         Ok(())
     }
@@ -187,8 +185,7 @@ impl Persistence for SqliteStore {
 }
 
 /// Read a `meta` value and parse it, `None` when the row is missing or does not
-/// parse (a restored dump without meta, a hand-edited store). SQLite-side; the
-/// Postgres store has its own `$1`-placeholder twin.
+/// parse (a restored dump without meta, a hand-edited store).
 async fn read_meta<T: FromStr>(pool: &SqlitePool, key: &str) -> Result<Option<T>> {
     Ok(sqlx::query("SELECT value FROM meta WHERE key = ?")
         .bind(key)
@@ -200,9 +197,7 @@ async fn read_meta<T: FromStr>(pool: &SqlitePool, key: &str) -> Result<Option<T>
 
 impl KvStore for SqliteStore {
     async fn kv_init(&self) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(kv_table_ddl("BLOB")))
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(kv_table_ddl()).execute(&self.pool).await?;
         Ok(())
     }
 
@@ -229,7 +224,7 @@ impl KvStore for SqliteStore {
 
 impl AccountStore for SqliteStore {
     async fn accounts_init(&self) -> Result<()> {
-        sqlx::query(sqlx::AssertSqlSafe(accounts_table_ddl("INTEGER")))
+        sqlx::query(accounts_table_ddl())
             .execute(&self.pool)
             .await?;
         Ok(())

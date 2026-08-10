@@ -29,9 +29,14 @@ pub enum Beat {
 /// The result of pursuing a goal to a stopping point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Progress {
-    /// A whole plan's beats all committed. An already-true goal (the empty plan)
-    /// counts, so this doubles as the arbiter's "satisfied, release it" signal.
+    /// A whole plan's beats committed and the goal holds in the resulting world.
+    /// An already-true goal (the empty plan) counts, so this doubles as the
+    /// arbiter's "satisfied, release it" signal.
     Achieved,
+    /// Every beat committed, but the goal is false afterward. This exposes
+    /// interference or a broken affordance effect contract instead of reporting a
+    /// false success.
+    Unmet,
     /// No plan survived the exclusion set: the goal is unreachable given what the
     /// agent knows and the steps that have vetoed. The caller releases the goal.
     Abandoned,
@@ -57,8 +62,9 @@ impl<'a> Driver<'a> {
 
     /// Plan for `goal`, run each step through `run` (the app's lowering of a step
     /// to its grounded action), and on a vetoed beat exclude that step and replan
-    /// from the now-current world. Returns [`Progress::Achieved`] when a whole plan
-    /// commits, [`Progress::Abandoned`] when replanning runs dry.
+    /// from the now-current world. Returns [`Progress::Achieved`] only when the goal
+    /// holds after a whole plan commits, [`Progress::Unmet`] when committed beats
+    /// leave it false, and [`Progress::Abandoned`] when replanning runs dry.
     ///
     /// `run` receives the live `&mut World` and the step to perform, and returns
     /// whether it committed. Replanning reads the world *after* the beats that
@@ -91,7 +97,13 @@ impl<'a> Driver<'a> {
                 }
             }
             match vetoed {
-                None => return Progress::Achieved,
+                None if self.planner.goal_holds(actor, goal, known, world) => {
+                    return Progress::Achieved;
+                }
+                None => {
+                    tracing::warn!("every planned beat committed but the goal remains false");
+                    return Progress::Unmet;
+                }
                 Some(step) => excluded.push(step),
             }
         }
@@ -114,18 +126,38 @@ mod tests {
     // which is exactly why the mutating end-to-end check lives in `musce_ref`.
     #[derive(Default)]
     struct Facts {
-        relations: HashSet<(EntityId, EntityId, String)>,
-        tags: HashSet<(EntityId, String)>,
+        relations: RefCell<HashSet<(EntityId, EntityId, String)>>,
+        tags: RefCell<HashSet<(EntityId, String)>>,
+    }
+    impl Facts {
+        fn add_tag(&self, entity: EntityId, tag: &str) {
+            self.tags.borrow_mut().insert((entity, tag.into()));
+        }
+
+        fn commit(&self, step: &Step) {
+            let Some(object) = step.frame.object else {
+                return;
+            };
+            let destination = match step.affordance.name.as_str() {
+                "take" => step.frame.actor,
+                "put" => step.frame.target.unwrap(),
+                _ => return,
+            };
+            let mut relations = self.relations.borrow_mut();
+            relations
+                .retain(|(source, _, kind)| *source != object || kind.as_str() != "contained_by");
+            relations.insert((object, destination, "contained_by".into()));
+        }
     }
     impl WorldModel for Facts {
         fn holds(&self, predicate: &Predicate, _world: &World) -> bool {
             match predicate {
                 Predicate::Related { a, b, kind } => match (as_const(a), as_const(b)) {
-                    (Some(a), Some(b)) => self.relations.contains(&(a, b, kind.clone())),
+                    (Some(a), Some(b)) => self.relations.borrow().contains(&(a, b, kind.clone())),
                     _ => false,
                 },
                 Predicate::Tag { e, comp } => match as_const(e) {
-                    Some(e) => self.tags.contains(&(e, comp.clone())),
+                    Some(e) => self.tags.borrow().contains(&(e, comp.clone())),
                     None => false,
                 },
             }
@@ -216,8 +248,8 @@ mod tests {
     fn pursues_a_plan_to_completion() {
         // One container: the plan is take-then-put and nothing vetoes, so pursuit
         // achieves the goal and every step ran once.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
+        let facts = Facts::default();
+        facts.add_tag(CHEST, "container");
         let table = [take(), put()];
         let planner = Planner::new(&table, &facts, &UnitCost);
         let driver = Driver::new(&planner);
@@ -230,6 +262,7 @@ mod tests {
             &mut World::new(),
             |_w, step| {
                 ran.borrow_mut().push(step.affordance.name.clone());
+                facts.commit(step);
                 Beat::Committed
             },
         );
@@ -239,12 +272,31 @@ mod tests {
     }
 
     #[test]
+    fn committed_beats_do_not_claim_a_false_goal() {
+        let facts = Facts::default();
+        facts.add_tag(CHEST, "container");
+        let table = [take(), put()];
+        let planner = Planner::new(&table, &facts, &UnitCost);
+        let driver = Driver::new(&planner);
+
+        let progress = driver.pursue(
+            ACTOR,
+            &coin_in_a_container(),
+            &[CHEST],
+            &mut World::new(),
+            |_world, _step| Beat::Committed,
+        );
+
+        assert_eq!(progress, Progress::Unmet);
+    }
+
+    #[test]
     fn a_permanently_vetoed_step_is_tried_once_then_abandoned() {
         // The only route needs put-into-CHEST, but that beat always vetoes (a
         // contested action). The driver excludes it, finds no other route, and
         // abandons: crucially it issues the failing put exactly once, never looping.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
+        let facts = Facts::default();
+        facts.add_tag(CHEST, "container");
         let table = [take(), put()];
         let planner = Planner::new(&table, &facts, &UnitCost);
         let driver = Driver::new(&planner);
@@ -260,6 +312,7 @@ mod tests {
                     *put_attempts.borrow_mut() += 1;
                     Beat::Refused
                 } else {
+                    facts.commit(step);
                     Beat::Committed
                 }
             },
@@ -278,9 +331,9 @@ mod tests {
         // Two containers. The put into whichever chest the planner picks first
         // vetoes once; the driver excludes it and replans onto the other chest,
         // where the put commits. The goal is achieved by the alternative binding.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
-        facts.tags.insert((CHEST_B, "container".into()));
+        let facts = Facts::default();
+        facts.add_tag(CHEST, "container");
+        facts.add_tag(CHEST_B, "container");
         let table = [take(), put()];
         let planner = Planner::new(&table, &facts, &UnitCost);
         let driver = Driver::new(&planner);
@@ -296,6 +349,7 @@ mod tests {
             &mut World::new(),
             |_w, step| {
                 if step.affordance.name != "put" {
+                    facts.commit(step);
                     return Beat::Committed;
                 }
                 let target = step.frame.target.unwrap();
@@ -308,6 +362,7 @@ mod tests {
                     Some(first) if first == target => Beat::Refused,
                     _ => {
                         *committed_put.borrow_mut() = Some(target);
+                        facts.commit(step);
                         Beat::Committed
                     }
                 }

@@ -3,19 +3,16 @@
 //! into one row per component, so the same save/load-only data is also amenable to
 //! out-of-band analytics (a component census, cross-entity aggregation) run off the
 //! runtime tick path, which itself never queries the DB. Cold payloads that should
-//! not stay resident live in a separate content store ([`KvStore`]). SQLite and
-//! Postgres both back these, one schema behind the traits, picked by the
-//! connection URL's scheme. See `docs/architecture/persistence.md`.
+//! not stay resident live in a separate content store ([`KvStore`]). SQLite backs
+//! the store traits. See `docs/architecture/persistence.md`.
 
 use std::collections::HashMap;
 
 use musce_auth::{Account, AccountId, AccountStatus};
 use musce_core::{EntityBlob, EntityId, Id, Map, NamedComponent, Snapshot, Value};
 
-mod postgres;
 mod sqlite;
 
-pub use postgres::PostgresStore;
 pub use sqlite::SqliteStore;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +27,8 @@ pub enum Error {
     IdlessEntity(EntityId),
     #[error("component rows reference entities absent from the roster: {0:?}")]
     OrphanComponents(Vec<EntityId>),
+    #[error("persisted world has entities but no schema_version marker")]
+    MissingSchemaVersion,
     #[error("malformed account row: {0}")]
     MalformedAccount(String),
 }
@@ -129,64 +128,50 @@ pub trait AccountStore {
 const NEXT_ID_KEY: &str = "next_id";
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
-/// The world's table definitions, written once so the two backends cannot drift
-/// apart structurally. Only the dialect's type words vary: `int_ty` spells the
-/// 64-bit id columns (`INTEGER` on SQLite, `BIGINT` on Postgres). The `data`
-/// column is JSON text on both. Returns the entities/components/meta trio the
-/// `Persistence::init` contract creates; the cold `kv` table is [`kv_table_ddl`].
-fn world_tables_ddl(int_ty: &str) -> [String; 3] {
+/// The world's entities/components/meta table definitions. The `data` column is
+/// JSON text. The cold `kv` table is [`kv_table_ddl`].
+fn world_tables_ddl() -> [&'static str; 3] {
     [
-        format!(
-            "CREATE TABLE IF NOT EXISTS entities (
-                entity_id {int_ty} PRIMARY KEY,
-                zone      {int_ty}
-            )"
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS components (
-                entity_id {int_ty} NOT NULL REFERENCES entities(entity_id),
+        "CREATE TABLE IF NOT EXISTS entities (
+                entity_id INTEGER PRIMARY KEY,
+                zone      INTEGER
+            )",
+        "CREATE TABLE IF NOT EXISTS components (
+                entity_id INTEGER NOT NULL REFERENCES entities(entity_id),
                 tag       TEXT NOT NULL,
                 data      TEXT NOT NULL,
                 PRIMARY KEY (entity_id, tag)
-            )"
-        ),
+            )",
         "CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            )"
-        .to_string(),
+            )",
     ]
 }
 
-/// The cold content table, kept parallel to [`world_tables_ddl`]. Only the byte
-/// column's type word varies: `BLOB` on SQLite, `BYTEA` on Postgres.
-fn kv_table_ddl(bytes_ty: &str) -> String {
-    format!(
-        "CREATE TABLE IF NOT EXISTS kv (
+/// The cold content table, kept parallel to [`world_tables_ddl`].
+fn kv_table_ddl() -> &'static str {
+    "CREATE TABLE IF NOT EXISTS kv (
             key   TEXT PRIMARY KEY,
-            value {bytes_ty} NOT NULL
+            value BLOB NOT NULL
         )"
-    )
 }
 
 /// The accounts table, kept parallel to the world and kv DDL. Columnar: one column
 /// per account field. `caps` and `app_data` are JSON text (the same choice as the
 /// world's `data` column), `credential` is nullable (an account may have no
 /// password), and `username` is `UNIQUE` (the store-level enforcement the record
-/// cannot do on its own). Only the boolean type word varies: `INTEGER` on SQLite,
-/// `BOOLEAN` on Postgres.
-fn accounts_table_ddl(bool_ty: &str) -> String {
-    format!(
-        "CREATE TABLE IF NOT EXISTS accounts (
+/// cannot do on its own).
+fn accounts_table_ddl() -> &'static str {
+    "CREATE TABLE IF NOT EXISTS accounts (
             id         TEXT PRIMARY KEY,
             username   TEXT NOT NULL UNIQUE,
             credential TEXT,
             caps       TEXT NOT NULL,
-            su         {bool_ty} NOT NULL,
+            su         INTEGER NOT NULL,
             status     TEXT NOT NULL,
             app_data   TEXT NOT NULL
         )"
-    )
 }
 
 /// Rebuild an [`Account`] from the primitives a backend read out of a row, enforcing
@@ -278,10 +263,15 @@ fn assemble(
     }
     let next_id = marker.max(floor);
 
-    // A world written before versioning existed has no marker; treat it as the
-    // current version, since those are dev-only worlds carrying today's schema.
-    // A real older version triggers the migration seam at load.
-    let schema_version = schema_version.unwrap_or(SCHEMA_VERSION);
+    // An empty database has no marker until its first snapshot and contains no
+    // vocabulary to migrate. A nonempty unversioned world is ambiguous: assuming
+    // it is current would let the next save stamp today's version over unknown
+    // blobs, so refuse it rather than manufacture a version.
+    let schema_version = match schema_version {
+        Some(version) => version,
+        None if entities.is_empty() => SCHEMA_VERSION,
+        None => return Err(Error::MissingSchemaVersion),
+    };
 
     Ok(Loaded {
         entities,
@@ -290,146 +280,19 @@ fn assemble(
     })
 }
 
-/// The world store as the runtime holds it: one of the concrete backends, chosen
-/// at connect time by the URL scheme. Forwards the `Persistence`/`KvStore`
-/// contract to the variant, so the runtime and an app program against the store
-/// without naming a backend. Adding a backend is a variant here plus its impl;
-/// no call site changes.
-#[derive(Clone)]
-pub enum WorldStore {
-    Sqlite(SqliteStore),
-    Postgres(PostgresStore),
-}
-
-impl WorldStore {
-    /// Connect to whichever backend the URL scheme names: `postgres://` or
-    /// `postgresql://` to Postgres, anything else (`sqlite://…`, `sqlite::memory:`)
-    /// to SQLite.
-    pub async fn connect(url: &str) -> Result<Self> {
-        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            Ok(WorldStore::Postgres(PostgresStore::connect(url).await?))
-        } else {
-            Ok(WorldStore::Sqlite(SqliteStore::connect(url).await?))
-        }
-    }
-}
-
-impl Persistence for WorldStore {
-    async fn init(&self) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.init().await,
-            WorldStore::Postgres(p) => p.init().await,
-        }
-    }
-
-    async fn save(&self, snapshot: &Snapshot) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.save(snapshot).await,
-            WorldStore::Postgres(p) => p.save(snapshot).await,
-        }
-    }
-
-    async fn load(&self) -> Result<Loaded> {
-        match self {
-            WorldStore::Sqlite(s) => s.load().await,
-            WorldStore::Postgres(p) => p.load().await,
-        }
-    }
-}
-
-impl KvStore for WorldStore {
-    async fn kv_init(&self) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.kv_init().await,
-            WorldStore::Postgres(p) => p.kv_init().await,
-        }
-    }
-
-    async fn kv_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        match self {
-            WorldStore::Sqlite(s) => s.kv_get(key).await,
-            WorldStore::Postgres(p) => p.kv_get(key).await,
-        }
-    }
-
-    async fn kv_put(&self, key: &str, value: &[u8]) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.kv_put(key, value).await,
-            WorldStore::Postgres(p) => p.kv_put(key, value).await,
-        }
-    }
-}
-
-impl AccountStore for WorldStore {
-    async fn accounts_init(&self) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.accounts_init().await,
-            WorldStore::Postgres(p) => p.accounts_init().await,
-        }
-    }
-
-    async fn account_by_username(&self, username: &str) -> Result<Option<Account>> {
-        match self {
-            WorldStore::Sqlite(s) => s.account_by_username(username).await,
-            WorldStore::Postgres(p) => p.account_by_username(username).await,
-        }
-    }
-
-    async fn account_by_id(&self, id: &AccountId) -> Result<Option<Account>> {
-        match self {
-            WorldStore::Sqlite(s) => s.account_by_id(id).await,
-            WorldStore::Postgres(p) => p.account_by_id(id).await,
-        }
-    }
-
-    async fn account_upsert(&self, account: &Account) -> Result<()> {
-        match self {
-            WorldStore::Sqlite(s) => s.account_upsert(account).await,
-            WorldStore::Postgres(p) => p.account_upsert(account).await,
-        }
-    }
-
-    async fn any_superuser(&self) -> Result<bool> {
-        match self {
-            WorldStore::Sqlite(s) => s.any_superuser().await,
-            WorldStore::Postgres(p) => p.any_superuser().await,
-        }
-    }
-}
+/// The runtime-facing store name. It is an alias rather than an enum while SQLite
+/// is the sole implementation; the persistence/content/account traits keep callers
+/// independent of the concrete backend and leave a clean reintroduction seam.
+pub type WorldStore = SqliteStore;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus, Name, World};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    /// The store under test. `MUSCE_TEST_DB` unset → a private in-memory SQLite
-    /// (the local default); set → that URL's backend, so CI reruns the same
-    /// black-box assertions against Postgres. On Postgres each test gets its own
-    /// schema for parallel isolation, the equivalent of SQLite's per-connection
-    /// `:memory:` database.
+    /// A private in-memory SQLite store for each black-box test.
     async fn test_world_store() -> WorldStore {
-        match std::env::var("MUSCE_TEST_DB") {
-            Ok(base) => {
-                static NEXT: AtomicU64 = AtomicU64::new(0);
-                let schema = format!("musce_test_{}", NEXT.fetch_add(1, Ordering::Relaxed));
-                // Create the schema on a plain connection, then pin the store's
-                // search_path to it via the connection `options`, so every query
-                // this test runs lands in its own schema.
-                let admin = PostgresStore::connect(&base).await.unwrap();
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "CREATE SCHEMA IF NOT EXISTS {schema}"
-                )))
-                .execute(&admin.pool)
-                .await
-                .unwrap();
-                let sep = if base.contains('?') { '&' } else { '?' };
-                let url = format!("{base}{sep}options=-c%20search_path%3D{schema}");
-                WorldStore::Postgres(PostgresStore::connect(&url).await.unwrap())
-            }
-            Err(_) => WorldStore::connect("sqlite::memory:").await.unwrap(),
-        }
+        WorldStore::connect("sqlite::memory:").await.unwrap()
     }
 
     /// A component row carrying the mandatory `Id` tag, the minimum that lets a
@@ -537,10 +400,9 @@ mod tests {
         );
     }
 
-    // `assemble` is the backend-free heart of every `load`: both stores hand it
-    // the same primitives, so testing it here covers the risky invariants (Id-less
-    // rejection, orphan detection, the next_id floor) for SQLite and Postgres at
-    // once, with no database.
+    // `assemble` is the backend-free heart of `load`: the store hands it extracted
+    // primitives, so testing it here covers the risky invariants (Id-less rejection,
+    // orphan detection, and the next_id floor) without a database.
 
     #[test]
     fn assemble_reassembles_entities_with_zone() {
@@ -589,11 +451,20 @@ mod tests {
     }
 
     #[test]
-    fn assemble_missing_marker_and_version_default() {
-        // A restored dump without meta: next_id falls back to the floor, and the
-        // absent schema version reads as current (not a spurious migration).
-        let loaded = assemble(vec![(2, None)], vec![id_row(2)], Some(2), None, None).unwrap();
+    fn assemble_missing_next_id_uses_the_live_floor() {
+        let loaded = assemble(vec![(2, None)], vec![id_row(2)], Some(2), None, Some(1)).unwrap();
         assert_eq!(loaded.next_id, 3);
+    }
+
+    #[test]
+    fn assemble_rejects_an_unversioned_nonempty_world() {
+        let err = assemble(vec![(2, None)], vec![id_row(2)], Some(2), None, None).unwrap_err();
+        assert!(matches!(err, Error::MissingSchemaVersion));
+    }
+
+    #[test]
+    fn assemble_allows_an_unversioned_empty_database() {
+        let loaded = assemble(vec![], vec![], None, None, None).unwrap();
         assert_eq!(loaded.schema_version, SCHEMA_VERSION);
     }
 
@@ -685,9 +556,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unversioned_world_reads_as_current() {
-        // A world written before versioning existed has entity rows but no
-        // schema_version marker; it is read as the current version, not migrated.
+    async fn unversioned_nonempty_world_is_rejected() {
         let mut w = World::new();
         let mut b = EntityBuilder::new();
         b.add(Description("a thing".into()));
@@ -703,7 +572,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.load().await.unwrap().schema_version, SCHEMA_VERSION);
+        assert!(matches!(
+            store.load().await.unwrap_err(),
+            Error::MissingSchemaVersion
+        ));
     }
 
     #[tokio::test]

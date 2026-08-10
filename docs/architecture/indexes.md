@@ -72,13 +72,12 @@ indexes both keyed off `"xyz"`. Because the trigger names the *component*, one
 `Xyz` write emits one `ComponentChanged` that the maintainer fans out to every
 index over that component. The engine never learns the index registry exists.
 
-## Uniqueness is detected, not enforced
+## Buckets are always multi-valued
 
-A per-index `Policy` records whether a key is expected to identify one entity
-(`Unique`) or many (`Multi`, the default). A rebuilt read-model cannot intercept
-writes, so it cannot *enforce* uniqueness; `Unique` only enables `conflicts()`, an
-on-request scan reporting entities that share a key. Enforcement, if ever wanted, is
-an app rule at the write site, not the index's job.
+Every key maps to a slice of entities. The index is a rebuilt read model and cannot
+intercept writes, so it does not declare or pretend to enforce uniqueness. If an app
+needs a unique key, that invariant belongs at the write boundary; a diagnostic scan
+can be added with the first real consumer that needs one.
 
 ## The reference consumer
 
