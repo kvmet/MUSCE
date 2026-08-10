@@ -1,59 +1,51 @@
 # Networking and Sessions
 
-> Status: **transports, session attachment, durable embodiment, and WebSocket
-> reads built; parameter-aware offer/perform wire pending.** The raw TCP line-mode transport, the
-> transport-agnostic `Connection` abstraction, the commands-in/events-out pipe
-> (`musce_net`/`musce_proto`), and the session floor
-> (`@quit`/`@who`/`@help`/`@play`, auth stubbed) are implemented and wired into the
-> tick loop. The **WebSocket transport is built** as a second `Connection` behind
-> the same accept/serve path (both transports share one id counter and registry so
-> ids never collide). It carries the text line pipe *and* a **structured JSON
-> envelope** (`musce_proto::web`): the transport parses a `ClientMsg` into a typed
-> `Input` and serializes a `ServerMsg`, so the sim sees typed values while a telnet
-> client still speaks bare text. Entity ids cross this envelope as **strings**, not
-> JSON numbers (a browser's `JSON.parse` yields IEEE doubles, so a full-width or
-> later sharded/URI id would lose precision as a number); the app formats an id out
-> and parses it back at the dispatch boundary. The envelope's types **generate the
+> Status: **transports, account/session attachment, durable embodiment, WebSocket
+> reads, and prototype pointing actions built; parameter-aware offer/perform wire
+> pending.** The raw TCP line-mode transport, the transport-agnostic `Connection`
+> abstraction, the commands-in/events-out pipe (`musce_net`/`musce_proto`), and the
+> authenticated session floor are implemented and wired into the tick loop. The
+> **WebSocket transport is built** as a second `Connection` behind the same
+> accept/serve path (both transports share one id counter and registry so ids never
+> collide). It carries the text line pipe *and* a **structured JSON envelope**
+> (`musce_proto::web`): the transport parses a `ClientMsg` into a typed `Input` and
+> serializes a `ServerMsg`, so the sim sees typed messages while a telnet client
+> still speaks bare text. Entity ids cross this envelope as **strings**, not JSON
+> numbers (a browser's `JSON.parse` yields IEEE doubles, so a full-width or later
+> sharded/URI id would lose precision as a number); the app formats an id out and
+> parses it back at the dispatch boundary. The envelope's types **generate the
 > client's TypeScript** via `ts-rs` behind a feature-gated derive, so the wire
-> shapes cannot drift and no ts-rs enters a normal engine build. On that envelope
-> the **read pair is built**: a
-> `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
-> dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
-> by the app's `snapshot`/`offers` seams (see
-> [engine-and-app.md](engine-and-app.md)). **Pointing actions use typed partial
-> grounding**: a `Perform` request carries an affordance id plus typed input
-> parameter bindings and enters the verb/action path through `dispatch_perform` on the app's
-> `perform` seam. The app gates supplied entity ids through the actor's perceivable
-> set (the locus subtree plus that locus's exits, the scope the reads project), so a
-> click is no more powerful than a typed verb; a physical manipulation may
-> additionally require reachability, possession, or control, which perception
-> alone does not grant. An incomplete substitution returns the inputs still
-> needed rather than attempting the act. Results are never caller-supplied; a
-> successful response returns the handler's typed result bindings. The acting
-> entity is resolved from the authenticated session's live embodiment and never
-> appears as a client-controlled binding. A complete grounded action then routes
-> through
-> the app's shared narrating perform (`act::perform_narrated`), the same one a typed
-> verb and an autonomous agent use, so a click narrates to the actor and the room
-> alike (a co-located text player reads the third-person line at once, not on their
-> next snapshot). First-person is entity-addressed so the one narrator serves a
-> connless NPC too; see [actions.md](actions.md). The dispatcher routes bare commands to an embodiment frame through
-> the connection's **session attachment**: `@play` records which *character* the
-> connection drives as session state on the floor, and the driven actor is
-> resolved live from that character's `Focus` (`actor =
-> focus_of(character).unwrap_or(character)`); the audience resolver consumes a
-> conn->actor index derived the same way (see [actions.md](actions.md)). The
-> persisted `Controls` and `Focus` relations make embodiment durable: a character
-> piloting a robot survives a reboot still piloting it. Dynamic possession (the
-> `@possess`/`@unpossess` admin verbs) is built: staff can establish and tear down
-> a `Controls` edge at runtime. The **web pointing client** (`webclient/`) is built
-> on this envelope: a Svelte app that programs against a *push* `Conn` (send a
-> `ClientMsg`, subscribe to the `ServerMsg` stream), bootstraps by embodying a guest
-> (`@play`) then requesting a snapshot, and re-reads after each act (a clicked
-> perform or a typed command, since the server pushes no state deltas), dropping a
-> selection whose entity the new snapshot no longer carries (a room change). The SSH transport, char/raw input-mode switching, real
-> accounts/auth, and modal overlays remain proposed; the rest of this document
-> records that design.
+> shapes cannot drift and no ts-rs enters a normal engine build.
+>
+> On that envelope the **read pair is built**: a `Query` (snapshot / offers)
+> round-trips the sim thread as a pure read (no verb dispatch, no mutation, no
+> audience) and returns an `Outgoing::Reply`, projected by the app's
+> `snapshot`/`offers` seams (see [engine-and-app.md](engine-and-app.md)). The built
+> pointing path still uses the prototype affordance vocabulary: `Perform { name,
+> focus, with }` carries an affordance name, the clicked entity id, and an optional
+> second entity id; `Offer` returns the affordance name plus a fixed status, including
+> `NeedsRole` when that second selection is required. Sim dispatch keeps the three
+> perform fields together as one `Grounded` value and forwards it intact to the
+> app's `PerformHandler`; there are no affordance ids, typed parameter bindings, or
+> result bindings on the wire yet. The app gates supplied entity ids through the
+> actor's perceivable set (the locus subtree plus that locus's exits, the scope the
+> reads project), and a physical manipulation may additionally require
+> reachability, possession, or control. A complete prototype act routes through the
+> app's shared narrating performer, so typed verbs, clicks, and autonomous agents
+> narrate one act one way. The acting entity is resolved from the authenticated
+> session's live embodiment and never appears as a client-controlled binding.
+>
+> The dispatcher routes bare commands through the connection's **session
+> attachment**. `@play` records which character the connection drives, and the
+> driven actor resolves live from that character's `Focus`; the audience resolver
+> consumes the same derived connection-to-actor mapping. Persisted `Controls` and
+> `Focus` make embodiment durable, and dynamic `@possess`/`@unpossess` is built.
+> The **web pointing client** (`webclient/`) is built on the prototype envelope: it
+> bootstraps by embodying a guest, reads snapshots and offers, performs clicked or
+> typed acts, and refreshes after each act. SSH, char/raw input-mode switching,
+> encrypted remote authentication, and modal overlays remain proposed; password
+> operations fail closed for non-loopback connections until a transport can attest
+> encryption.
 
 ## Three layers, and the thread boundary
 
@@ -77,8 +69,9 @@ Every transport reduces to a bidirectional stream plus capability flags (line- v
   produces from a typed `ServerMsg`. This is why the transport boundary yields
   `Input` (not raw strings): each transport owns its own framing and parsing, and
   the sim only ever sees typed values. Carries text commands, the structured read
-  pair, and perform-by-id. The envelope's ids are strings and its types generate
-  the client's TypeScript via `ts-rs` (see the status blockquote).
+  pair, and prototype perform requests carrying entity ids. The envelope's entity
+  ids are strings and its types generate the client's TypeScript via `ts-rs` (see
+  the status blockquote).
   Sim dispatch groups the decoded affordance name, focus id, and optional second id
   as one `Grounded` value and forwards it intact to the app's `PerformHandler`; the
   app, not the transport, maps those selections onto affordance roles.
@@ -212,10 +205,13 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
 2. **WebSocket built; SSH proposed.** Both behind the same `Connection`
    abstraction. WebSocket also carries the structured JSON envelope, the
-   snapshot/offers read pair, and perform-by-id (a `Perform` request grounds clicked
-   act through `dispatch_perform`, then routes it through the shared narrating
-   perform, so verbs, clicks, and NPC acts all narrate one act one way).
-3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.
+   snapshot/offers read pair, and the prototype perform path (a `Perform { name,
+   focus, with }` request reaches `dispatch_perform`, then routes through the shared
+   narrating performer so verbs, clicks, and NPC acts narrate one act one way).
+3. **Account/session floor and password authentication built.** Account creation,
+   login, self-service password changes, capability resolution, and `@play` are
+   wired. Password-bearing commands are loopback-only until encrypted transport is
+   available.
 4. **Embodiment**, in sub-steps (the model is spelled out under "Sessions and
    control" above):
    - **Built.** The session attachment: `@play` records which actor a connection
