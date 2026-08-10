@@ -80,7 +80,11 @@ These hold across every subsystem:
   derived locus, grounding and substitution, guards, resolution contracts, gates,
   and schema validation. *(Built: canonical identifiers, typed values and
   input/result declarations, formulas/effects, partial bindings, grounded actions,
-  and outcomes. Evaluation, registration, execution, and migration pending.)*
+  outcomes, typed state-reader registration, closed-condition evaluation, finite
+  symbol domains, and qualitative gauge regions. Affordance registration,
+  execution, and migration pending.)*
+- [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
+  additive canonical build, cutover boundary, and legacy removal condition.
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
   description language, generated typed handler interface, closed-vocabulary
   boundary, and path to future non-Rust front ends. *(Target design specified;
@@ -91,8 +95,9 @@ These hold across every subsystem:
   pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
   raw normalized readings, registered qualitative regions, strict directional
-  effects, and bounded QSIM regression. *(Built: the foundational value vocabulary;
-  evaluator registration, regions, effects, and planner integration pending.)*
+  effects, and bounded QSIM regression. *(Built: value vocabulary, evaluator and
+  region registration, and one-sided threshold evaluation; effect contracts,
+  oracles, and planner integration pending.)*
 - [offers.md](offers.md): parameter-aware affordance enumeration for pointing
   clients, partial typed input substitutions, result declarations,
   missing-input picks, and the generic perform wire shape. *(Target
@@ -180,7 +185,8 @@ Built:
   `Ctx`), the foundational gauge value algebra (`GaugeId`/`GaugeLevel`/
   `GaugeDirection`/`GaugeTarget`), and the additive canonical affordance schema
   substrate (`schema::{AffordanceId, Parameter, Value, Formula, Effect,
-  GroundAction, ActionOutcome, ...}`),
+  GroundAction, ActionOutcome, ...}`) with typed state readers and qualitative
+  gauge evaluation (`state::StateRegistry`),
   and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface an app's verb handlers
   program against), `SystemCtx` and the `System` type (the tick-loop analogue of
@@ -232,9 +238,9 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Affordance/agency integration: evaluation and immutable registration of the
-  built typed schema/action substrate, deterministic and contested execution
-  contracts, registered qualitative gauge regions, the
+- Affordance/agency integration: immutable affordance registration over the built
+  typed schema and state evaluator, deterministic and contested execution
+  contracts, directional gauge-effect verification, the
   Rust `affordance!` authoring macro, effect-goal unification, QSIM regression, and
   parameter-aware pointing wire forms. The target design is in
   `affordances.md`, `affordance-authoring.md`, `affordance-contracts.md`,

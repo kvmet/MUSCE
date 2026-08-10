@@ -51,6 +51,10 @@ a mutable component borrow or callback can run. Their absence contract is exact:
 
 The relation guard depends on every app relation being registered before load or
 seed, as required by [engine-and-app.md](engine-and-app.md).
+`is_component_registered<C>` and `is_relation_registered<R>` expose that startup
+fact read-only so assembled derived-state vocabularies can validate their typed
+reader prerequisites before serving queries, rather than interpreting missing
+wiring as absent state.
 
 ## Bulk mutation boundary
 

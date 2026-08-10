@@ -55,6 +55,12 @@ pub mod action {
     pub mod schema {
         pub use musce_action::schema::*;
     }
+
+    /// Typed state readers and qualitative gauge evaluation for canonical
+    /// affordance conditions.
+    pub mod state {
+        pub use musce_action::state::*;
+    }
 }
 
 /// Durable storage. `WorldStore` is the app-facing handle, chosen by URL scheme

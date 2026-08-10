@@ -61,6 +61,7 @@ read_query_tuple!(A, B, C, D, E, F);
 /// Type-erased per-relation cleanup hooks, populated by `register_relation`.
 #[derive(Default, Clone)]
 struct RelationRegistry {
+    registered: HashSet<TypeId>,
     despawn: Vec<DespawnHandler>,
     validate: Vec<ValidateHandler>,
     rebuild: Vec<RebuildHandler>,
@@ -223,6 +224,7 @@ impl World {
         // The live mutation paths must refuse forward-link tags; they bypass the
         // cycle check and reverse-index bookkeeping that `relate` owns.
         self.components.mark_relation_tag(R::TARGET_TAG);
+        self.relations.registered.insert(TypeId::of::<R>());
         self.relations.despawn.push(despawn_relation::<R>);
         self.relations.validate.push(validate_relation::<R>);
         self.relations.rebuild.push(rebuild_relation::<R>);
@@ -232,6 +234,13 @@ impl World {
         self.relations
             .unrelate
             .insert(R::TARGET_TAG, unrelate_by_tag::<R>);
+    }
+
+    /// Whether startup wiring registered relation type `R`. Lets an assembled
+    /// affordance state vocabulary fail closed before evaluating a typed reader
+    /// against a world that never registered the corresponding relation.
+    pub fn is_relation_registered<R: Relation>(&self) -> bool {
+        self.relations.registered.contains(&TypeId::of::<R>())
     }
 
     // --- identity / lifecycle -------------------------------------------

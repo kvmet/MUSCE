@@ -1,36 +1,24 @@
 # Affordances, Conditions, and Effects
 
-> Status: **canonical schema/value substrate built; evaluation and integration
-> pending.** `musce_action::schema` now provides stable symbolic affordance and
+> Status: **canonical schema and state evaluation built; registration/execution
+> integration pending.** `musce_action::schema` provides stable symbolic affordance and
 > parameter ids, separate dense parameter slots, typed values, input/result
 > declarations, canonical terms, formulas, effects, resolution modes, partial
-> bindings, grounded actions, and outcomes. State-vocabulary evaluation, schema
-> registration, the shared performer, the `affordance!` macro, wire migration, and
-> planner integration remain pending. The optional `musce_agency` planner consumes
-> this representation but does not own it.
+> bindings, grounded actions, and outcomes. `musce_action::state` registers typed
+> relation/component readers, finite symbol domains, and qualitative gauge readers,
+> validates their world wiring, and evaluates the closed condition algebra with
+> explicit errors for unknown vocabulary. Affordance schema registration, the shared
+> performer, the `affordance!` macro, wire migration, and planner integration remain
+> pending. The optional `musce_agency` planner consumes this representation but does
+> not own it.
 
 ## Built prototype during migration
 
-The running engine still carries the smaller prototype that the target replaces.
-`musce_action` exposes `Term::{Const, Var}`, `Predicate::{Related, Tag}`, `Clause`,
-ordered `Guard`s, a fixed `Frame { actor, object, target }`, and
-`Affordance { name, guards, effect }`. There is no affordance registry or stable
-affordance id. `musce_ref` constructs five affordances (`take`, `drop`, `put`,
-`eat`, `go`) and its performer, narrator, offer mapper, and planner tables join
-them by name. The web wire remains `Perform { name, focus, with }`.
-
-The canonical substrate is additive beside that runtime. Its ids are validated
-symbolic names suitable for schemas and the wire; parameter `slot` is a separate
-dense array index, so internal layout cannot silently rename a binding. The types
-are directly constructible for engine tests now and become the macro's lowering
-target later. They do not yet evaluate or execute an affordance.
-
-`musce_agency` is also real, not merely proposed: its bounded add-only regression
-planner supports at most one free variable, its driver replans around vetoed steps
-and verifies the live goal after committed beats, and two reference NPC systems
-exercise it. This prototype is frozen at the existing five affordances while the
-typed registry below replaces it; it is migration source, not a second design to
-extend.
+The fixed-frame runtime and add-only planner remain built and exercised while the
+canonical representation lands additively. Their exact shapes, current consumers,
+freeze boundary, and removal condition live in
+[affordance-migration.md](affordance-migration.md). They are migration source, not
+a second design to extend.
 
 An **affordance** describes an attempt an actor can make: the values that identify
 the attempt, the world conditions under which it is applicable, the state changes
@@ -303,3 +291,5 @@ in [affordance-contracts.md](affordance-contracts.md#schema-registration).
   ultimately commits.
 - [gauges.md](gauges.md): normalized readings, targets, and directional effects.
 - [offers.md](offers.md): partial grounding for pointing clients.
+- [affordance-migration.md](affordance-migration.md): the shipped prototype,
+  additive construction sequence, cutover boundary, and removal condition.

@@ -1,8 +1,10 @@
 # Gauges
 
-> Status: **value vocabulary built; evaluation pending.** `GaugeId`, `GaugeLevel`,
-> `GaugeDirection`, and `GaugeTarget` are built and tested. The evaluator registry,
-> qualitative regions, predicates, effects, and planner integration remain pending.
+> Status: **value vocabulary, evaluator registration, and qualitative conditions
+> built.** `GaugeId`, `GaugeLevel`, `GaugeDirection`, and `GaugeTarget` are built;
+> `StateRegistry` registers point evaluators and total ordered `GaugeRegion`s, maps
+> readings into regions, and evaluates canonical one-sided thresholds. Directional
+> effect contracts, executable oracles, and planner integration remain pending.
 
 Component presence and relations describe categorical facts. They do not describe
 an ordered quantity such as health, hunger, temperature, or affinity without
@@ -231,6 +233,11 @@ The app registers each `GaugeId` with:
 Registration gives conditions and effects a statically comparable id while the
 evaluator remains app code. An unknown gauge id is a schema error, not a false
 reading.
+
+The built `StateRegistry::register_gauge` rejects empty, overlapping, gapped, or
+duplicate region declarations and requires a total cover from `GaugeLevel::MIN` to
+`GaugeLevel::MAX`. A registered evaluator returning `None` means the gauge does not
+apply to that entity; an unknown gauge or region is an evaluation error.
 
 ## Planner and execution obligations
 
