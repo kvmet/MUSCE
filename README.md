@@ -81,4 +81,4 @@ cargo test
 
 ## License
 
-See [LICENSE](LICENSE).
+MUSCE is licensed under the [Mozilla Public License 2.0](LICENSE).

@@ -2,6 +2,7 @@
 name = "musce_core"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 hecs = { workspace = true }
