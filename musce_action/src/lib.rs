@@ -26,6 +26,7 @@ mod dispatch;
 mod event;
 mod executor;
 mod gauge;
+mod offers;
 pub mod perform;
 mod registry;
 pub mod schema;
@@ -44,6 +45,7 @@ pub use dispatch::{
 pub use event::{Audience, Event};
 pub use executor::{Action, ActionKind, ExecError, execute};
 pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
+pub use offers::{ClassifiedOffer, GroundingError, InputCandidates, OfferProposal, OfferStatus};
 pub use perform::{
     AdapterError, AffordanceDefinition, AffordanceHandler, AffordanceRegistry,
     AffordanceRegistryBuilder, EffectKind, HandlerOutcome, NarrationCtx, PerformCtx, PerformError,

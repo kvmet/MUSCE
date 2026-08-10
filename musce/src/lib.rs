@@ -42,8 +42,9 @@ pub mod action {
     pub use musce_action::{Actors, Audience, Event, Outbound, resolve};
     pub use musce_action::{
         AdapterError, AffordanceDefinition, AffordanceHandler, AffordanceRegistry,
-        AffordanceRegistryBuilder, EffectKind, HandlerOutcome, NarrationCtx, PerformCtx,
-        PerformError, PerformOutcome, Refusal, RegistryError, SchemaError, TypedHandlerOutcome,
+        AffordanceRegistryBuilder, ClassifiedOffer, EffectKind, GroundingError, HandlerOutcome,
+        InputCandidates, NarrationCtx, OfferProposal, OfferStatus, PerformCtx, PerformError,
+        PerformOutcome, Refusal, RegistryError, SchemaError, TypedHandlerOutcome,
     };
     pub use musce_action::{
         Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,

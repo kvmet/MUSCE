@@ -430,6 +430,14 @@ impl StateRegistry {
             .is_some_and(|members| members.contains(value.value()))
     }
 
+    pub(crate) fn first_symbol(&self, domain: &SymbolDomainId) -> Option<SymbolValue> {
+        self.symbols
+            .get(domain)
+            .and_then(|members| members.first())
+            .cloned()
+            .map(|member| SymbolValue::new(domain.clone(), member))
+    }
+
     /// Prove that every typed state reader was also registered on this world.
     pub fn validate_world(&self, world: &World) -> Result<(), StateActivationError> {
         let mut missing = Vec::new();

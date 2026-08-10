@@ -106,8 +106,8 @@ These hold across every subsystem:
   oracles, and planner integration pending.)*
 - [offers.md](offers.md): parameter-aware affordance enumeration for pointing
   clients, partial typed input substitutions, result declarations,
-  missing-input picks, and the generic perform wire shape. *(Target
-  representation and wire update specified.)*
+  missing-input picks, and the generic perform wire shape. *(Built: canonical
+  partial-grounding and offer classification; app/host/wire cutover pending.)*
 - [agency/](agency/README.md): autonomous behavior on the shared affordance layer:
   drives, goal arbitration, backward planning over comparable effects, knowledge-
   scoped parameter binding, QSIM gauges, and grounded execution with replanning.

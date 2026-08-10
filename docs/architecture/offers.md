@@ -1,9 +1,9 @@
 # Offers: Partial Grounding for Pointing Clients
 
-> Status: **target representation specified; implementation and wire update
-> pending.** Offers expose an affordance signature plus a partial typed input
-> substitution. The client supplies missing inputs; successful execution may
-> return typed results.
+> Status: **canonical partial-grounding validation and classification built;
+> app/host/wire cutover pending.** Offers expose an affordance signature plus a
+> partial typed input substitution. The client supplies missing inputs;
+> successful execution may return typed results.
 
 A text parser starts with a verb and maps noun phrases onto affordance parameters.
 A pointing client starts with an entity and asks which affordances can accept it.
@@ -155,6 +155,14 @@ app owns:
 
 The division keeps the wire generic without teaching the engine what a chest,
 exit, picture, or fastener means.
+
+`AffordanceRegistry::classify_offer` is the built engine half. It validates named
+bindings and app-supplied candidates against the registered signature, caller
+authority, value sorts, entity liveness, and symbol domains. It evaluates each
+guard as soon as every input that guard references is bound, reports the earliest
+currently provable veto, and otherwise distinguishes `Needs` from `Available`.
+The app still decides which `OfferProposal`s and candidate values enter that
+classifier; candidates are presentation hints and never grant perform authority.
 
 ## Relation to the other docs
 
