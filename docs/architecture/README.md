@@ -78,7 +78,9 @@ These hold across every subsystem:
 - [affordances.md](affordances.md): the engine-owned canonical affordance
   representation: actor plus typed inputs/results, functional state slots,
   derived locus, grounding and substitution, guards, resolution contracts, gates,
-  and schema validation. *(Target representation specified; implementation pending.)*
+  and schema validation. *(Built: canonical identifiers, typed values and
+  input/result declarations, formulas/effects, partial bindings, grounded actions,
+  and outcomes. Evaluation, registration, execution, and migration pending.)*
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
   description language, generated typed handler interface, closed-vocabulary
   boundary, and path to future non-Rust front ends. *(Target design specified;
@@ -162,7 +164,8 @@ Built:
   authorization.md.
 - `musce_net`: raw TCP line-mode transport behind a transport-agnostic
   `Connection`, plus the commands-in/events-out pipe and event router. The
-  session floor (`@quit`/`@who`/`@help`/`@play`) is reachable; auth is stubbed.
+  authenticated session floor lives above it in `musce_host`; password-bearing
+  commands are loopback-only until encrypted transport is available.
 - `musce_proto`: the wire vocabulary (`Command`/`Input`, `Outgoing` with its
   connection-bound `Delivery`, `EventKind`, `ConnectionId`, `Capabilities`), a
   dependency-free leaf shared by net and host. The world-addressed authoring form
@@ -175,7 +178,9 @@ Built:
   (`CapId`/`CapSet`/`Verdict`/`permits`, the `CapRegistry` name->id interner, and
   `Verdict::resolved` carrying the quell rule, plus the verdict carried read-only on
   `Ctx`), the foundational gauge value algebra (`GaugeId`/`GaugeLevel`/
-  `GaugeDirection`/`GaugeTarget`),
+  `GaugeDirection`/`GaugeTarget`), and the additive canonical affordance schema
+  substrate (`schema::{AffordanceId, Parameter, Value, Formula, Effect,
+  GroundAction, ActionOutcome, ...}`),
   and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface an app's verb handlers
   program against), `SystemCtx` and the `System` type (the tick-loop analogue of
@@ -227,9 +232,9 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Affordance/agency representation: typed action-local inputs/results, canonical
-  actions and outcomes, functional relation and derived-locus slots, deterministic
-  and contested execution contracts, registered qualitative gauge regions, the
+- Affordance/agency integration: evaluation and immutable registration of the
+  built typed schema/action substrate, deterministic and contested execution
+  contracts, registered qualitative gauge regions, the
   Rust `affordance!` authoring macro, effect-goal unification, QSIM regression, and
   parameter-aware pointing wire forms. The target design is in
   `affordances.md`, `affordance-authoring.md`, `affordance-contracts.md`,

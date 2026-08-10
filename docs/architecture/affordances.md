@@ -1,10 +1,13 @@
 # Affordances, Conditions, and Effects
 
-> Status: **target representation specified; implementation pending.** The
-> engine-owned affordance vocabulary will use typed input/result parameters,
-> functional state slots, grounded substitutions, explicit resolution contracts,
-> and a Rust `affordance!` authoring macro. The optional `musce_agency` planner
-> consumes this representation but does not own it.
+> Status: **canonical schema/value substrate built; evaluation and integration
+> pending.** `musce_action::schema` now provides stable symbolic affordance and
+> parameter ids, separate dense parameter slots, typed values, input/result
+> declarations, canonical terms, formulas, effects, resolution modes, partial
+> bindings, grounded actions, and outcomes. State-vocabulary evaluation, schema
+> registration, the shared performer, the `affordance!` macro, wire migration, and
+> planner integration remain pending. The optional `musce_agency` planner consumes
+> this representation but does not own it.
 
 ## Built prototype during migration
 
@@ -15,6 +18,12 @@ ordered `Guard`s, a fixed `Frame { actor, object, target }`, and
 affordance id. `musce_ref` constructs five affordances (`take`, `drop`, `put`,
 `eat`, `go`) and its performer, narrator, offer mapper, and planner tables join
 them by name. The web wire remains `Perform { name, focus, with }`.
+
+The canonical substrate is additive beside that runtime. Its ids are validated
+symbolic names suitable for schemas and the wire; parameter `slot` is a separate
+dense array index, so internal layout cannot silently rename a binding. The types
+are directly constructible for engine tests now and become the macro's lowering
+target later. They do not yet evaluate or execute an affordance.
 
 `musce_agency` is also real, not merely proposed: its bounded add-only regression
 planner supports at most one free variable, its driver replans around vetoed steps

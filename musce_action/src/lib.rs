@@ -25,6 +25,7 @@ mod event;
 mod executor;
 mod gauge;
 mod registry;
+pub mod schema;
 
 use musce_core::{EntityId, World};
 

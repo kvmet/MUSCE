@@ -49,6 +49,12 @@ pub mod action {
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
     pub use musce_action::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
+
+    /// Canonical typed affordance schemas and grounded values. Additive during the
+    /// fixed-frame prototype migration.
+    pub mod schema {
+        pub use musce_action::schema::*;
+    }
 }
 
 /// Durable storage. `WorldStore` is the app-facing handle, chosen by URL scheme
