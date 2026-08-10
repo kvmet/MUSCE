@@ -33,13 +33,22 @@ and is reserved for the rule-bypassing admin path. (See `sequences.md`.)
 
 ## Dispatch: a command table the runtime invokes
 
-The parser is a **registry**, not one growing `match`. Verbs register into a
-command table keyed by name, looked up by longest matching prefix so
-abbreviations fall out for free (`n` → `north`, `inv` → `inventory`). Each entry
-is a small parse function plus its permission gate; verbs group by module
-(movement, combat, communication, building) and register themselves, so adding a
-verb is a local change, not an edit to a central switch. Lookup is O(verb length)
-and stays flat from fifty verbs to thousands.
+The parser is a **registry**, not one growing `match`. Verbs register into an
+ordered command table. Lookup prefers an exact name, then the first
+registered verb whose name starts with the input, so abbreviations fall out for
+free (`n` → `north`, `inv` → `inventory`) and registration order is the explicit
+tie-break for ambiguous prefixes. Each entry is a small parse function plus its
+permission gate; verbs group by module (movement, combat, communication, building)
+and register themselves, so adding a verb is a local change, not an edit to a
+central switch. The current `Vec` performs at most two linear scans—exact, then
+prefix—so lookup is O(verbs × name length). A trie or auxiliary exact-name map is
+deferred until command-count measurements justify the added structure.
+
+Registration is startup schema, not runtime input: `register` asserts that a name
+is nonempty, already lowercase, contains no parser-recognized whitespace, and is
+not an exact duplicate. Those states would otherwise be unreachable or shadowed.
+Ambiguous prefixes are not rejected because the documented first-registration
+tie-break makes them deliberate.
 
 Two things keep a large command surface cheap:
 

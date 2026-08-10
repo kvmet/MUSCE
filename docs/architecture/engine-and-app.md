@@ -180,7 +180,9 @@ moving files.
   permission `Gate` (`Open` for in-app verbs, `Cap` for capability-gated verbs), a
   handler. The lookup (exact name, then first registered prefix), the gate check,
   and `dispatch_command` (which both the embodiment and admin frames run through)
-  stay engine mechanism; the verbs and their parsing are the app's.
+  stay engine mechanism; the verbs and their parsing are the app's. Registration
+  asserts that each startup declaration is a nonempty lowercase parser word and is
+  not an exact duplicate; ambiguous prefixes remain intentional and use order.
 - **`Ctx` and a public emit API.** The handler context takes one `Caller` bundle
   (actor, connection, account-scoped `Verdict`) beside `&mut World`, preventing
   those inputs from drifting. It exposes read-only `verdict`/`permits`/`is_su`

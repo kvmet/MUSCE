@@ -79,8 +79,24 @@ impl CommandTable {
     }
 
     /// Register a verb: its name, its permission gate, and its handler. Order
-    /// matters for abbreviation ties (see the type docs).
+    /// matters for abbreviation ties (see the type docs). Names are boot-time
+    /// declarations and must already be nonempty, lowercase parser words; duplicate
+    /// exact names are unreachable and therefore rejected.
     pub fn register(&mut self, name: &'static str, gate: Gate, handler: Handler) {
+        assert!(!name.is_empty(), "command name must not be empty");
+        assert!(
+            !name.chars().any(char::is_whitespace),
+            "command name {name:?} must be one parser word"
+        );
+        assert_eq!(
+            name,
+            name.to_lowercase(),
+            "command name {name:?} must be lowercase"
+        );
+        assert!(
+            !self.verbs.iter().any(|verb| verb.name == name),
+            "command name {name:?} is already registered"
+        );
         self.verbs.push(Verb {
             name,
             gate,
@@ -189,14 +205,42 @@ mod tests {
     use musce_core::{Description, Locus};
     use musce_proto::{ConnectionId, Delivery, EventKind};
 
-    /// Two test verbs over the public emit API, standing in for app content so
-    /// the engine routing is exercised without depending on a real app. `ping`
-    /// is registered before `pet` so the `p` prefix resolves to `ping`.
+    /// Test verbs over the public emit API, standing in for app content so the
+    /// engine routing is exercised without depending on a real app. `ping` is
+    /// registered first so the `p` prefix resolves to it; `petal` precedes `pet`
+    /// so the exact-name test has a real competing prefix.
     fn table() -> CommandTable {
         let mut t = CommandTable::new();
         t.register("ping", Gate::Open, |c, _| c.feedback("pong"));
+        t.register("petal", Gate::Open, |c, _| c.feedback("petals"));
         t.register("pet", Gate::Open, |c, _| c.feedback("purr"));
         t
+    }
+
+    #[test]
+    #[should_panic(expected = "must not be empty")]
+    fn registration_rejects_an_empty_name() {
+        CommandTable::new().register("", Gate::Open, |_, _| {});
+    }
+
+    #[test]
+    #[should_panic(expected = "one parser word")]
+    fn registration_rejects_whitespace() {
+        CommandTable::new().register("look here", Gate::Open, |_, _| {});
+    }
+
+    #[test]
+    #[should_panic(expected = "must be lowercase")]
+    fn registration_rejects_non_normalized_case() {
+        CommandTable::new().register("Look", Gate::Open, |_, _| {});
+    }
+
+    #[test]
+    #[should_panic(expected = "already registered")]
+    fn registration_rejects_an_exact_duplicate() {
+        let mut table = CommandTable::new();
+        table.register("look", Gate::Open, |_, _| {});
+        table.register("look", Gate::Open, |_, _| {});
     }
 
     fn world_with_player() -> (World, Actors, EntityId, ConnectionId) {
@@ -247,10 +291,10 @@ mod tests {
     #[test]
     fn exact_name_beats_prefix() {
         let (mut world, actors, actor, conn) = world_with_player();
-        // "pet" matches exactly even though "ping" also starts with "pe"... it
-        // does not, but "pet" is exact so it wins regardless of order.
+        // `petal` is registered before `pet`, but the exact pass must still win.
         let out = texts(&mut world, &actors, actor, conn, "pet");
         assert!(out.iter().any(|t| t.contains("purr")));
+        assert!(!out.iter().any(|t| t.contains("petals")));
     }
 
     #[test]
