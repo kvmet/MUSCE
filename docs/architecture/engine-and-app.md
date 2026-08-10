@@ -95,7 +95,7 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   precede deserialization. Engine types register themselves in `World::new`; this
   is where an app adds its own, so they round-trip through persistence like any
   built-in. The reference app registers its kind markers (`item`, `creature`,
-  `container`, a player avatar, an exit), its exit-connectivity relations
+  `container`, a player avatar, a gift recipient, an exit), its exit-connectivity relations
   (`LeadsFrom`/`LeadsTo`), and its behavior components (`Wander`, `Locked`,
   `Aliases`, the sequence types) here. An app-defined relation must be registered
   before any world that uses it is built or loaded, since registration is what

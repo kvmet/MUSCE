@@ -1,7 +1,7 @@
 # Affordances, Conditions, and Effects
 
 > Status: **canonical schema, state evaluation, registration, and execution built;
-> consumer migration pending.** `musce_action::schema` provides stable symbolic affordance and
+> consumer migration underway.** `musce_action::schema` provides stable symbolic affordance and
 > parameter ids, separate dense parameter slots, typed values, input/result
 > declarations, canonical terms, formulas, effects, resolution modes, partial
 > bindings, grounded actions, and outcomes. `musce_action::state` registers typed
@@ -12,7 +12,8 @@
 > authority-, grounding-, guard-, result-, and post-commit-narration performer.
 > The host builds the app registry once after world-type registration and injects
 > it into every command and system context. The `affordance!` macro, executable effect oracles, wire
-> migration, and planner integration remain pending.
+> migration, and planner integration remain pending. The reference `give` verb is
+> the first canonical consumer.
 
 ## Built prototype during migration
 

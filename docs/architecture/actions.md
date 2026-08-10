@@ -1,7 +1,7 @@
 # Actions and the Executor
 
 > Status: **structural vocabulary and canonical grounded-action performer built;
-> typed narration and runtime registry injection built, consumer migration pending.** The engine
+> typed narration and runtime registry injection built, consumer migration underway.** The engine
 > owns the structural executor
 > (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
@@ -144,6 +144,10 @@ are one `Move`:
 | `@create <kind>` | `Create` | spawn, then `Move` into my room | admin |
 | `@destroy <t>` | `Destroy` | `despawn(t)` | admin |
 | `@dig <dir> [name]` | `Create` + `Relate` | spawn a room (a `Locus`), then `Create` + `Relate` an exit entity each way | admin |
+
+`give` is the first row migrated end to end to the canonical affordance registry;
+its exact contract is recorded in
+[affordance-migration.md](affordance-migration.md).
 
 Communication mutates nothing, so it is not in the action vocabulary: mutation
 funnels through `execute` (which emits no perception events), while output flows

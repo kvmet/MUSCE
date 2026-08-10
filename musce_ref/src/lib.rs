@@ -7,6 +7,7 @@
 
 mod act;
 mod admin;
+mod affordances;
 pub mod agency;
 mod consume;
 mod exits;
@@ -52,7 +53,7 @@ pub fn app() -> App {
             systems::death_cry,
         ],
         register: systems::register,
-        affordances: |world, _| musce::action::AffordanceRegistry::empty(world),
+        affordances: affordances::build,
         caps: Arc::new(caps),
         // This reference game gates no logins beyond the engine's own `Disabled`
         // hard gate, so it admits every authenticated account.

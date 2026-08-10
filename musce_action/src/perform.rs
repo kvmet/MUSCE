@@ -19,7 +19,7 @@ use crate::schema::{
     ActionOutcome, AffordanceId, AffordanceSchema, ComponentId, GroundAction, RelationId,
     Resolution, Value,
 };
-use crate::state::{EvaluationError, StateActivationError, StateRegistry};
+use crate::state::{EvaluationError, StateActivationError, StateRegistrationError, StateRegistry};
 
 mod validation;
 use validation::{effect_index, validate_schema};
@@ -74,6 +74,7 @@ impl std::error::Error for SchemaError {}
 pub enum RegistryError {
     DuplicateAffordance(AffordanceId),
     InvalidSchema(SchemaError),
+    StateRegistration(StateRegistrationError),
     StateActivation(StateActivationError),
 }
 
@@ -84,6 +85,7 @@ impl fmt::Display for RegistryError {
                 write!(f, "affordance {id} is already registered")
             }
             RegistryError::InvalidSchema(error) => error.fmt(f),
+            RegistryError::StateRegistration(error) => error.fmt(f),
             RegistryError::StateActivation(error) => error.fmt(f),
         }
     }
@@ -93,6 +95,7 @@ impl std::error::Error for RegistryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             RegistryError::InvalidSchema(error) => Some(error),
+            RegistryError::StateRegistration(error) => Some(error),
             RegistryError::StateActivation(error) => Some(error),
             RegistryError::DuplicateAffordance(_) => None,
         }
@@ -108,6 +111,12 @@ impl From<SchemaError> for RegistryError {
 impl From<StateActivationError> for RegistryError {
     fn from(value: StateActivationError) -> Self {
         Self::StateActivation(value)
+    }
+}
+
+impl From<StateRegistrationError> for RegistryError {
+    fn from(value: StateRegistrationError) -> Self {
+        Self::StateRegistration(value)
     }
 }
 

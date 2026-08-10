@@ -1,18 +1,16 @@
 //! Containers: moving a held thing into a container (`put`) or into someone's
 //! hands (`give`). Both are one `Move` under a game rule about what the
 //! destination accepts, the same shape as `take`/`drop`: `put` accepts anything
-//! marked `Container`, `give` accepts a being (a `Player` or `Creature`). The
-//! rule is game policy, kept in the handler, not in `execute`. See
+//! marked `Container`; `give` is the reference app's first typed canonical
+//! affordance. The rules are game policy, not part of `execute`. See
 //! `docs/architecture/actions.md`.
 
-use musce::action::{Action, Ctx, Frame, execute};
+use musce::action::{Action, Ctx, Frame, PerformOutcome, Refusal, execute};
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
 use crate::agency::RefWorldModel;
-use crate::commit_or_log;
-use crate::kinds::{Creature, Player};
-use crate::names::{self, Scope, display_name};
+use crate::names::{self, Scope};
 use crate::verbs::Outcome;
 
 /// Put `item` into `container`, subject to the put rule. The grounded action a
@@ -88,8 +86,8 @@ pub fn put(ctx: &mut Ctx, args: &str) {
 
 /// `give <item> to <someone>`: hand a held thing to a being in the room.
 /// Three-party like `wave at`: the actor, the recipient, and the rest of the room
-/// each read their own line. Only a `Player` or `Creature` accepts a gift; to
-/// stash a thing in an object, use `put`.
+/// each read their own line. The canonical guards decide whether the selected
+/// recipient accepts gifts; to stash a thing in an object, use `put`.
 pub fn give(ctx: &mut Ctx, args: &str) {
     let Some((item_query, who_query)) = split(args, " to ") else {
         ctx.emit_self(
@@ -113,47 +111,20 @@ pub fn give(ctx: &mut Ctx, args: &str) {
         );
         return;
     };
-    if !is_being(ctx.world, recipient) {
-        ctx.emit_self(EventKind::Feedback, "You can't give things to that.");
-        return;
-    }
-
-    let item_name = display_name(ctx.world, item);
-    let them = display_name(ctx.world, recipient);
-    let who = display_name(ctx.world, ctx.actor());
-    let room = ctx.world.enclosing_locus(ctx.actor());
-
-    // The recipient is a being in the room, not something the held item contains,
-    // so this move cannot cycle and has no reachable structural failure; a bug here
-    // is logged loud rather than silently shown to the player as a refusal.
-    if !commit_or_log(
-        ctx.world,
-        Action::Move {
-            entity: item,
-            into: recipient,
-        },
-        "give: move held item into the recipient",
-    ) {
-        ctx.emit_self(EventKind::Feedback, "You can't give that away.");
-        return;
-    }
-
-    ctx.emit_self(
-        EventKind::Feedback,
-        format!("You give {item_name} to {them}."),
-    );
-    ctx.emit_entity(
-        recipient,
-        EventKind::Narration,
-        format!("{who} gives you {item_name}."),
-    );
-    if let Some(room) = room {
-        ctx.emit_locus_except(
-            room,
-            EventKind::Narration,
-            format!("{who} gives {item_name} to {them}."),
-            &[ctx.actor(), recipient],
-        );
+    let action = crate::affordances::give_action(ctx.actor(), item, recipient);
+    match ctx.perform(&action) {
+        Ok(PerformOutcome::Committed(_)) => {}
+        Ok(PerformOutcome::Refused(Refusal::Guard { reason, .. }))
+        | Ok(PerformOutcome::Refused(Refusal::Resolution { reason })) => {
+            ctx.emit_self(EventKind::Feedback, reason);
+        }
+        Ok(PerformOutcome::Refused(Refusal::Gate)) => {
+            ctx.emit_self(EventKind::Feedback, "You aren't allowed to do that.");
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "canonical give failed");
+            ctx.emit_self(EventKind::Feedback, "You can't give that away.");
+        }
     }
 }
 
@@ -174,17 +145,12 @@ fn reachable(world: &World, actor: EntityId, query: &str) -> Option<EntityId> {
         .or_else(|| names::resolve(world, actor, Scope::Room, query))
 }
 
-/// A being that can be handed a thing: a player avatar or a creature. Rooms,
-/// items, and containers are not recipients (`put` covers stashing into objects).
-fn is_being(world: &World, entity: EntityId) -> bool {
-    world.has::<Player>(entity) || world.has::<Creature>(entity)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kinds::{Container, Creature, Item, Player};
-    use musce::action::{Audience, Ctx, Outbound};
+    use crate::kinds::{Container, Creature, GiftRecipient, Item, Player};
+    use musce::action::schema::{AffordanceId, Effect, Resolution, Term};
+    use musce::action::{Audience, Ctx, Outbound, PerformError, PerformOutcome, Refusal};
     use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, EntityId, Locus, Name, World};
@@ -211,6 +177,7 @@ mod tests {
         });
         let actor = spawn(&mut world, |b| {
             b.add(Player);
+            b.add(GiftRecipient);
             b.add(Name("a fighter".into()));
         });
         world.move_entity(actor, room).unwrap();
@@ -226,6 +193,7 @@ mod tests {
         world.move_entity(chest, room).unwrap();
         let rat = spawn(&mut world, |b| {
             b.add(Creature);
+            b.add(GiftRecipient);
             b.add(Name("a giant rat".into()));
         });
         world.move_entity(rat, room).unwrap();
@@ -251,7 +219,8 @@ mod tests {
 
         let mut out = Vec::new();
         let verdict = Verdict::guest();
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let caps = musce::action::CapRegistry::new();
+        let affordances = crate::affordances::build(world, &caps).unwrap();
         let mut ctx = Ctx::new(
             world,
             &affordances,
@@ -260,6 +229,30 @@ mod tests {
         );
         f(&mut ctx);
         out
+    }
+
+    fn perform_give(
+        world: &mut World,
+        actor: EntityId,
+        item: EntityId,
+        recipient: EntityId,
+    ) -> (Result<PerformOutcome, PerformError>, Vec<Outbound>) {
+        use musce::action::{Caller, Verdict};
+
+        let caps = musce::action::CapRegistry::new();
+        let affordances = crate::affordances::build(world, &caps).unwrap();
+        let verdict = Verdict::guest();
+        let mut out = Vec::new();
+        let result = {
+            let mut ctx = Ctx::new(
+                world,
+                &affordances,
+                Caller::new(actor, ConnectionId(1), &verdict),
+                &mut out,
+            );
+            ctx.perform(&crate::affordances::give_action(actor, item, recipient))
+        };
+        (result, out)
     }
 
     // Directed lines, whether connection- or entity-addressed: `put` narrates its
@@ -359,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn give_refuses_a_non_being_recipient() {
+    fn give_refuses_an_entity_without_the_recipient_capability() {
         let mut f = fixture();
         // The chest is a container, not someone who can be handed a thing.
         let out = run(&mut f.world, f.actor, |c| give(c, "coin to chest"));
@@ -369,6 +362,72 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("can't give things to that"))
         );
+    }
+
+    #[test]
+    fn give_schema_advertises_the_relation_it_commits() {
+        let f = fixture();
+        let caps = musce::action::CapRegistry::new();
+        let registry = crate::affordances::build(&f.world, &caps).unwrap();
+        let schema = registry
+            .schema(&AffordanceId::new(crate::affordances::GIVE).unwrap())
+            .unwrap();
+
+        assert_eq!(schema.resolution(), Resolution::Contested);
+        assert!(matches!(
+            schema.effects(),
+            [Effect::SetRelation {
+                source: Term::Input(item),
+                relation,
+                target: Term::Input(recipient),
+            }] if item.as_str() == "item"
+                && relation.as_str() == "contained_by"
+                && recipient.as_str() == "recipient"
+        ));
+    }
+
+    #[test]
+    fn canonical_give_guards_held_recipient_kind_and_shared_locus() {
+        let mut f = fixture();
+        f.world.move_entity(f.coin, f.room).unwrap();
+        let (not_held, _) = perform_give(&mut f.world, f.actor, f.coin, f.rat);
+        assert!(matches!(
+            not_held,
+            Ok(PerformOutcome::Refused(Refusal::Guard { index: 0, .. }))
+        ));
+
+        f.world.move_entity(f.coin, f.actor).unwrap();
+        let (not_recipient, _) = perform_give(&mut f.world, f.actor, f.coin, f.chest);
+        assert!(matches!(
+            not_recipient,
+            Ok(PerformOutcome::Refused(Refusal::Guard { index: 1, .. }))
+        ));
+
+        let elsewhere = spawn(&mut f.world, |b| {
+            b.add(Locus);
+            b.add(Description("another room".into()));
+        });
+        f.world.move_entity(f.rat, elsewhere).unwrap();
+        let (not_here, _) = perform_give(&mut f.world, f.actor, f.coin, f.rat);
+        assert!(matches!(
+            not_here,
+            Ok(PerformOutcome::Refused(Refusal::Guard { index: 3, .. }))
+        ));
+    }
+
+    #[test]
+    fn canonical_give_declares_the_reachable_cycle_as_contested() {
+        let mut f = fixture();
+        f.world.move_entity(f.rat, f.coin).unwrap();
+
+        let (result, out) = perform_give(&mut f.world, f.actor, f.coin, f.rat);
+
+        assert!(matches!(
+            result,
+            Ok(PerformOutcome::Refused(Refusal::Resolution { .. }))
+        ));
+        assert_eq!(f.world.container_of(f.coin), Some(f.actor));
+        assert!(out.is_empty(), "a refused mutation must not narrate");
     }
 
     #[test]

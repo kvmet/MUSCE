@@ -1,12 +1,15 @@
 # Affordance Execution Contracts
 
-> Status: **registration and shared execution built; behavioral oracles pending.**
+> Status: **registration, shared execution, and the first content oracle built;
+> general oracle harness pending.**
 > The immutable registry validates the structural and assembled-vocabulary rules,
 > builds the initial reverse effect index, and runs grounding, liveness, authority,
 > ordered guards, handlers, and result validation through one performer. The typed
 > adapter boundary enforces mutation-only execution followed by read-only
 > post-commit narration. Redundant-progress diagnostics, advertised-effect
-> verification, and executable content oracles remain pending.
+> verification and a reusable oracle harness remain pending. The reference
+> `give` tests falsify each canonical guard, verify its advertised containment
+> effect, and exercise its successful and contested-resolution paths.
 
 Logical planning requires more than effects that describe successful outcomes. It
 also requires a contract for when an applicable action succeeds and which effects

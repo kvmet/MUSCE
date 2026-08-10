@@ -12,7 +12,7 @@ use crate::exits::{LeadsFrom, LeadsTo};
 
 use crate::consume::Hunger;
 use crate::hoard::{Curiosity, Hoarder, Nest};
-use crate::kinds::{Container, Creature, Edible, Exit, Item, Player, Shiny};
+use crate::kinds::{Container, Creature, Edible, Exit, GiftRecipient, Item, Player, Shiny};
 use crate::names::Aliases;
 use crate::sequences::{Intent, Step, Steps, attach};
 use crate::verbs::{Health, Readable, Special, book_key};
@@ -246,6 +246,7 @@ pub fn seed(world: &mut World) {
     // blows drop its 8 HP in two hits, the second firing the death cry.
     let rat = spawn(world, |b| {
         b.add(Creature);
+        b.add(GiftRecipient);
         b.add(Name("a giant rat".into()));
         b.add(Description(
             "A giant rat the size of a dog, yellow teeth bared, cornered and hissing.".into(),
@@ -300,6 +301,7 @@ fn item(world: &mut World, name: &str, desc: &str) -> EntityId {
 fn avatar(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Player);
+        b.add(GiftRecipient);
         // No permission marker on the body: admin authority is account-scoped now
         // (the loopback `@operator` stub in slice 1). See
         // docs/architecture/authorization.md.
@@ -318,6 +320,7 @@ fn avatar(world: &mut World, name: &str, desc: &str) -> EntityId {
 fn creature(world: &mut World, name: &str, desc: &str) -> EntityId {
     spawn(world, |b| {
         b.add(Creature);
+        b.add(GiftRecipient);
         b.add(Name(name.into()));
         b.add(Description(desc.into()));
     })

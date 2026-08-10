@@ -21,7 +21,8 @@ pub mod world {
     pub use musce_core::{Map, Value};
 
     pub use musce_core::{
-        AcyclicRelation, Cascade, RelTarget, Relation, RelationError, RelationRole, Walk,
+        AcyclicRelation, Cascade, Containment, RelTarget, Relation, RelationError, RelationRole,
+        Walk,
     };
     pub use musce_core::{
         ComponentBlob, Description, Id, Locus, Name, NamedComponent, RegistryError,

@@ -42,6 +42,11 @@ kind!(
     "A player avatar: the entity a connection comes to drive."
 );
 kind!(
+    GiftRecipient,
+    "gift_recipient",
+    "A being willing and able to receive an item through the give affordance."
+);
+kind!(
     Exit,
     "exit",
     "An exit entity's kind tag. Connectivity itself (the `LeadsFrom`/`LeadsTo` \
@@ -71,6 +76,7 @@ pub(crate) fn register(world: &mut World) {
     world.register_component::<Creature>();
     world.register_component::<Container>();
     world.register_component::<Player>();
+    world.register_component::<GiftRecipient>();
     world.register_component::<Exit>();
     world.register_component::<Shiny>();
     world.register_component::<Edible>();

@@ -85,7 +85,8 @@ These hold across every subsystem:
   registration, structural schema validation, reverse effect indexing, the shared
   performer, its typed execution/observation/narration boundary, and one boot-time
   registry injected into command and system contexts. Macro
-  authoring, effect oracles, and consumer migration pending.)*
+  authoring, a reusable effect-oracle harness, and further consumer migration
+  pending; reference `give` is migrated.)*
 - [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
   additive canonical build, cutover boundary, and legacy removal condition.
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
@@ -96,7 +97,8 @@ These hold across every subsystem:
   guards, deterministic/contested/opaque resolution, unconditional effects, and
   executable-oracle obligations. *(Built: structural registration checks, shared
   grounding/gate/guard execution, resolution enforcement, result validation, and
-  post-commit typed narration; effect oracles pending.)*
+  post-commit typed narration, plus the reference `give` content oracle; reusable
+  effect-oracle harness pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
   raw normalized readings, registered qualitative regions, strict directional
   effects, and bounded QSIM regression. *(Built: value vocabulary, evaluator and

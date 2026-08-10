@@ -20,7 +20,7 @@ use musce::wire::EventKind;
 
 use crate::commit_or_log;
 use crate::consume::Hunger;
-use crate::kinds::{Container, Creature, Edible, Exit, Item};
+use crate::kinds::{Container, Creature, Edible, Exit, GiftRecipient, Item};
 use crate::names::display_name;
 use crate::spatial::{CELL, Xyz, coords, near};
 use crate::systems::Wander;
@@ -605,12 +605,14 @@ fn kind_blob(kind: &str) -> Option<Value> {
         "rock" => blob.with(Item).with(Description("a heavy rock".into())),
         "goblin" => blob
             .with(Creature)
+            .with(GiftRecipient)
             .with(Description("a snaggle-toothed goblin".into())),
         "box" => blob
             .with(Container)
             .with(Description("a sturdy wooden box".into())),
         "rat" => blob
             .with(Creature)
+            .with(GiftRecipient)
             .with(Wander)
             .with(Description("a twitching sewer rat".into())),
         // A hungry field mouse: it seeks and eats something edible on its own. Seeded
@@ -618,6 +620,7 @@ fn kind_blob(kind: &str) -> Option<Value> {
         // first scheduled consume tick rather than after the metabolism climbs.
         "mouse" => blob
             .with(Creature)
+            .with(GiftRecipient)
             .with(Hunger { pang: 5 })
             .with(Name("a field mouse".into()))
             .with(Description(
