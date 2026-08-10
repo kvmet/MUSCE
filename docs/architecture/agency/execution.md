@@ -21,9 +21,11 @@ struct Step {
 }
 ```
 
-Each input is validated against the affordance signature. A result reference is
-resolved before its dependent step executes. Execution performs no grammar
-interpretation or entity name resolution.
+Each input is validated against the affordance signature, and every entity input
+must still be live. A result reference is resolved before its dependent step
+executes. A missing or destroyed entity invalidates the proposed beat before gate
+or guard evaluation; execution performs no grammar interpretation or entity name
+resolution.
 
 The app maps its outcome onto:
 
@@ -32,14 +34,16 @@ Beat = Committed(results) | ContestedFailure
 ```
 
 The generic driver records returned result bindings and whether a contested
-attempt committed. A deterministic refusal or structural executor failure after
-applicability is a contract violation, not a normal `Beat`.
+attempt committed. Failed input-liveness validation triggers replanning. A
+deterministic refusal or structural executor failure after live inputs, an
+admitting gate, and true guards is a contract violation, not a normal `Beat`.
 
 ## Replan on invalidation or contested failure
 
 The planner is a proposer. A symbolic plan may be invalidated by:
 
 - another actor changing the world;
+- a grounded entity input being destroyed before its beat;
 - a stochastic or contested outcome;
 - stale or incomplete beliefs.
 
@@ -140,6 +144,8 @@ Tests must prove:
 
 - a generated plan commits through real affordance implementations;
 - an already-true goal executes zero beats;
+- a stale or destroyed entity input invalidates a beat and replans without being
+  reported as deterministic contract drift;
 - a contested failed grounding is not retried during the pursuit;
 - another grounding of the same affordance may recover;
 - replanning observes effects committed before the contested failure;

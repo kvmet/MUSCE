@@ -35,14 +35,23 @@ The affordance table carries a reverse index by effect shape:
 ```text
 SetRelation / ClearRelation   keyed by RelationId
 SetComponent / RemoveComponent keyed by ComponentId
-SetLocus                       keyed by derived locus slot
+SetLocus / ClearLocus          keyed by derived locus slot
 ShiftGauge                     keyed by GaugeId and direction
 Create / Destroy               keyed by existence direction
 ```
 
 Lookup narrows the candidate affordances; unification then compares their terms.
 There are no opaque semantic predicate names. The `Create` index shape is reserved
-but remains inactive until fresh-result regression is implemented.
+but remains inactive until fresh-result regression is implemented. More generally,
+an effect containing any `Result` term is excluded from the reverse index during
+this phase. This prevents a fresh result from unifying with an entity that already
+exists merely because another effect mentions the result.
+
+The exclusion applies only to selecting achievers. Result-bearing effects still
+participate in interference analysis when their affordance is selected through a
+result-free effect. Freshness can prove, for example, that assigning an existing
+source's relation slot to a result falsifies equality with every live constant even
+though the result's identity is not known yet.
 
 For example, the goal:
 
@@ -75,11 +84,14 @@ by successful execution. Locals are existential variables scoped to a formula.
 Unification is typed:
 
 - constants must be equal;
-- a free input, result symbol, or local may bind consistently at its permitted
-  scope;
+- a free input or local may bind consistently at its permitted scope;
 - a previously bound variable must agree with its existing value;
 - `Actor` must agree with the planning agent;
 - incompatible sorts fail.
+
+Result symbols do not unify with goal constants while fresh-result regression is
+inactive. The later extension may bind them only as fresh step results and
+`ResultRef`s, never as identities already live before their producing step.
 
 Parameter names are irrelevant to matching. They are local authoring labels;
 `ParameterId` and the substitution carry identity.
@@ -152,58 +164,11 @@ RelationTargetIs(Photo42, ContainedBy, Actor)
 The two cases share the same substitution machinery. Fungibility is a free
 variable; identity is a constant.
 
-## State-slot assignments and interference
+## Regression semantics
 
-Conditions regress through assignments to the same state slot:
-
-```text
-RelationTarget == target  through SetRelation
-RelationTarget == None    through ClearRelation
-RelationTarget != target  through ClearRelation or a provably different SetRelation
-ComponentPresent          through SetComponent / RemoveComponent
-AtLocus                   through SetLocus
-Exists / ¬Exists          through Create / Destroy
-```
-
-The slot identity for a relation is `(source, RelationId)`, not a three-term set
-member. Setting a target implicitly removes the old target. Two effects that assign
-different targets to a unifiable relation slot are mutually exclusive; clearing a
-slot interferes with every positive target constraint. The same assignment logic
-rejects contradictory component, locus, existence, and gauge effects.
-
-Execution still rechecks every step because another actor or a contested outcome
-can invalidate a sound symbolic plan. A deterministic handler may not add an
-undeclared applicability veto.
-
-Entity inputs are live by grounding, so positive `Exists(input)` is normally
-redundant. `Create(result)` binds a fresh step result that later effects and steps
-may reference. The schema, `Step`, outcome, offers, and wire reserve that shape
-now; search expansion through `Create` remains deferred until fresh-result
-unification is implemented.
-
-## Gauge regression
-
-A planner gauge goal is a registered qualitative threshold:
-
-```text
-GaugeAtMost(Actor, Hunger, Sated)
-```
-
-The current reading determines the required direction:
-
-```text
-on satisfying side -> satisfied
-on other side      -> required Up or Down
-```
-
-Only effects on the same entity term and `GaugeId` in the required direction are
-candidate predecessors. A directional effect guarantees crossing at least one
-registered region boundary in the required direction, so the number of
-intervening regions bounds repeated applications. Regression conservatively
-advances one region per application. Arbitrary singleton levels and bounded
-interior bands are readable execution conditions but are not regressible from a
-direction-only effect: it may skip over them. The QSIM model reasons about
-registered qualitative regions and orientation, never generic numeric distance.
+Functional assignment, interference, QSIM, and descendant-aware locus regression
+are specified in [regression.md](regression.md). Those rules apply after
+effect-goal unification and use only the closed state algebra.
 
 ## Cost and search order
 
@@ -217,27 +182,6 @@ cost(actor, affordance, grounding, world)
 This supports actor-specific preferences and input-sensitive choices without
 placing cost in the affordance schema. A heuristic may be added only if it is
 admissible for the mixed boolean/QSIM state model.
-
-## Movement and derived location
-
-Movement must expose planner-comparable location facts. A callback such as
-`same_locus(actor, item)` is not sufficient because regression cannot identify the
-effect that establishes it.
-
-The planning projection therefore exposes the engine-owned derived functional
-slot `LocusOf(entity)`, evaluated by `enclosing_locus`. A shared-locus requirement
-is a join:
-
-```text
-exists locus:
-    AtLocus(Actor, locus)
-    AtLocus(item, locus)
-```
-
-`go(exit, destination)` advertises `SetLocus(Actor, destination)`. The app derives
-`destination` from the exit while grounding the action; it is an ordinary input by
-the time a step is recorded. No `LocatedIn` edge is stored or maintained, and
-nesting depth does not affect the query.
 
 ## Termination
 
@@ -255,10 +199,12 @@ It returns a plan or `None`, never an unbounded search.
 
 The planner proposes steps whose inputs are ground when their turn arrives. The
 driver executes each through the app's shared affordance implementation and binds
-its results for dependent steps. A deterministic refusal is a contract violation.
-A contested failure excludes that exact `(affordance, actor, inputs)` grounding
-for the current search and replans from live world state. Opaque affordances never
-enter the effect index.
+its results for dependent steps. A stale or destroyed input fails live-state
+revalidation and triggers replanning before applicability is established. A
+deterministic refusal after live inputs, an admitting gate, and true guards is a
+contract violation. A contested failure excludes that exact `(affordance, actor,
+inputs)` grounding for the current search and replans from live world state.
+Opaque affordances never enter the effect index.
 
 Committed earlier effects remain in the world, so replanning begins from the
 actual partial result. A different grounding of the same affordance remains
@@ -268,12 +214,13 @@ available.
 
 Each concrete affordance needs an executable oracle:
 
-1. ground its inputs across representative applicable states;
+1. ground live inputs across representative applicable states;
 2. prove refusal when a declared guard is false;
 3. for a deterministic affordance, prove that admitting gate plus true guards
    commits rather than refusing;
 4. execute the real handler and validate all returned results;
-5. verify every advertised slot assignment;
+5. verify every advertised slot assignment, including the derived locus of the
+   moved root and every post-commit descendant for `SetLocus` or `ClearLocus`;
 6. verify movement to a strictly different registered region in each advertised
    gauge direction;
 7. verify that effects advertised as unconditional hold for every successful
@@ -291,6 +238,7 @@ insufficient because several correct plans may exist.
 
 - [preconditions.md](preconditions.md): the condition algebra, term scopes, and
   candidate binding.
+- [regression.md](regression.md): assignment, gauge, and derived-locus regression.
 - [affordances.md](affordances.md): concrete schemas and grounded execution.
 - [execution.md](execution.md): result-aware execution and contested replanning.
 - [../gauges.md](../gauges.md): QSIM readings, targets, and directions.

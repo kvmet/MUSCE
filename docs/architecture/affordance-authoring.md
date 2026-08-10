@@ -22,19 +22,19 @@ affordance! {
             item.has_component(Picture) => "That is not a picture.";
             support.has_component(HangingSurface)
                 => "That cannot support a hanging.";
-            related(item, Actor, ControlledBy)
+            item.relation_is(ControlledBy, Actor)
                 => "You do not control that item.";
-            related(fastener, Actor, ControlledBy)
+            fastener.relation_is(ControlledBy, Actor)
                 => "You do not control that fastener.";
 
             exists(locus: Entity) {
-                at_locus(Actor, locus);
-                at_locus(support, locus);
+                Actor.at_locus(locus);
+                support.at_locus(locus);
             } => "You cannot reach that support.";
         }
 
         effects {
-            set_relation(item, MountedOn, support);
+            item.set_relation(MountedOn, support);
         }
 
         resolution Deterministic;
@@ -63,7 +63,8 @@ optionally names the shared typed narrator invoked after a commit.
 For `Deterministic`, the macro adapter and runtime enforce this contract:
 
 ```text
-ground inputs + admitting gate + true guards => successful commit
+ground inputs + live entity inputs + admitting gate + true guards
+    => successful commit
 ```
 
 The handler cannot add an ordinary gameplay veto. A structural executor error or
@@ -120,14 +121,14 @@ Results use function-return syntax:
 affordance! {
     craft(material: Entity) -> (product: Entity) {
         requires {
-            related(material, Actor, ControlledBy)
+            material.relation_is(ControlledBy, Actor)
                 => "You do not control that material.";
         }
 
         effects {
-            create(product);
+            product.create();
             product.set_component(CraftedItem);
-            set_relation(product, ControlledBy, Actor);
+            product.set_relation(ControlledBy, Actor);
         }
 
         resolution Deterministic;
@@ -139,8 +140,10 @@ affordance! {
 
 Inputs must be bound before execution. Results cannot appear in `requires`, are
 absent from perform requests and `Needs`, and must be returned on every successful
-path. Effects and narration may reference them. Planning through `Create` remains
-deferred, but the schema, generated types, and wire distinguish results now.
+path. Effects and narration may reference them. Every effect in this example
+contains `product`, so none enters the reverse index until fresh-result regression
+is implemented; the schema, generated types, execution contract, and wire still
+distinguish and verify the result now.
 
 Non-entity sorts use the same signature form:
 
@@ -162,8 +165,8 @@ affordance! {
 ```
 
 The generated `SayInputs::text` is a typed text value. Its canonical input is
-still subject to the grounding rule that non-enumerable text must be supplied rather than
-invented by the planner.
+still subject to the grounding rule that non-enumerable text must be supplied
+rather than invented by the planner.
 
 ## Closed logical vocabulary
 
@@ -171,6 +174,13 @@ The macro accepts only constructs that lower into the canonical condition and
 effect algebra. It cannot declare an arbitrary predicate callback. Relation,
 component, and gauge names select registered app vocabulary; they do not add new
 logical operators.
+
+Gauge conditions use only registered qualitative regions through
+`entity.gauge_at_least(gauge, region)` or
+`entity.gauge_at_most(gauge, region)`. Raw singleton and band `GaugeTarget`s are
+not authorable in `requires`, `effects`, or planner goals. They remain imperative
+handler-query values and cannot decide whether an otherwise applicable
+deterministic handler commits.
 
 Conveniences are permitted as syntax-level expansions. For example:
 
@@ -183,23 +193,33 @@ existential local, such as:
 
 ```rust
 exists(locus: Entity) {
-    at_locus(Actor, locus);
-    at_locus(item, locus);
+    Actor.at_locus(locus);
+    item.at_locus(locus);
 } => "You cannot reach that.";
 ```
 
 The registered schema and planner retain the expansion, never the helper name.
-`at_locus` is canonical: it reads the engine's derived `LocusOf` slot through
-`enclosing_locus`. Relation syntax similarly lowers to equality over the
-source-functional `RelationTarget(source, kind)` slot; `set_relation` assigns that
-slot and `clear_relation` clears it. This boundary keeps effects and conditions
+Single-entity state operations use receiver syntax: the receiver owns the state
+slot, followed by its registered kind and then its value. Thus
+`item.relation_is(ControlledBy, Actor)` and
+`item.set_relation(ControlledBy, Actor)` retain the same argument order. Component,
+locus, gauge, existence, and relation reads and writes follow this rule. Formula
+binders and combinators such as `exists`, `not`, and the multi-slot `same_locus`
+convenience remain free forms.
+
+`entity.at_locus(locus)`, `entity.has_no_locus()`, and
+`entity.not_at_locus(locus)` constrain the engine's derived `LocusOf` slot through
+`enclosing_locus`; `entity.set_locus(locus)` and `entity.clear_locus()` assign it.
+Relation syntax lowers to equality over the source-functional
+`RelationTarget(source, kind)` slot. This boundary keeps effects and conditions
 statically comparable.
 
 ## Validation boundary
 
 The procedural macro reports errors knowable from one declaration during Rust
 compilation, including duplicate parameter names, undeclared names, illegal local
-or result use, and operations incompatible with a parameter sort.
+or result use, positive existence tests on entity inputs, and operations
+incompatible with a parameter sort.
 
 Registration validates facts that depend on the assembled app vocabulary,
 including unknown relation/component/gauge ids, duplicate affordance ids, missing

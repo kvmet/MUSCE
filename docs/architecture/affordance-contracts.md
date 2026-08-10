@@ -24,22 +24,27 @@ struct Guard {
 The first unsatisfied guard supplies the refusal reason. The planner reads the same
 formula and ignores the prose.
 
-Input grounding precedes guard evaluation. A text handler resolves noun phrases
-into a partial input substitution; a pointing client supplies typed values; a
-planner unifies an effect with a goal and solves the remaining inputs. Once all
-inputs are ground, the shared performer evaluates the gate and guards immediately
-before resolution.
+Input grounding and entity-liveness validation precede guard evaluation. A text
+handler resolves noun phrases into a partial input substitution; a pointing
+client supplies typed values; a planner unifies an effect with a goal and solves
+the remaining inputs. Once all inputs are ground and live, the shared performer
+evaluates the gate and guards immediately before resolution. A stale or destroyed
+input invalidates the proposed action before the deterministic contract's
+antecedent is established; it triggers replanning rather than contract drift.
 
 A condition whose state slot no registered effect changes still belongs in guards
 as a candidate filter. Being unachievable does not justify hiding applicability
-policy in Rust.
+policy in Rust. It must still belong to the canonical condition algebra. Raw
+`GaugeTarget` queries are handler facilities, not guards, and cannot serve as a
+hidden veto in a deterministic handler.
 
 ## Resolution modes
 
 Every affordance declares one mode:
 
-- **Deterministic:** ground inputs plus an admitting gate plus true guards require
-  the handler to commit. An ordinary refusal afterward is contract drift.
+- **Deterministic:** ground inputs whose entity values are live, an admitting
+  gate, and true guards require the handler to commit. An ordinary refusal
+  afterward is contract drift.
 - **Contested:** the same facts establish that an attempt is valid, but resolution
   may fail without committing. The planner may attempt it and replan from live
   state.
@@ -80,16 +85,53 @@ Narration is not an effect. The affordance's typed narrator receives actor, inpu
 and successful results after commitment and emits the shared first- and
 third-person account.
 
+## Schema registration
+
+Affordance registration rejects malformed schemas:
+
+- duplicate parameter names or ids;
+- a term referring to an undeclared parameter or local;
+- a value sort used in an incompatible condition/effect position;
+- an input or result used in an illegal position;
+- `Create` not targeting exactly one entity result;
+- incompatible assignments to the same state slot;
+- both gauge directions on the same gauge slot;
+- an effect whose value is already guaranteed by the requirements, when it is the
+  affordance's only advertised progress;
+- an effect whose declared state id is not registered;
+- a positive `Exists` condition on an entity input whose grounding already proves
+  liveness;
+- an implementation missing for an executable affordance.
+
+Non-enumerable inputs are valid. A text command or script may supply them; a
+planner simply cannot form a grounding while one remains unbound. Redundant
+effects in an otherwise progressive affordance are removed or diagnosed so they
+do not pollute the reverse effect index.
+
+Reverse-index construction omits every effect containing a `Result` term until
+fresh-result regression is enabled. This is an indexing rule, not a schema error:
+the effect remains part of the execution contract and of assignment-interference
+analysis.
+
+Validation happens once at registration. Grounding then uses compact ids and typed
+values without repeating schema checks. The macro catches structural and sort
+errors knowable during Rust compilation; registration handles errors that depend
+on the assembled app vocabulary, such as unknown ids or duplicate registrations.
+Executable-oracle tests enforce behavioral contracts that registration cannot
+infer from arbitrary Rust handler code.
+
 ## Behavioral oracles
 
 Registration validates the schema but cannot inspect arbitrary Rust behavior.
 Each executable affordance therefore has an oracle that:
 
-1. grounds inputs across representative applicable states;
+1. grounds live inputs across representative applicable states;
 2. proves refusal when each declared guard is false;
 3. proves an applicable deterministic affordance commits;
 4. validates every returned result sort and required result binding;
-5. verifies every advertised state-slot assignment after commitment;
+5. verifies every advertised state-slot assignment after commitment, including
+   the moved root and every post-commit containment descendant for a `SetLocus`
+   or `ClearLocus` effect;
 6. verifies movement to a strictly different registered region for every
    advertised gauge shift;
 7. exercises every successful contested outcome and verifies the common effects;

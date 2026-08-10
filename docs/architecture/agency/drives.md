@@ -1,8 +1,8 @@
 # Drives and the Agency Loop
 
 > Status: **target integration specified.** Drives remain app policy over need
-> state. Their goals use the closed condition algebra, including gauge targets
-> for ordered needs.
+> state. Their goals use the closed condition algebra, including registered
+> qualitative gauge thresholds for ordered needs.
 
 A drive turns an actor's internal need into a goal and an urgency. It does not
 choose actions. The arbiter chooses among goals, the planner finds grounded
@@ -26,7 +26,7 @@ affordances can move it there.
 
 ## Gauge goals
 
-Ordered needs are gauge targets:
+Ordered needs are registered qualitative gauge thresholds:
 
 ```text
 hunger drive:

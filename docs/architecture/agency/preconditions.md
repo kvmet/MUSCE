@@ -38,15 +38,17 @@ RelationTarget(source, relation): Option<Entity>
     == target | == None | != target
 ComponentPresent(entity, component): bool
 LocusOf(entity): Option<Entity>
-    AtLocus(entity, locus)
+    == locus | == None | != locus
 GaugeRegion(entity, gauge): ordered registered region
 Exists(entity): bool
 ```
 
-Surface `Related(source, target, relation)` is equality on `RelationTarget`; its
-negation is inequality. Relations are source-functional, so setting one target
-implicitly displaces the previous target. `AtLocus` is evaluated by the engine's
-transitive `enclosing_locus` query and is not a stored `LocatedIn` relation.
+Surface `source.relation_is(relation, target)` is equality on `RelationTarget`;
+its negation is inequality. Relations are source-functional, so setting one
+target implicitly displaces the previous target. Surface `AtLocus` is locus
+equality; locus absence and inequality are equally available. All three are
+evaluated by the engine's transitive `enclosing_locus` query rather than a stored
+`LocatedIn` relation.
 
 A formula is initially a conjunction with explicit local existential
 quantification. Disjunction is not part of the foundational representation. A
@@ -65,7 +67,7 @@ Effects update those same slots:
 ```text
 RelationTarget ↔ SetRelation / ClearRelation
 ComponentPresent ↔ SetComponent / RemoveComponent
-LocusOf        ↔ SetLocus
+LocusOf        ↔ SetLocus / ClearLocus
 GaugeRegion    ↔ ShiftGauge
 Exists         ↔ Create / Destroy
 ```
@@ -75,6 +77,12 @@ checks whether the assignment satisfies the constraint. Assignments to the same
 relation source and kind interfere when their targets differ; clearing the slot
 interferes with every target equality. It never matches prose names or invokes an
 opaque predicate implementation.
+
+`SetLocus(root, locus)` and `ClearLocus(root)` assign the derived locus slots of
+the root and all of its post-transition containment descendants. Regression
+expands that closure through finite chains of ordinary `ContainedBy` slot
+constraints. A live chain may satisfy those constraints, and earlier plan steps
+may establish one; the current containment tree is not assumed to remain fixed.
 
 For gauges, only registered qualitative one-sided targets participate in
 regression. A directional effect promises strict progress in the required
@@ -119,11 +127,17 @@ exists locus:
 The common locus is evidence for the condition but need not appear in the
 grounded action. If the handler needs its identity, it is declared as an input.
 
+A positive `Exists(input)` requirement is rejected as a tautology because entity
+input grounding already requires a live entity. Existence remains available for
+goals, result freshness, negative conditions, and plan revalidation.
+
 Effects may refer to the actor, inputs, results, and constants. A local needed by
 an effect is promoted to an input unless successful execution produces a fresh
 value, in which case it is a result. `Create(result)` introduces a fresh entity
-and binds that result. Result-aware regression is deferred, but results are
-already distinct from grounded inputs in schemas, outcomes, and wire projections.
+and binds that result. Result-aware regression is deferred, so no effect
+containing a result term is currently eligible as a reverse-index achiever. Those
+effects remain visible to interference analysis, and results remain distinct from
+grounded inputs in schemas, outcomes, and wire projections.
 
 ## Candidate binding
 

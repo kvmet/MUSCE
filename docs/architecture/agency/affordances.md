@@ -46,7 +46,7 @@ roles:
 | `open` | `door: Entity` | `Locked` is removed from door |
 | `unlock` | `door: Entity`, `key: Entity` | `Locked` is removed from door |
 | `eat` | `food: Entity` | food is destroyed; actor's hunger gauge shifts down |
-| `hang` | `item: Entity`, `support: Entity`, `fastener: Entity` | mounted relation is added |
+| `hang` | `item: Entity`, `support: Entity`, `fastener: Entity` | item's mounted relation slot is assigned to support |
 | `say` | `text: Text` | no persistent effect; emits speech |
 | `craft` | input `material: Entity`; result `product: Entity` | product is created and categorized |
 
@@ -162,12 +162,13 @@ Possession, control, locus, categorical component presence, and qualitative gaug
 thresholds are planner conditions. A condition whose state slot no action changes
 is still declared as a guard and filters candidates.
 
-For a deterministic affordance, ground inputs plus an admitting gate plus true
-guards require commitment. A normal refusal or structural failure is contract
-drift. A contested affordance may fail a valid attempt and trigger replanning. An
-opaque affordance may apply richer unmodeled rules, but it is deliberately absent
-from the planner's effect index. A containment-cycle check belongs to the declared
-acyclic relation transition semantics, which both planner and executor enforce.
+For a deterministic affordance, ground inputs whose entity values are live plus
+an admitting gate plus true guards require commitment. A normal refusal or
+structural failure is contract drift. A contested affordance may fail a valid
+attempt and trigger replanning. An opaque affordance may apply richer unmodeled
+rules, but it is deliberately absent from the planner's effect index. A
+containment-cycle check belongs to the declared acyclic relation transition
+semantics, which both planner and executor enforce.
 
 Effects describe only what every successful commit guarantees. A consequence that
 fires only at a threshold or on some outcomes is a reaction to a guaranteed state

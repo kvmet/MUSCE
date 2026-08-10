@@ -88,9 +88,9 @@ Types prevent invalid wire values, but they do not replace guards. Two inputs
 may both be `Entity` while requiring different facts:
 
 ```text
-hang.item      requires ControlledBy(item, Actor)
-hang.support   requires HangingSurface(support)
-hang.fastener requires Fastener(fastener)
+hang.item      requires RelationTarget(item, ControlledBy) == Actor
+hang.support   requires ComponentPresent(support, HangingSurface)
+hang.fastener requires ComponentPresent(fastener, Fastener)
 ```
 
 The app may narrow a picker from these structural conditions. The final grounded

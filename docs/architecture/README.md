@@ -225,7 +225,8 @@ Deferred (with seams in place where noted):
   actions and outcomes, functional relation and derived-locus slots, deterministic
   and contested execution contracts, registered qualitative gauge regions, the
   Rust `affordance!` authoring macro, effect-goal unification, QSIM regression, and
-  parameter-aware pointing wire forms. The target design is in `affordances.md`,
+  parameter-aware pointing wire forms. The target design is in
+  `affordances.md`, `affordance-authoring.md`, `affordance-contracts.md`,
   `gauges.md`, `offers.md`, and `agency/`.
 - App logic: timed behavior (sequences and effects) on a shared skeleton is
   **built** in `musce_ref` (the `Steps`/`Sequences` components, the

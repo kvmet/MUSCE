@@ -74,9 +74,10 @@ the actor; a fungible balance may be a gauge on an account or purse. Proxy entit
 such as one coin per unit are used only when individual identity and transfer are
 gameplay, not merely to make a numeric amount visible to predicates.
 
-## Targets and direction
+## Runtime targets and planner thresholds
 
-The built raw `GaugeTarget` remains useful for evaluation and imperative rules:
+The built raw `GaugeTarget` remains useful for handler calculations and imperative
+queries:
 
 ```rust
 GaugeTarget::at(level)
@@ -99,6 +100,12 @@ current > target.max  -> Down
 worsen. A healer may drive health up; a poisoner may drive it down. App goals
 choose desirable targets.
 
+Raw targets are not canonical planner conditions. They cannot appear in
+affordance `requires` or `effects`, planner goals, or the reverse index. A
+deterministic handler may query one while calculating its guaranteed transition,
+but cannot use it as an undeclared refusal rule; a commitment decision that cannot
+be expressed through registered qualitative guards makes the affordance opaque.
+
 Planner-regressible targets are one-sided qualitative thresholds:
 
 ```text
@@ -106,9 +113,12 @@ GaugeAtLeast(entity, gauge, region)
 GaugeAtMost(entity, gauge, region)
 ```
 
-An exact raw interior point or bounded interior band remains readable but is not
-regressible from direction alone: one strictly monotone action may skip over it.
-Exact saturation endpoints are safe special cases of one-sided thresholds.
+`GaugeAtLeast(entity, gauge, region)` is true when the reading projects into that
+region itself or any higher registered region. `GaugeAtMost` is symmetrically
+inclusive of its named region. An exact raw interior point or bounded interior
+band remains queryable by handler code but is not a planner condition: one
+strictly monotone action may skip over it. A saturation endpoint is planner-visible
+only through a registered one-sided region containing that endpoint.
 
 There is no generic `Stable` effect. No change is the absence of an immediate
 effect; active maintenance requires duration and counter-effect semantics.
@@ -203,13 +213,13 @@ Term identity ensures the action changes the attitude entity named by the goal.
 The planner does not expose arbitrary component fields or raw comparisons:
 
 - categorical state is a component-presence or relation condition;
-- ordered state is a gauge target;
+- ordered planner state is a registered qualitative gauge threshold;
 - a hard rule outside this algebra makes an affordance opaque and non-plannable;
 - a soft preference is a cost input.
 
 Named regions are registered data over `GaugeLevel`, not new engine condition
-variants. Raw singleton and band targets may be queried by execution code but do
-not enter the reverse planner index.
+variants. Raw singleton and band targets remain outside the canonical `Formula`
+and `Effect` types and may be queried only by handler code.
 
 ## Evaluation and registration
 

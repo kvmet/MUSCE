@@ -76,8 +76,8 @@ An input may also be affected; no separate `InOut` mode is needed. A result is
 absent from a perform request and from `Needs`, cannot appear in a requirement,
 and must be produced on every successful execution. A plan may carry a symbolic
 reference to a prior step's result until that step executes. Regression through
-fresh creation is deferred, but these shapes avoid an input-only wire migration
-when it is implemented.
+effects containing a fresh result, including `Create`, is deferred, but these
+shapes avoid an input-only wire migration when it is implemented.
 
 The normal authoring surface is the Rust-embedded `affordance!` description
 language specified below. It assigns the compact ids and lowers its typed names
@@ -154,7 +154,7 @@ Effects assign or move those same slots:
 |---|---|---|
 | `RelationTarget(source, K): Option<Entity>` | equals target, unset, or differs from target | `SetRelation(source, K, target)`, `ClearRelation(source, K)` |
 | `ComponentPresent(entity, C): bool` | present or absent | `SetComponent(entity, C)`, `RemoveComponent(entity, C)` |
-| `LocusOf(entity): Option<Entity>` | `AtLocus(entity, locus)` | `SetLocus(entity, locus)` |
+| `LocusOf(entity): Option<Entity>` | equals locus, unset, or differs from locus | `SetLocus(entity, locus)`, `ClearLocus(entity)` |
 | `GaugeRegion(entity, G)` | registered qualitative threshold or region | `ShiftGauge(entity, G, Up/Down)` |
 | `Exists(entity): bool` | exists or absent | `Create(result)`, `Destroy(entity)` |
 
@@ -162,12 +162,24 @@ Relations are source-functional in the world: a source has at most one target fo
 one relation kind. `SetRelation` overwrites that slot and therefore falsifies an
 equality to every other target. `ClearRelation` has no target argument. Two
 incompatible assignments to the same `(source, K)` slot interfere even when no
-delete effect was separately declared. Surface `Related(a, b, K)` syntax lowers
-to `RelationTarget(a, K) == b`; its negation lowers to inequality, not set removal.
+delete effect was separately declared. Surface
+`source.relation_is(K, target)` syntax lowers to
+`RelationTarget(source, K) == target`; its negation lowers to inequality, not set
+removal.
 
 `LocusOf` is a derived functional slot. Its evaluator calls `enclosing_locus` over
-containment, and `SetLocus` is a planner-visible guarantee made by movement. It
-does not materialize or maintain `LocatedIn` edges.
+containment. Surface `entity.at_locus(locus)`, `entity.has_no_locus()`, and
+`entity.not_at_locus(locus)` constrain equality, absence, and inequality.
+`SetLocus` and `ClearLocus` are planner-visible guarantees made by movement; they
+do not materialize or maintain `LocatedIn` edges.
+
+Locus assignments have subtree semantics. `SetLocus(root, locus)` assigns that
+derived locus to `root` and every entity transitively contained by it in the
+resulting structural state. `ClearLocus(root)` assigns `None` to the same closure.
+The planner expands this closure through finite containment witnesses composed of
+ordinary source-functional `ContainedBy` constraints, including constraints that
+earlier plan steps can establish. The current live subtree is evidence, not the
+only possible closure.
 
 An affordance that changes containment across locus boundaries advertises both the
 `SetRelation` assignment and the resulting `SetLocus` projection when both matter.
@@ -176,9 +188,12 @@ and same-locus reparenting need not claim a locus change.
 
 `Create` binds a fresh entity result and establishes its existence. Result-aware
 regression and cross-step result substitution are deferred, but the canonical
-schema distinguishes results now. `Exists(input)` is redundant because an entity
-input must be live; positive existence is primarily meaningful for results and
-plan validity.
+schema distinguishes results now. Until that regression exists, every effect
+containing a result term is excluded as a reverse-index achiever. Such an effect
+still participates in interference analysis when its affordance is selected by a
+result-free effect. A positive `Exists(input)` requirement is rejected because an
+entity input must already be live; positive existence remains meaningful for
+goals, results, and plan validity.
 
 The slot kinds are closed; relation, component, gauge, and qualitative-region ids
 are open app vocabulary. Static comparison first identifies a state slot, then
@@ -187,8 +202,8 @@ unifies its terms and checks assignment compatibility.
 This constraint is what makes backward planning possible. A callback named
 `feels_really_fondly_about(a, b)` could answer a query but could not be regressed
 unless some effect repeated that exact opaque name. Instead, ordered sentiment is
-a gauge target and actions advertise a direction on the same gauge. See
-[gauges.md](gauges.md).
+a registered qualitative gauge threshold and actions advertise a direction on the
+same gauge. See [gauges.md](gauges.md).
 
 The logical model is a planning projection of world state, not a vocabulary of
 English conveniences. "Same locus" is a join over `AtLocus`; meaningful control is
@@ -205,10 +220,10 @@ the cost model.
 
 Ordered guards pair applicability formulas with refusal prose. Every affordance
 also declares `Deterministic`, `Contested`, or `Opaque` resolution. For a
-deterministic act, ground inputs plus an admitting gate plus true guards require a
-successful commit; contested failure is explicit, and opaque acts do not enter
-planning. Advertised effects are unconditional promises of every successful
-commit.
+deterministic act, ground inputs whose entity values are live plus an admitting
+gate plus true guards require a successful commit; contested failure is explicit,
+and opaque acts do not enter planning. Advertised effects are unconditional
+promises of every successful commit.
 
 The complete applicability contract, structural-invariant boundary, conditional
 reaction rule, and executable-oracle obligations are specified in
@@ -242,31 +257,9 @@ planning edge. The complete `say(text: Text)` example is in
 
 ## Registration validation
 
-Affordance registration rejects malformed schemas:
-
-- duplicate parameter names or ids;
-- a term referring to an undeclared parameter or local;
-- a value sort used in an incompatible condition/effect position;
-- an input or result used in an illegal position;
-- `Create` not targeting exactly one entity result;
-- incompatible assignments to the same state slot;
-- both gauge directions on the same gauge slot;
-- an effect whose value is already guaranteed by the requirements, when it is the
-  affordance's only advertised progress;
-- an effect whose declared state id is not registered;
-- an implementation missing for an executable affordance.
-
-Non-enumerable inputs are valid. A text command or script may supply them; a
-planner simply cannot form a grounding while one remains unbound. Redundant
-effects in an otherwise progressive affordance are removed or diagnosed so they
-do not pollute the reverse effect index.
-
-Validation happens once at registration. Grounding then uses compact ids and typed
-values without repeating schema checks. The macro catches structural and sort
-errors that are knowable during Rust compilation; registration handles errors
-that depend on the assembled app vocabulary, such as unknown ids or duplicate
-registrations. Executable-oracle tests enforce behavioral contracts that
-registration cannot infer from arbitrary Rust handler code.
+Registration rejects malformed schemas before grounding or indexing. The complete
+validation and reverse-index construction rules live with the behavioral contract
+in [affordance-contracts.md](affordance-contracts.md#schema-registration).
 
 ## Relation to the other docs
 

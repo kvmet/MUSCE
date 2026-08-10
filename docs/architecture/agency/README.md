@@ -53,7 +53,7 @@ advertised transition. The state algebra is:
 ```text
 RelationTarget    ↔ SetRelation / ClearRelation
 ComponentPresent ↔ SetComponent / RemoveComponent
-LocusOf           ↔ SetLocus
+LocusOf           ↔ SetLocus / ClearLocus
 GaugeRegion       ↔ ShiftGauge
 Exists            ↔ Create / Destroy
 ```
@@ -64,7 +64,9 @@ queryability does not make a condition regressible. Relation and locus slots are
 functional, so assignment and interference are explicit.
 
 Creation writes a fresh result parameter. The schema and runtime reserve result
-bindings now; planner regression through them is a deferred extension.
+bindings now. Until fresh-result regression is implemented, every effect
+containing a result term is excluded as a reverse-index achiever while remaining
+visible to assignment-interference analysis.
 
 Categorical facts use functional relations or component presence. Spatial scope
 uses the derived `LocusOf` slot. Ordered values use registered gauge regions and
@@ -121,10 +123,12 @@ before its step executes; it may refer symbolically to a result of an earlier st
 until that result is produced.
 
 Execution calls the same app implementation as a player command or pointing
-action. It rechecks the gate and declarative guards, then follows the declared
-resolution mode. True guards require a deterministic act to commit; refusal is a
-contract violation. A contested failure triggers replanning from live state.
-Opaque acts do not enter planning.
+action. It first revalidates that every entity input is live, then rechecks the
+gate and declarative guards before following the declared resolution mode. A
+stale input triggers replanning. Live inputs, an admitting gate, and true guards
+require a deterministic act to commit; refusal after that point is a contract
+violation. A contested failure triggers replanning from live state. Opaque acts do
+not enter planning.
 
 Planning is single-actor. A step always names the planning `Actor`; it never
 silently schedules another entity's action. Cooperation is modeled as an act the
@@ -137,8 +141,8 @@ choice. This keeps authority and causal responsibility explicit.
 Gauges expose ordered derived readings without leaking backing component
 representations. Apps register qualitative regions over the raw finite reading.
 Planner goals use one-sided named thresholds; effects promise strict `Up` or
-`Down` progress. Exact raw points and interior bands remain readable but are not
-regressible from direction alone.
+`Down` progress. Exact raw points and interior bands remain handler-query values
+outside planner goals and affordance guards.
 
 State about a relationship is represented on a reified relationship entity. For
 example, an attitude entity relates an owner to a subject and carries an
@@ -179,7 +183,10 @@ not a second semantic model.
   execution.
 - [preconditions.md](preconditions.md): terms, condition algebra, substitution,
   and candidate binding.
-- [planner.md](planner.md): backward regression, QSIM handling, and termination.
+- [planner.md](planner.md): backward search, reverse indexing, binding, and
+  termination.
+- [regression.md](regression.md): assignment interference, QSIM handling, and
+  descendant-aware locus regression.
 - [arbiter.md](arbiter.md): goal selection and commitment.
 - [execution.md](execution.md): result-aware execution and contested replanning.
 - [drives.md](drives.md): urgency-producing app policy.
@@ -194,8 +201,8 @@ not a second semantic model.
 
 - the canonical AST and Rust `affordance!` authoring macro;
 - implementation of concrete affordances and planner search;
-- fresh-result regression through `Create` (the schema, outcome, plan-reference,
-  and wire shapes are decided now);
+- fresh-result regression through result-bearing effects, including `Create`
+  (the schema, outcome, plan-reference, and wire shapes are decided now);
 - multi-room knowledge and richer belief;
 - one-beat-per-tick plan interleaving;
 - per-actor cost learning;
