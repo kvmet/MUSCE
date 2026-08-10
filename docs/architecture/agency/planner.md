@@ -1,196 +1,297 @@
 # The Planner
 
-> Status: **built (agency build step 4).** Backward goal-regression over the
-> affordance table, with ground goals (4a), existential goal binding (4b), and
-> **mid-search existential binding** (a guard role the effect leaves free, bound
-> during regression), lives in `musce_agency` (`planner.rs`) as `Planner` / `plan` /
-> `Plan` / `Step`. `musce_ref` carries the executable oracles: a regressed plan run
-> through `perform` makes the goal hold, and the consume drive's `take -> eat` chain
-> exercises mid-search binding live. The replan-on-veto loop that consumes
-> `plan_excluding` is built as the [execution driver](execution.md) (step 5). Still
-> deferred within step 4: movement (`go`, see below). The arbiter and drives (step
-> 5) and per-actor cost learning (step 6) sit on top.
+> Status: **target design specified; implementation pending.** The planner is a
+> bounded backward-regression search over typed affordance inputs/results and the
+> closed functional state-slot algebra.
 
-The planner is the GOAP core: given a goal, it finds a minimum-cost sequence of
-affordances whose execution makes the goal true. It reads the same affordance
-vocabulary, `WorldModel`, and `Guard` clauses a player verb reads (see
-[../affordances.md](../affordances.md)), so a planned action and a typed one
-cannot disagree on what a verb permits.
+The planner finds a minimum-cost sequence of affordance steps whose contracted
+successful execution makes a goal condition hold. It manipulates the same canonical
+representation used by player verbs, pointing clients, and scripts, while real
+execution remains the correctness authority.
 
-## Backward regression, not forward simulation
+## Backward regression
 
-The search works *backward* from the goal. A search node is a subgoal `Clause`
-(the literals that must become true). Expansion picks an unsatisfied literal,
-finds an affordance whose `effect` produces it, and replaces that literal with the
-affordance's bound guard preconditions, recording the step. A node **succeeds**
-when every literal in it already holds in the **actual current world**, tested
-through the app's `WorldModel`.
+A search node is a conjunction of conditions that must become true. Expansion:
 
-The alternative, forward state-space search, was set aside because it needs a
-*hypothetical* world model: to apply an affordance's effect forward you must
-toggle predicates true in a simulated state and keep asking `holds` against that
-overlay. The engine has no such abstraction; `WorldModel::holds` reads the real
-`World`. Backward regression never simulates a world: it only ever asks whether a
-ground literal holds *right now* (at the success test) and otherwise manipulates
-symbolic literal sets. That is a clean fit for the seam we already have, and it is
-why regression, not forward search, is the core.
+1. selects an unsatisfied condition;
+2. looks up affordances with a statically comparable effect;
+3. unifies that effect with the selected condition;
+4. applies the resulting substitution throughout the affordance;
+5. solves or regresses its requirements;
+6. records the resulting grounded step.
 
-## Uniform-cost search
+The search succeeds when every remaining ground condition holds in the current
+world.
 
-Nodes are settled cheapest-first from a min-heap keyed by cumulative cost, and the
-goal is tested on pop, so the first satisfied node yields an optimal plan
-(Dijkstra). Cost comes only through the app's `CostModel`, never a field on the
-affordance; with the trivial `UnitCost` this degenerates to minimum-length, and a
-real cost model sharpens it with no change here. There is no heuristic yet (`h =
-0`); adding an admissible one is a later refinement, not a shape change.
+Backward regression fits the engine because it does not require a mutable
+hypothetical ECS world. Search manipulates symbolic conditions and substitutions,
+then consults the real world only to test grounded conditions and enumerate known
+candidates.
 
-`plan` returns a transient `Plan` (a `Vec<Step>` of `{ affordance, frame }`).
-Nothing is persisted: the app lowers each step through its grounded action
-(`perform`), where the veto and the structural `Action` commit live, so no agency
-type embeds in a serialized script (see [README](README.md) crate section).
+## Effect indexes and static matching
 
-## Existential goal binding: ground-first, via `bind_var`
+The affordance table carries a reverse index by effect shape:
 
-A goal may be existential: `∃x. related(x, actor, contained_by) ∧ tag(x, food)`
-("hold some food"). `plan` grounds it before searching:
+```text
+SetRelation / ClearRelation   keyed by RelationId
+SetComponent / RemoveComponent keyed by ComponentId
+SetLocus                       keyed by derived locus slot
+ShiftGauge                     keyed by GaugeId and direction
+Create / Destroy               keyed by existence direction
+```
 
-1. **The actor role** is substituted to the planning agent, since a goal is
-   written in the same role vocabulary (`actor`) as affordance clauses.
-2. **A fungible slot** (`x`) is bound against the actor's `known` set (the app's
-   knowledge seam). The goal's literals split into a *static* part (predicates no
-   affordance can produce, e.g. `tag(x, food)`, so they must already hold) and an
-   *achievable* part (predicates some affordance's effect shares a shape with,
-   e.g. `related(x, actor, contained_by)`). Only the static part filters the
-   candidates, through the shared `bind_var` primitive; the achievable part is
-   left for regression to plan. Each surviving grounding is regressed and the
-   cheapest plan wins.
+Lookup narrows the candidate affordances; unification then compares their terms.
+There are no opaque semantic predicate names. The `Create` index shape is reserved
+but remains inactive until fresh-result regression is implemented.
 
-This is ground-first, not lifted. Binding lazily inside the search would let the
-planner invent objects it does not know, which is exactly the omniscience the
-`Known` filter exists to prevent (see [README](README.md), "the planner needs no
-world index"). The static/achievable split is principled, not a heuristic: a
-literal is static precisely when *no* affordance can make it true, so filtering by
-it can never hide a plan. An empty candidate set is a meaningful "nothing known
-fits", not an error; enriching it with a find/search step is the deferred
-perception layer.
+For example, the goal:
 
-### Mid-search binding: the same primitive, during regression
+```text
+¬Exists(Photo42)
+```
 
-The chaining verbs `take`/`drop`/`put` name only frame roles that
-effect-unification already binds, so their guards are ground the moment a step is
-formed. `eat` breaks that: its effect is `fed(actor)` (eating consumes the food, so
-there is no lasting edge to name), so unifying the effect binds only the actor and
-the food stays a **free role in the guard** (`∃food. related(food, actor,
-contained_by) ∧ tag(food, edible)`). That free role surfaces *mid-search*, after
-the `eat` step is regressed, not in the goal.
+matches:
 
-`guard_bindings` grounds it there, one successor per candidate, reusing the exact
-machinery the goal slot uses: the guard's literals split into a static part
-(`tag(food, edible)`, no affordance grants it) that filters candidates through
-`bind_var`, and an achievable part (`related(food, actor, contained_by)`) left for
-regression (a `take` plans it). So the plan is `take -> eat`, with the food bound
-against `known` and every recorded step ground. The knowledge gate holds identically
-to the goal case: binding draws only from `known`, so the planner never invents an
-entity it cannot see. Multiple free roles in one guard is the same combinatorial
-product the goal binder defers; one is what the reference consume drive needs.
+```text
+delete(target: Entity)
+effects: Destroy(target)
+```
 
-## Unification is a small positional match
+and yields `target = Photo42`. The bound requirements are consequently:
 
-Grounding an affordance during regression is not general unification. The frame
-has three fixed roles (`actor`, `object`, `target`), so matching an effect
-predicate against a ground subgoal predicate is a positional check: same variant
-and same relation kind / component, then each effect term is either a `Const` that
-must equal the subgoal's entity or a role-var that binds (or must agree with) its
-frame slot, with `actor` fixed to the planning agent. The result is the `Frame`
-that grounds the step.
+```text
+HasComponent(Photo42, Picture)
+RelationTargetIs(Photo42, ControlledBy, Actor)
+```
 
-## Add-only effects, and where soundness actually lives
+An unrelated controlled picture cannot satisfy the branch.
 
-Effects are add-only: `take` declares that the object becomes held, not that it
-leaves the room. Two consequences, both deliberate:
+## Terms and substitutions
 
-- **Only positive subgoal literals are regressed.** A negated literal (`take`'s
-  `¬ fixture`) is checked by `holds` at the success test; if it is unsatisfied,
-  the branch dead-ends, because no add-only effect makes a fact false. So negation
-  needs no special regression handling, and the planner correctly cannot plan
-  "through" a locked door or an un-take-able fixture.
-- **No delete lists, so a plan can be interfered with in principle.** Backward
-  regression without delete effects can emit a plan where one step falsifies a
-  later step's precondition. The reference verb set has no such interference (a
-  `take` *establishes* `put`'s held-precondition), but the general backstop is not
-  the planner: it is execution's **replan-on-veto**. A vetoed beat means the world
-  diverged from the plan's assumption; the executor replans from the new state.
-  The planner is a proposer, not the correctness authority, exactly as the
-  structural executor, not the guards, is the commit-time backstop (see
-  [../actions.md](../actions.md)).
+The planning agent grounds `Actor`. Affordance inputs begin unbound unless a goal,
+command, script, or caller pins them. Results are step-local symbols produced only
+by successful execution. Locals are existential variables scoped to a formula.
+
+Unification is typed:
+
+- constants must be equal;
+- a free input, result symbol, or local may bind consistently at its permitted
+  scope;
+- a previously bound variable must agree with its existing value;
+- `Actor` must agree with the planning agent;
+- incompatible sorts fail.
+
+Parameter names are irrelevant to matching. They are local authoring labels;
+`ParameterId` and the substitution carry identity.
+
+Every recorded `Step` has ground inputs or references to results of earlier steps:
+
+```rust
+struct Step {
+    affordance: AffordanceId,
+    actor: EntityId,
+    inputs: Box<[ValueOrResultRef]>,
+}
+```
+
+The foundational planner emits only ground `Value`s because `Create` regression is
+inactive; `ResultRef` reserves the decided extension without reshaping `Step`.
+Plans are transient runtime output and are not persisted as scripted intents.
+
+## Binding parameters not fixed by the goal
+
+An effect often leaves some parameters free. A hunger goal may select an `eat`
+affordance by its gauge effect without identifying food:
+
+```text
+eat(food: Entity)
+
+requires:
+    RelationTargetIs(food, ContainedBy, Actor)
+    HasComponent(food, Edible)
+
+effects:
+    ShiftGauge(Actor, Hunger, Down)
+    Destroy(food)
+```
+
+The planner binds `food` from the actor's known entity set. Conditions whose state
+dimension no affordance can establish act as candidate filters; achievable
+conditions remain in the regressed subgoal. Thus `HasComponent(food, Edible)`
+filters candidates while `RelationTargetIs(food, ContainedBy, Actor)` can regress through
+`take`.
+
+Binding several free parameters forms the constrained product of their candidate
+sets. Search remains lazy: it produces one compatible substitution per successor
+instead of materializing every action/entity combination.
+
+Non-enumerable input values are never invented. An unbound `Text` input makes that
+grounding unavailable unless a caller supplied it. Finite symbol domains must be
+declared explicitly.
+
+## Existential goals
+
+A goal may contain locals:
+
+```text
+exists food:
+    RelationTargetIs(food, ContainedBy, Actor)
+    HasComponent(food, Edible)
+```
+
+Candidate binding grounds the local against known entities, retaining the cheapest
+successful plan across groundings. Static conditions filter candidates; achievable
+conditions are left for regression.
+
+Identity-specific goals use constants:
+
+```text
+RelationTargetIs(Photo42, ContainedBy, Actor)
+```
+
+The two cases share the same substitution machinery. Fungibility is a free
+variable; identity is a constant.
+
+## State-slot assignments and interference
+
+Conditions regress through assignments to the same state slot:
+
+```text
+RelationTarget == target  through SetRelation
+RelationTarget == None    through ClearRelation
+RelationTarget != target  through ClearRelation or a provably different SetRelation
+ComponentPresent          through SetComponent / RemoveComponent
+AtLocus                   through SetLocus
+Exists / ¬Exists          through Create / Destroy
+```
+
+The slot identity for a relation is `(source, RelationId)`, not a three-term set
+member. Setting a target implicitly removes the old target. Two effects that assign
+different targets to a unifiable relation slot are mutually exclusive; clearing a
+slot interferes with every positive target constraint. The same assignment logic
+rejects contradictory component, locus, existence, and gauge effects.
+
+Execution still rechecks every step because another actor or a contested outcome
+can invalidate a sound symbolic plan. A deterministic handler may not add an
+undeclared applicability veto.
+
+Entity inputs are live by grounding, so positive `Exists(input)` is normally
+redundant. `Create(result)` binds a fresh step result that later effects and steps
+may reference. The schema, `Step`, outcome, offers, and wire reserve that shape
+now; search expansion through `Create` remains deferred until fresh-result
+unification is implemented.
+
+## Gauge regression
+
+A planner gauge goal is a registered qualitative threshold:
+
+```text
+GaugeAtMost(Actor, Hunger, Sated)
+```
+
+The current reading determines the required direction:
+
+```text
+on satisfying side -> satisfied
+on other side      -> required Up or Down
+```
+
+Only effects on the same entity term and `GaugeId` in the required direction are
+candidate predecessors. A directional effect guarantees crossing at least one
+registered region boundary in the required direction, so the number of
+intervening regions bounds repeated applications. Regression conservatively
+advances one region per application. Arbitrary singleton levels and bounded
+interior bands are readable execution conditions but are not regressible from a
+direction-only effect: it may skip over them. The QSIM model reasons about
+registered qualitative regions and orientation, never generic numeric distance.
+
+## Cost and search order
+
+Search is uniform-cost initially. `CostModel` receives the actor, affordance,
+partial or complete grounding, and world:
+
+```text
+cost(actor, affordance, grounding, world)
+```
+
+This supports actor-specific preferences and input-sensitive choices without
+placing cost in the affordance schema. A heuristic may be added only if it is
+admissible for the mixed boolean/QSIM state model.
+
+## Movement and derived location
+
+Movement must expose planner-comparable location facts. A callback such as
+`same_locus(actor, item)` is not sufficient because regression cannot identify the
+effect that establishes it.
+
+The planning projection therefore exposes the engine-owned derived functional
+slot `LocusOf(entity)`, evaluated by `enclosing_locus`. A shared-locus requirement
+is a join:
+
+```text
+exists locus:
+    AtLocus(Actor, locus)
+    AtLocus(item, locus)
+```
+
+`go(exit, destination)` advertises `SetLocus(Actor, destination)`. The app derives
+`destination` from the exit while grounding the action; it is an ordinary input by
+the time a step is recorded. No `LocatedIn` edge is stored or maintained, and
+nesting depth does not affect the query.
 
 ## Termination
 
-The search is total: it returns a plan or `None`, never spins. A visited set keys
-subgoals by an order-independent normal form and settles each once; a depth bound
-caps plan length and a settled-node budget backstops a pathological table. For the
-reference verbs (plans of one or two steps over a handful of affordances) neither
-bound binds; they exist so the function is total by construction.
+The search is total:
 
-## Movement (`go`) is deferred, and why it is *forced*, not lazy
+- a visited set keys nodes by a normalized formula plus substitution;
+- a depth bound caps plan length;
+- a settled-node budget caps pathological branching;
+- gauge regression has a repetition bound;
+- candidate enumeration is finite and knowledge-scoped.
 
-`go`'s effect is "the actor is now at the exit's destination", where the
-destination is *derived* from the exit (`world.exit_destination`), not a frame
-role. Modeling that needs a derived/functional term the vocabulary does not have.
-It is deferred, and the reason is a hard constraint:
+It returns a plan or `None`, never an unbounded search.
 
-`Known` is co-located-only. An agent knows only the entities sharing its locus, so
-`bind_var` can never surface an entity in another room as a candidate, so **no
-cross-room goal is formable**, so nothing can require a `go` step. Building
-`go`'s derived-location handling now would be a capability no test can drive,
-which the falsifiability rule forbids; and a derived `Term` is a pure additive
-change to unserialized vocabulary (cheap to retrofit), which the reversibility
-gate says to defer regardless of likelihood. The MVP planner therefore plans
-**within-room manipulation** (`take`/`drop`/`put` over co-located known entities),
-which is exactly the world `known_here` describes. `go`'s derived-location
-handling lands when perception / multi-room `Known` makes a cross-room goal
-formable, because that is what would exercise it.
+## Execution and replanning
 
-## The API, and the replan-loop seam
+The planner proposes steps whose inputs are ground when their turn arrives. The
+driver executes each through the app's shared affordance implementation and binds
+its results for dependent steps. A deterministic refusal is a contract violation.
+A contested failure excludes that exact `(affordance, actor, inputs)` grounding
+for the current search and replans from live world state. Opaque affordances never
+enter the effect index.
 
-```rust
-Planner::new(affordances, model, cost).plan(actor, goal, known, world) -> Option<Plan>
-Planner::new(affordances, model, cost).plan_excluding(.., known, world, excluded) -> Option<Plan>
-```
-
-The static planning context (the affordance table and the app's read/cost
-policies) lives in the `Planner`; the per-query inputs (actor, goal, known set,
-world) are `plan` arguments. `world` is borrowed only for the call, so the caller
-can take `&mut World` to execute the returned plan immediately after.
-
-The **replan loop** is built (step 5) as the [execution driver](execution.md), and
-it consumes `plan_excluding`: on a vetoed beat the driver adds the failed
-`(affordance, frame)` to an exclusion set and replans, so the planner routes around
-that step (a different binding stays available) or, if it was the only route,
-returns `None`. `plan` is `plan_excluding` with an empty set, so the exclusion set
-was the additive `plan` argument the context/query split kept cheap. Regression
-skips a candidate step that matches an excluded entry (same affordance name, same
-bound frame). Together with the internal termination bounds, that is the two-level
-answer to "why doesn't it retry the same failed action forever": the search is
-bounded, and the executor never re-issues an excluded step (see
-[execution.md](execution.md)).
+Committed earlier effects remain in the world, so replanning begins from the
+actual partial result. A different grounding of the same affordance remains
+available.
 
 ## Falsifiability
 
-The generic planner is tested in `planner.rs` against a stub `WorldModel`
-(regression chains, cost selection, existential binding, negation, no-plan). The
-ground truth is the executable oracle in `musce_ref`: the planner's *own* output,
-run through the same `perform` a player hits, makes the goal predicate true. That
-is an independent check against world state, not a comparison to a hand-authored
-plan (many chains satisfy a goal; the planner may pick a different correct one),
-and it covers goals no hand-plan was written for.
+Each concrete affordance needs an executable oracle:
+
+1. ground its inputs across representative applicable states;
+2. prove refusal when a declared guard is false;
+3. for a deterministic affordance, prove that admitting gate plus true guards
+   commits rather than refusing;
+4. execute the real handler and validate all returned results;
+5. verify every advertised slot assignment;
+6. verify movement to a strictly different registered region in each advertised
+   gauge direction;
+7. verify that effects advertised as unconditional hold for every successful
+   outcome.
+
+Structural executor failures in an applicable deterministic case fail the oracle.
+Registration can validate schema contradictions, but it cannot prove arbitrary
+Rust handler behavior; the oracle is the behavioral half of the contract.
+
+Planner tests then run generated plans through those same handlers and assert the
+goal condition in the resulting world. Comparing against a hand-written plan is
+insufficient because several correct plans may exist.
 
 ## Relation to the other docs
 
-- [README](README.md): the agency stack and build order this doc's step 4 sits in.
-- [../affordances.md](../affordances.md): the vocabulary, guards, and the `veto`
-  the planner reads for applicability and `perform` runs at execution.
-- [preconditions.md](preconditions.md): the predicate vocabulary a goal and a
-  precondition are written in, and how a variable binds against what an agent knows.
-- [../actions.md](../actions.md): the structural executor that stays the
-  commit-time backstop a plan's add-only effects deliberately do not replace.
+- [preconditions.md](preconditions.md): the condition algebra, term scopes, and
+  candidate binding.
+- [affordances.md](affordances.md): concrete schemas and grounded execution.
+- [execution.md](execution.md): result-aware execution and contested replanning.
+- [../gauges.md](../gauges.md): QSIM readings, targets, and directions.
+- [../actions.md](../actions.md): the structural executor below successful acts.

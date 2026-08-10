@@ -1,110 +1,157 @@
-# Execution: the driver and replan-on-veto
+# Execution and Replanning
 
-> Status: **built (agency build step 5).** The execution driver lives in
-> `musce_agency` (`driver.rs`) as `Driver` / `Beat` / `Progress`, on top of the
-> planner's `plan_excluding`. It runs a committed goal's plan to completion in one
-> call. It is now wired onto the sim tick by the reference app's magpie (see
-> [drives.md](drives.md)), which runs the whole plan per scheduled tick. Interleaving
-> a plan a *beat* per tick (yielding between beats) is the remaining deferred
-> refinement: a scheduling concern, not a change to this logic.
+> Status: **target grounded-step integration specified; implementation pending.**
+> The driver executes canonical actions, binds results, and replans around
+> contested outcomes or changed live state.
 
-The driver is the bottom of the agency stack: given a committed goal, it plans,
-runs the plan beat by beat through the app's grounded action, and **replans around
-a beat that vetoes**. It is the executing half of "a scripted actor is vetoed
-exactly as a player is": each step lowers through the same `perform` a typed verb
-runs, so the same guard refuses it.
+The driver is the executing half of agency. Given a committed goal, it asks the
+planner for a transient plan, runs its steps through the app's shared affordance
+implementation, and replans when a contested step fails or live state invalidates
+the remaining plan.
 
-## Replan-on-veto is where soundness lives
+## Grounded beats
 
-The planner emits add-only plans and does not model interference (see
-[planner.md](planner.md), "Add-only effects"). It is a proposer. The correctness
-backstop is here: when a beat vetoes, the world has diverged from the plan's
-assumption (another actor moved something, a contested action failed), so the driver
-does not push on. It adds the failed `(affordance, frame)` to an **exclusion set**
-and replans **from the now-current world**. The replan either routes around the
-failed step (a different binding, a different chain) or, if that step was the only
-route, returns no plan and the driver reports `Abandoned`.
-
-Two properties make this the whole answer to "why doesn't it retry the same failed
-action forever," together with the planner's internal search bounds:
-
-- **The excluded step is never re-issued.** Exclusion keys on the affordance name
-  and the exact bound frame, so `plan_excluding` will not re-propose the step that
-  just vetoed. A *different* binding of the same affordance stays available (put into
-  a different chest), which is what "route around" means.
-- **Pursuit terminates.** Each replan adds at least one distinct step to the
-  exclusion set, and the step space over a finite `known` set is finite, so
-  exclusion eventually exhausts every route and the planner returns `None`. A
-  `MAX_REPLANS` constant backstops the pathological case, mirroring the planner's own
-  bounds; it does not bind in practice.
-
-Replanning reads **live** world state, not the state the plan was built against. A
-plan whose early beats committed is not redone: those effects are already true, so
-the new plan starts from them. The `musce_ref` oracle proves exactly this: a
-two-step take-then-put plan whose `put` is made to veto (a chest smashed mid-plan)
-recovers by re-planning onto the surviving container *without redoing the take*,
-because the coin is genuinely held after the first beat.
-
-## The generic beat boundary
-
-`pursue` takes a closure `FnMut(&mut World, &Step) -> Beat`. `Beat` is
-`Committed | Refused`: the only thing the loop needs to know about a beat is whether
-it landed. The app maps its own richer result onto it (`musce_ref` collapses
-`Outcome::Committed` / `Outcome::Refused(_)` to `Beat`), so the generic driver never
-names an app's outcome type, and the refusal *reason* is not carried up (the loop
-excludes the step regardless of why it failed). Keeping the lowering in the caller's
-closure is what lets the driver stay in `musce_agency` while `perform` and the veto
-stay in the app crate.
-
-`Progress` is `Achieved | Abandoned`. `Achieved` covers the empty plan (an
-already-true goal ran zero beats), so it doubles as the arbiter's "satisfied,
-release it" signal; `Abandoned` is "no route survived," the other release cue.
-
-## The API
+Every `Step` carries supplied values or references to earlier results:
 
 ```rust
-Driver::new(&planner).pursue(actor, goal, known, &mut world, run) -> Progress
+struct Step {
+    affordance: AffordanceId,
+    actor: EntityId,
+    inputs: Box<[ValueOrResultRef]>,
+}
 ```
 
-The static context (the planner) lives in the `Driver`, mirroring
-`Planner::new(...).plan(...)`; the per-pursuit inputs are `pursue` arguments.
-`world` is `&mut` because execution mutates it; the planner borrows it immutably
-for each replan within the call.
+Each input is validated against the affordance signature. A result reference is
+resolved before its dependent step executes. Execution performs no grammar
+interpretation or entity name resolution.
 
-## What is deferred
+The app maps its outcome onto:
 
-- **The one-beat-per-tick sim wiring.** `pursue` runs a whole plan in one call, and
-  the magpie ([drives.md](drives.md)) now calls it once per scheduled tick, so the
-  driver is live on a real NPC. What stays deferred is interleaving a plan a *beat*
-  per tick (one beat per agent per tick, yielding between beats), a scheduling concern
-  for the sim thread. The replan logic here does not change; it is re-entered per beat
-  instead of looped internally.
-- **A natural in-app veto trigger.** With deterministic, precondition-gated verbs
-  and a single actor, a correctly-planned plan never vetoes at execution; the
-  divergence the replan path handles arrives with concurrent agents or a
-  variable-outcome action (a skill roll, combat), the same gate the per-actor
-  learner of build step 6 waits on. Until then the path is exercised by a constructed
-  mid-plan mutation standing in for another actor, which drives the real `perform`
-  veto, not a stub.
+```text
+Beat = Committed(results) | ContestedFailure
+```
+
+The generic driver records returned result bindings and whether a contested
+attempt committed. A deterministic refusal or structural executor failure after
+applicability is a contract violation, not a normal `Beat`.
+
+## Replan on invalidation or contested failure
+
+The planner is a proposer. A symbolic plan may be invalidated by:
+
+- another actor changing the world;
+- a stochastic or contested outcome;
+- stale or incomplete beliefs.
+
+The planner and structural executor share relation invariants such as acyclicity.
+An opaque execution-only rule is permitted only on an affordance excluded from the
+planner's effect index.
+
+On a contested failure or failed live-state revalidation, the driver:
+
+1. records the exact grounded step in an exclusion set;
+2. reads the current live world;
+3. asks the planner for another route to the same goal;
+4. executes the replacement plan or abandons the pursuit.
+
+An exclusion key is:
+
+```text
+(affordance id, actor, resolved typed input values)
+```
+
+The failed grounding is not proposed again during that pursuit. Another grounding
+of the same affordance remains available.
+
+Committed earlier steps are not rolled back. Their effects are already part of
+world truth, so the replacement plan begins from the partial result.
+
+## Termination
+
+Each contested failure adds a distinct resolved input grounding to the exclusion
+set. Candidate domains are finite and knowledge-scoped, and the planner has its
+own node/depth bounds. `MAX_REPLANS` provides an outer bound.
+
+The driver therefore reports:
+
+```text
+Progress = Achieved | Abandoned
+```
+
+An already-satisfied goal produces an empty plan and `Achieved`. Exhausting every
+route produces `Abandoned`.
+
+## Tick integration
+
+The logical driver is independent of scheduling. An app may:
+
+- run a short plan to completion in one scheduled turn;
+- execute one beat per tick;
+- budget several beats per actor;
+- interleave actors round-robin.
+
+One-beat-per-tick execution stores the committed goal, remaining plan, and
+exclusions as app-owned runtime or persisted state. Before each beat it revalidates
+the action inputs and guards against the live world.
+
+## Gauge steps
+
+After a committed `ShiftGauge` affordance, execution re-reads the gauge:
+
+- movement to a different registered region in the advertised direction validates
+  the effect;
+- reaching the goal may finish the pursuit;
+- the same region or opposite movement is a contract violation;
+- partial movement permits another planned application within bounds.
+
+The region movement must be strict. The driver never assumes a raw numeric
+magnitude from `GaugeDirection`; the finite registered region order bounds
+progress.
+
+## Duration
+
+Duration is represented by state and repeated beats, not by an effect scheduled to
+become true later. A long activity establishes a categorical marker such as
+`Sleeping` or `Cooking`; a system or repeated affordance performs one guaranteed
+per-beat change; only a beat that guarantees crossing a qualitative region may
+advertise `ShiftGauge`. A completion reaction removes the marker or establishes the
+final categorical state at its modeled threshold. Every planner-visible effect
+therefore describes the immediate successful commit.
+
+## API shape
+
+```rust
+Driver::new(&planner).pursue(
+    actor,
+    goal,
+    known,
+    &mut world,
+    run_grounded_action,
+) -> Progress
+```
+
+`run_grounded_action` is app-supplied, preserving the crate boundary: the generic
+driver knows the canonical affordance representation but not concrete app handlers
+or outcome prose.
 
 ## Falsifiability
 
-The driver is tested in `driver.rs` against the planner's ground-fact stub: a plan
-runs to completion; a permanently vetoed step is issued exactly once and then the
-goal is abandoned (the "not forever" proof); a vetoed step is routed around onto
-another binding; an unreachable goal abandons without running anything. The ground
-truth is the `musce_ref` oracle
-`the_driver_replans_around_a_vetoed_beat_and_finishes_the_goal`: a real veto through
-`perform`, recovery against live mutated state, and the goal predicate actually true
-in the `World` at the end.
+Tests must prove:
+
+- a generated plan commits through real affordance implementations;
+- an already-true goal executes zero beats;
+- a contested failed grounding is not retried during the pursuit;
+- another grounding of the same affordance may recover;
+- replanning observes effects committed before the contested failure;
+- an unreachable goal terminates as `Abandoned`;
+- deterministic applicable steps commit and bind well-typed results;
+- gauge effects cross a qualitative region strictly in their advertised direction.
 
 ## Relation to the other docs
 
-- [README](README.md): the agency stack; execution is layer 4, and the "existing
-  sequence sweep" it will eventually be wired into.
-- [planner.md](planner.md): the proposer whose `plan_excluding` this consumes, and
-  the add-only effect model whose soundness this backstops.
-- [arbiter.md](arbiter.md): the layer above, whose committed goal flows into
-  `pursue` and whose `release` this drives via `Achieved` / `Abandoned`.
-- [../actions.md](../actions.md): the structural executor each beat ultimately
-  commits through, the commit-time backstop below even this.
+- [planner.md](planner.md): the proposer and exclusion-aware search.
+- [affordances.md](affordances.md): concrete grounded implementations.
+- [../affordance-contracts.md](../affordance-contracts.md): deterministic and
+  contested execution guarantees.
+- [arbiter.md](arbiter.md): committed goal selection above the driver.
+- [../actions.md](../actions.md): structural commit-time authority.

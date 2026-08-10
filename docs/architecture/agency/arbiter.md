@@ -1,6 +1,7 @@
 # The Arbiter
 
-> Status: **built (agency build step 5), with commitment now live.** Goal selection
+> Status: **selection and commitment built; condition-formula goal integration
+> pending.** Goal selection
 > lives in `musce_agency` (`arbiter.rs`) as `Arbiter` / `Goal` / `Urgency`. The
 > reference magpie ([drives.md](drives.md)) feeds it two *competing* drives (hoard and
 > admire) on the sim tick, so hysteresis is no longer dormant: the arbiter holds a
@@ -10,10 +11,9 @@
 > still takes a hand-authored imperative order.
 
 The arbiter answers "of everything this agent could want, which does it pursue
-right now?" A [`Goal`] is a predicate (the same goal [`Clause`] the planner
-regresses toward, ground or existential) paired with an `Urgency`. Drives emit
-goals; the arbiter ranks them and *commits* to one, handing its predicate to the
-planner.
+right now?" A [`Goal`] is a condition formula in the planner's closed state
+algebra, ground or existential, paired with an `Urgency`. Drives emit goals; the
+arbiter ranks them and *commits* to one, handing its formula to the planner.
 
 ## The real work is commitment, not ranking
 
@@ -27,10 +27,10 @@ max" (no commitment); a large one makes a stubborn agent. This is the standard
 answer to goal oscillation, and it is the arbiter's reason to exist as a stateful
 object rather than a `max` call.
 
-Goal **identity is the predicate, not the urgency.** The same want re-offered next
+Goal **identity is the normalized formula, not the urgency.** The same want re-offered next
 tick with a shifted urgency (a drive's curve moved) is the same commitment,
 refreshed, not a new goal. So `select` finds the incumbent in this tick's offering
-by predicate, refreshes its urgency, and compares challengers against the live
+by formula, refreshes its urgency, and compares challengers against the live
 value. An incumbent its drive stops offering at all is retired, and the field is
 re-picked.
 
@@ -73,7 +73,7 @@ records *which* goal was committed to as ordinary world state and rebuilds the a
 each tick with `Arbiter::resume(hysteresis, incumbent)`. The incumbent it passes is
 *this tick's* goal from the committed drive, looked up live, so a stale record never
 revives a goal a drive has stopped offering. `select` matches that incumbent into the
-candidate set by predicate exactly as an in-run commitment is matched, applies the band,
+candidate set by normalized formula exactly as an in-run commitment is matched, applies the band,
 and the winner is recorded again. `resume` is the whole seam this needs, and `new(h)` is
 now just `resume(h, None)`.
 
@@ -88,7 +88,7 @@ incumbent on its own and re-picks; the loop never calls `release`.
 let mut arbiter = Arbiter::new(hysteresis);
 loop {                                   // once per agent tick (wiring deferred)
     let Some(goal) = arbiter.select(&candidate_goals) else { continue };
-    match driver.pursue(actor, &goal.predicate, &known, world, run) {
+    match driver.pursue(actor, &goal.condition, &known, world, run) {
         Progress::Achieved | Progress::Abandoned => arbiter.release(),
     }
 }
@@ -104,7 +104,7 @@ the same `perform` a player hits.
 
 The arbiter is tested in `arbiter.rs` against hand-built goal sets: it picks the
 max, holds a commitment a near-equal challenger cannot steal, resumes a prior tick's
-commitment on a fresh arbiter, yields when a challenger clears the band or when its own
+  commitment on a fresh arbiter, yields when a challenger clears the band or when its own
 urgency fades, drops a retired incumbent, and re-picks freely after `release`. One
 end-to-end check is the `musce_ref` oracle
 `the_arbiter_selects_a_goal_the_driver_carries_out`: two injected goals, the urgent one
@@ -119,6 +119,6 @@ still serving both drives.
 
 - [README](README.md): the agency stack and the build order; the arbiter is stack
   layer 2, build step 5, policy over a working planner.
-- [planner.md](planner.md): the planner the committed goal's predicate is handed to.
+- [planner.md](planner.md): the planner the committed goal's condition is handed to.
 - [execution.md](execution.md): the driver that runs the plan and whose
   `Achieved`/`Abandoned` is the arbiter's cue to `release`.

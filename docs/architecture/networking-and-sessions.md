@@ -1,7 +1,7 @@
 # Networking and Sessions
 
-> Status: **first slice built, plus the session attachment, durable embodiment,
-> and the WebSocket transport.** The raw TCP line-mode transport, the
+> Status: **transports, session attachment, durable embodiment, and WebSocket
+> reads built; parameter-aware offer/perform wire pending.** The raw TCP line-mode transport, the
 > transport-agnostic `Connection` abstraction, the commands-in/events-out pipe
 > (`musce_net`/`musce_proto`), and the session floor
 > (`@quit`/`@who`/`@help`/`@play`, auth stubbed) are implemented and wired into the
@@ -20,16 +20,19 @@
 > `Query` (snapshot / offers) round-trips the sim thread as a pure read (no verb
 > dispatch, no mutation, no audience) and returns an `Outgoing::Reply`, projected
 > by the app's `snapshot`/`offers` seams (see
-> [engine-and-app.md](engine-and-app.md)). **Acting on a clicked id
-> (perform-by-id) is built**: a `Perform` frame (affordance name + clicked focus +
-> optional sub-pick) enters the verb/action path through `dispatch_perform` on the
-> app's `perform` seam, grounding the act with no name to resolve. The app gates
-> the supplied ids through the actor's perceivable set (the locus subtree plus that
-> locus's exits, the scope the reads project), so a click is no more powerful than a
-> typed verb; the object of a manipulation must additionally be *reachable* (held or
-> loose in the room), which perception alone is not, so a click cannot reach into
-> another creature's inventory. It refuses an under-bound frame (a missing sub-pick)
-> rather than grounding it. A grounded click then routes through
+> [engine-and-app.md](engine-and-app.md)). **Pointing actions use typed partial
+> grounding**: a `Perform` request carries an affordance id plus typed input
+> parameter bindings and enters the verb/action path through `dispatch_perform` on the app's
+> `perform` seam. The app gates supplied entity ids through the actor's perceivable
+> set (the locus subtree plus that locus's exits, the scope the reads project), so a
+> click is no more powerful than a typed verb; a physical manipulation may
+> additionally require reachability, possession, or control, which perception
+> alone does not grant. An incomplete substitution returns the inputs still
+> needed rather than attempting the act. Results are never caller-supplied; a
+> successful response returns the handler's typed result bindings. The acting
+> entity is resolved from the authenticated session's live embodiment and never
+> appears as a client-controlled binding. A complete grounded action then routes
+> through
 > the app's shared narrating perform (`act::perform_narrated`), the same one a typed
 > verb and an autonomous agent use, so a click narrates to the actor and the room
 > alike (a co-located text player reads the third-person line at once, not on their
@@ -200,7 +203,7 @@ A session holds several character attachments (the `p1`/`p2`/... slots), each a 
 1. **Built.** Raw TCP line-mode transport, to make the loop interactive (feeds the command inbox; events out to the connection).
 2. **WebSocket built; SSH proposed.** Both behind the same `Connection`
    abstraction. WebSocket also carries the structured JSON envelope, the
-   snapshot/offers read pair, and perform-by-id (a `Perform` frame grounds a clicked
+   snapshot/offers read pair, and perform-by-id (a `Perform` request grounds clicked
    act through `dispatch_perform`, then routes it through the shared narrating
    perform, so verbs, clicks, and NPC acts all narrate one act one way).
 3. **Floor built, auth stubbed.** The session floor (`@`-commands) is wired; every connection is an anonymous guest until real auth/accounts land.

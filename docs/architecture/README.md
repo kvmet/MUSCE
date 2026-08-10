@@ -72,24 +72,30 @@ These hold across every subsystem:
   effects on a shared skeleton, and how they differ from systems. *(Built, in
   `musce_ref`: the `Steps`/`Sequences` components, the `sequence_sweep` system, and
   a seeded patroller and burning torch.)*
-- [affordances.md](affordances.md): the promotion of the affordance / predicate
-  vocabulary and a guard-based veto (`Guard { clause, reason }`) into the engine
-  (`musce_action`, non-optional), why the veto is a predicate plus a reason rather
-  than a bool, and the phased migration. *(Phases A and B built: vocabulary and
-  `Affordance::veto` are engine surface; negation is phase C.)*
+- [affordances.md](affordances.md): the engine-owned canonical affordance
+  representation: actor plus typed inputs/results, functional state slots,
+  derived locus, grounding and substitution, guards, resolution contracts, gates,
+  and schema validation. *(Target representation specified; implementation pending.)*
+- [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
+  description language, generated typed handler interface, closed-vocabulary
+  boundary, and path to future non-Rust front ends. *(Target design specified;
+  implementation pending.)*
+- [affordance-contracts.md](affordance-contracts.md): ordered applicability
+  guards, deterministic/contested/opaque resolution, unconditional effects, and
+  executable-oracle obligations. *(Target design specified; implementation
+  pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
-  the normalized byte level, inclusive target interval, and raw up/down direction.
-  *(Foundational value types built; evaluation and agency integration proposed.)*
-- [offers.md](offers.md): enumerating the affordances available on an entity for a
-  pointing client ("what can I do to this?"), the three-way `OfferStatus`, why it
-  is a private read rather than the `examine` verb, and the type-filter gap a
-  resolver-less consumer inherits. *(Built: the query in `musce_ref`; the wire form
-  is proposed.)*
-- [agency/](agency/README.md): autonomous agent behavior on a shared affordance
-  layer: drives to goals, an arbiter, a GOAP planner over the world graph filtered
-  by what an agent knows (`Known` relation edges), and execution reusing the
-  sequence sweep. *(Proposed, exploratory; the affordance and precondition sets are
-  the first piece thought through.)*
+  raw normalized readings, registered qualitative regions, strict directional
+  effects, and bounded QSIM regression. *(Foundational raw value types built;
+  qualitative planning integration pending.)*
+- [offers.md](offers.md): parameter-aware affordance enumeration for pointing
+  clients, partial typed input substitutions, result declarations,
+  missing-input picks, and the generic perform wire shape. *(Target
+  representation and wire update specified.)*
+- [agency/](agency/README.md): autonomous behavior on the shared affordance layer:
+  drives, goal arbitration, backward planning over comparable effects, knowledge-
+  scoped parameter binding, QSIM gauges, and grounded execution with replanning.
+  *(Target affordance/planner representation specified; implementation pending.)*
 - [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
   overlay, the account floor, staff multi-puppet). *(Built: raw TCP, session
@@ -215,6 +221,12 @@ Built:
 
 Deferred (with seams in place where noted):
 
+- Affordance/agency representation: typed action-local inputs/results, canonical
+  actions and outcomes, functional relation and derived-locus slots, deterministic
+  and contested execution contracts, registered qualitative gauge regions, the
+  Rust `affordance!` authoring macro, effect-goal unification, QSIM regression, and
+  parameter-aware pointing wire forms. The target design is in `affordances.md`,
+  `gauges.md`, `offers.md`, and `agency/`.
 - App logic: timed behavior (sequences and effects) on a shared skeleton is
   **built** in `musce_ref` (the `Steps`/`Sequences` components, the
   `sequence_sweep` system, a seeded patroller and torch; see sequences.md), over
@@ -244,6 +256,10 @@ Deferred (with seams in place where noted):
   skill-check check grows from), but two-sided door state is still deferred.
 - Sharding: locator, hub, entity handoff.
 - A scripting layer for builders.
+- A non-Rust affordance authoring surface for hot reload or non-Rust content
+  authors. The target Rust `affordance!` description language and its canonical
+  AST are designed in
+  [affordance-authoring.md](affordance-authoring.md).
 - Relationship traversal index (the generic secondary index and the spatial
   proximity index over room coordinates are **built**; see indexes.md).
 - Sense propagation (sound/smell/light) as timed exit-graph walks.

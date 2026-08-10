@@ -1,6 +1,7 @@
 # Engine and App
 
-> Status: **built.** The runtime (`musce_host`) is a library parameterized by an
+> Status: **engine/app boundary built; typed grounded-perform seam pending.** The
+> runtime (`musce_host`) is a library parameterized by an
 > injected `App`; the engine crates carry no app content; the reference app
 > `musce_ref` owns the verbs, the seed world, name resolution, the `@play` actor
 > policy, `main`, and the end-to-end test. This records the boundary between the
@@ -111,13 +112,16 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   routes a read `Query` to them and serializes the wire result (see
   [networking-and-sessions.md](networking-and-sessions.md) and
   [offers.md](offers.md)). An app with no pointing client returns empty projections.
-- **`perform: PerformHandler`** the pointing client's *act*: run a clicked
-  affordance on entities already bound (the clicked focus and any sub-pick), with no
-  name to resolve. App policy because the affordance set and which role the focus
-  fills are app vocabulary; the engine routes the act through `dispatch_perform`
-  (the same `Ctx`-and-audience path a verb narrates through), holding no affordance
-  knowledge. Distinct from the two reads: it mutates and narrates. An app with no
-  pointing client supplies a no-op.
+- **`perform: PerformHandler`** the pointing client's *act*: validate a partial
+  substitution of typed input ids to values, complete the inputs, and run the
+  resulting affordance with no name to resolve. Results are produced only by the
+  handler. The actor comes from the authenticated session's live embodiment and is
+  never supplied by the request. App policy decides which
+  affordances a selected entity participates in and which parameter receives it;
+  the parameter declaration travels in-band rather than relying on a global role.
+  The engine routes the act through `dispatch_perform` (the same
+  `Ctx`-and-audience path a verb narrates through). Distinct from the two reads:
+  it mutates and narrates. An app with no pointing client supplies a no-op.
 
 ### The component boundary
 
@@ -181,6 +185,12 @@ moving files.
   fixed.
 - **`execute` / `Action` / `ExecError`.** Already public: the structural mutation
   path an app's rule-checked handlers commit through.
+- **`affordance!` and the canonical affordance types.** The proposed app-facing
+  description language declares typed inputs/results, logical requirements and
+  effects, a resolution contract, and the Rust handler and narrator that implement
+  the act. It generates typed values, adapters, and registration metadata, then lowers to the engine-owned
+  canonical AST; see
+  [affordance-authoring.md](affordance-authoring.md).
 - **The audience resolver, `Outbound`, and `Actors`.** Engine mechanism the app
   does not touch directly. `dispatch_bare` already takes the command table as a
   parameter, so it drives the app's table unchanged.

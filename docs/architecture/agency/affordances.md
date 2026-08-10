@@ -1,231 +1,245 @@
-# Affordances
+# Affordance Instances and Grounded Execution
 
-> Status: **partially built.** The `Affordance` struct, the case `Frame`, and
-> `Guard { clause, reason }` with the `Affordance::veto` evaluator are built in the
-> engine (`musce_action`, non-optional; see [../affordances.md](../affordances.md)).
-> `musce_ref` carries the affordances (`take` / `drop` / `put` / `go` / `eat`),
-> `RefWorldModel`, the `known_here` knowledge seed, and `perform` (the
-> grounded-action dispatch). All five are grounded as `Ctx`-free actions
-> (`do_take` / `do_drop` / `do_put` / `do_move` / `do_eat`) that fold in their own
-> veto, so a player verb and `perform` share one rule per verb; `perform` dispatches
-> every one and returns a uniform committed/refused `Outcome` (movement's richer
-> `MoveOutcome` is collapsed to it). The engine `Affordance` also carries an
-> authority `gate`, which `perform` enforces against the acting verdict (guest by
-> default) before committing. The affordance *table* and its two indexes,
-> the rest of the verb catalog as `musce_ref` instances, and the planner
-> (regression) remain proposed. This doc covers what a grounded action carries and how the
-> reference verbs collapse onto a handful of structural shapes; the symbolic
-> vocabulary a precondition is written in lives in its sibling
-> [preconditions.md](preconditions.md).
+> Status: **target design specified; implementation pending.** Concrete app
+> affordances will be expressed with the engine-owned input/result and functional
+> state-slot representation described in
+> [../affordances.md](../affordances.md).
 
-## The affordance
+An affordance is the shared gameplay act beneath every front end. A text command,
+a clicked control, a script, and an autonomous plan may bind it differently, but
+all produce the same grounded action and run the same app implementation.
 
-An **affordance** is a grounded action: the reusable unit both a player verb and
-an NPC planner resolve to. It carries four things:
+## Signature, model, and implementation
 
-- **A case frame** binding the actors and objects: `(actor, object?, target?,
-  kind?)`. This is the same frame the parser already produces (`verb / dobj /
-  prep / iobj`) and the same frame the structural action already is
-  (`Relate(source, target, kind)`, with `Move` its containment face). See
-  [../actions.md](../actions.md). `kind` is the preposition/relation:
-  `in`/`to`/`with`.
-- **A guard set:** predicates that must hold for the action, each paired with the
-  reason a player hears when it fails (`Guard { clause, reason }`). This is a
-  symbolic approximation of the handler's real pre-commit rule, not the rule
-  itself. It has two readers: the handler calls `Affordance::veto` to gate the
-  verb (showing the first failing guard's reason), and the planner reads the same
-  clauses to test plannability. The parts of the real rule the vocabulary cannot
-  express (`can_traverse`, the containment cycle) stay truth and re-check at
-  execution. See [../affordances.md](../affordances.md).
-- **An effect set:** the predicates the action makes true or false, so the
-  planner can chain backward toward a goal.
-- **An authority gate (`gate: Gate`):** the capability the act requires, distinct
-  from the gameplay guards. Guards are about the *body* (world state, read for any
-  actor); the gate is about the *principal's* authority (a `Verdict`, meaningless
-  for a body with no account). It is enforced on the automation entry: `perform`
-  checks `Affordance::permits` against the actor's verdict (guest by default) before
-  it commits, so a cap-gated act is unavailable to plain automation until an app
-  hands it authority. A player verb's command keeps its own `CommandTable` gate, so
-  both entries express the same requirement at their own boundary. See
-  [../affordances.md](../affordances.md).
-- **A cost:** the edge weight A\* minimizes. Where personality lives.
+A concrete affordance carries:
 
-A **verb** is `affordance + text parser`. A **GOAP action** is `affordance +
-(precondition, effect, cost)`. The grounded core is shared; the two front-ends
-are independent. A player never touches the symbolic model; an NPC never parses
-text.
+- a name and typed action-local input/result signature;
+- ordered guards over the closed condition algebra;
+- declared effects over the matching effect algebra;
+- a deterministic, contested, or opaque resolution mode;
+- an authority gate;
+- a typed narrator;
+- an app implementation that commits the act and returns results.
 
-## Primitives are the structural action set; verbs are instances
+Cost is not intrinsic to the affordance. `CostModel` reads
+`(actor, affordance, grounding, world)` so costs may vary by actor and selected
+inputs.
 
-The affordance *primitives* are not `take`/`unlock`/`cook`. They are the
-structural Action shapes the executor already has (see [../actions.md](../actions.md)):
+The declared effects are unconditional promises of every successful act. Execution
+does not interpret them as structural commands. The shared performer checks the
+gate and guards, then calls the app implementation to resolve the declared mode and
+commit through the structural `Action` vocabulary. A deterministic implementation
+cannot add another applicability veto.
 
-- `Move(entity, into)`
-- `Relate(a, b, K)` / `Unrelate(a, b, K)`
-- `SetComponent(e, C, v)` / `RemoveComponent(e, C)`
-- `Create(kind)` / `Destroy(e)`
+## Reference signatures
 
-That set is closed, small, and shape-free. A **verb** is one of those shapes with
-bound parameters, a rule predicate, cost, and prose. This is the same collapse the
-predicates went through one level up: the kinds are closed, the parameters are
-open app vocabulary. `unlock` is not a primitive; it is `RemoveComponent(target,
-Locked)` plus a has-key rule, and writing it down assumes `Locked` exists, that a
-door is the thing, and that unlocking means removing that component. All of that is
-world shape and lives in `musce_ref`, exactly like `Locked`, `container`, and
-exits already do. `open`/`close`/`lock`/`unlock`/`cook`/`light` are not six
-affordances; they are one primitive (`SetComponent`/`RemoveComponent`)
-instantiated six ways. So the affordance layer invents no new primitive set: it
-reuses the executor's vocabulary and adds per-instance metadata.
+The signatures describe action occurrences without imposing global participant
+roles:
 
-## Effects are the committed mutation, projected
-
-An affordance's effect *is* the structural Action it commits, read as `related` /
-`tag` predicates. Nothing is separately authored:
-
-- `Move(item, into=actor)` → `holds(actor, item)` true, `holds(old, item)` false,
-  read off `(source, target, kind)`.
-- `Relate(self, x, Known)` → `knows(self, x)`. Knowledge is world state, so
-  acquiring it (`search`) is an ordinary mutation, not a special channel; the
-  "indirect objects must be *found* first" problem FEAR barely has falls out of
-  this. (Which `x` a `search` discovers is settled at execution; see
-  [preconditions.md](preconditions.md), "Argument binding.")
-- `SetComponent(food, Cooked)` → `tag(food, Cooked)`. A state transition's effect
-  is the tag it sets or clears, derived exactly as a `Move`'s is. There is no
-  "authored effects" bucket.
-
-The one case that is *not* a direct projection is a verb that changes a **value**
-whose planner-relevant meaning is a threshold (`eat` lowers hunger). Do not plan
-over the number: an app **system** maintains a derived tag at the threshold
-(`tag(self, Hungry)` clears when hunger drops), and the verb's chainable effect is
-that tag flip. Same escape hatch as "Testing component content" in
-[preconditions.md](preconditions.md); the numeric work stays in a system, the
-planner sees a tag.
-
-## The reference-app verb catalog
-
-Not the primitive set: a catalog of `musce_ref` *instances*, each a primitive
-shape with bound params, a rule, and prose. The point of the table is that a large
-verb surface maps onto a handful of shapes. The frame column shows how the verb
-binds; the primitive column is the shape it instantiates.
-
-| Verb | Case frame | Instantiates |
+| Affordance | Parameters | Successful state change |
 |---|---|---|
-| `take` | (actor, object=item) | `Move(item, into=actor)` |
-| `drop` | (actor, object=item) | `Move(item, into=locus)` |
-| `give` | (actor, object=item, target=being) | `Move(item, into=being)` |
-| `put` | (actor, object=item, target=container, kind=`in`) | `Move(item, into=container)` |
-| `go` | (actor, target=exit) | `Move(actor, into=dest)` |
-| `open` / `unlock` | (actor, object=door[, kind=`with`, target=key]) | `RemoveComponent(door, Locked)` |
-| `close` / `lock` | (actor, object=door) | `SetComponent(door, Locked)` |
-| `cook` / `light` | (actor, object=item[, target=appliance]) | `SetComponent(item, C)` |
-| `eat` | (actor, object=food) | `Destroy(food)` (+ need via system) |
-| `search` / `examine` / `look` | (actor, object?) | `Relate(self, x, Known)` |
-| `greet` / `emote-at` | (actor, target=being) | none (precondition-only) |
+| `take` | `item: Entity` | item becomes contained by actor |
+| `drop` | `item: Entity`, `destination: Entity` | item becomes contained by destination |
+| `give` | `item: Entity`, `recipient: Entity` | item becomes contained by recipient |
+| `put` | `item: Entity`, `container: Entity` | item becomes contained by container |
+| `go` | `exit: Entity`, `destination: Entity` | actor becomes located at destination |
+| `open` | `door: Entity` | `Locked` is removed from door |
+| `unlock` | `door: Entity`, `key: Entity` | `Locked` is removed from door |
+| `eat` | `food: Entity` | food is destroyed; actor's hunger gauge shifts down |
+| `hang` | `item: Entity`, `support: Entity`, `fastener: Entity` | mounted relation is added |
+| `say` | `text: Text` | no persistent effect; emits speech |
+| `craft` | input `material: Entity`; result `product: Entity` | product is created and categorized |
 
-The verbs differ from each other only in bound params (which component, which
-destination), the rule (`unlock` needs a matching key, `open` does not), and prose;
-the shape is shared. That is why the set feels large but is not: `open`, `unlock`,
-`close`, `lock`, `cook`, and `light` are all one `SetComponent`/`RemoveComponent`
-primitive, and what distinguishes them is app vocabulary the engine never sees.
+Names such as `item`, `recipient`, and `fastener` are local documentation. The
+engine sees typed parameter ids. Alternate grammar can bind the same signature:
 
-Notes on the edges of the set:
+```text
+hang {item} on {support}
+decorate {support} with {item}
+```
 
-- **Communicative verbs mutate nothing** (see command-dispatch.md) yet still want
-  to be affordances, because a goal like `greeted(X)` is achieved by `emote-at`,
-  whose precondition `near(actor, X)` is what makes the planner discover `go`
-  first. So an affordance can have an empty effect on the *world* and still carry
-  a precondition and a belief/goal effect. Open question below: do these need a
-  full table entry or just a goal-satisfaction hook.
-- **`unlock` is the first instrument verb** (`with key`). It fits the two-slot
-  frame only because we treat the key as `target` under `kind=with`. A true third
-  object (`put coin in slot on machine`) is out of the frame; deferred, and adding
-  a slot later is an addition to the frame, not a reshape (the migration is the
-  0-to-2 decision, not 2-to-3).
+The preposition is parser syntax, not a generic action field.
 
-## The veto lives once, in the handler
+## Worked examples
 
-The checks that decide whether a mutation may happen must not be duplicated into
-the planner. They live in one place, the handler's pre-commit validate phase (the
-only veto point; see [../actions.md](../actions.md)), keyed on the **actor and the
-world**, never on the input channel. Because an agent's plan executes as a `Steps`
-sequence through the same verb helpers a player command hits, every gameplay veto
-(`can_traverse`, reachability, takeable) runs exactly once and vetoes a planned
-NPC identically to a player. This is the existing `do_move` design, extended: it is
-already why a scripted mover is stopped by a locked door.
+### Delete the entity actually controlled
 
-The declarative slice of that veto is now a shared `Guard`: `put`'s container check
-is one guard clause, evaluated by the handler through `Affordance::veto` and read
-by the planner for plannability, so the two cannot drift (see
-[../affordances.md](../affordances.md)). The imperative remainder (`can_traverse`,
-the containment cycle) still lives only in the handler, which is the rest of this
-section.
+```text
+delete(target: Entity)
 
-**Only restate a veto the planner can act on.** You cannot mechanically derive a
-precondition from arbitrary rule code (`can_traverse` is imperative; there is no
-extracting "what must be true" from it), so *some* symbolic restatement is
-inherent to planning, not eliminable duplication. Bound it: give the planner a
-symbolic precondition *only* for a condition it can chain an action to satisfy
-(door `Locked` → `¬ tag(door, Locked)`, because it can `unlock`). A veto it cannot
-decompose into another action (an arbitrary rule, a capability it lacks) gets
-**no** symbolic precondition; the planner stays optimistic, execution vetoes, it
-replans. This is the chainable/filter split again: the chainable preconditions are
-the plannable slice worth restating; every other veto lives once in the handler
-and is discovered by trying.
+requires:
+    HasComponent(target, Picture)
+    RelationTargetIs(target, ControlledBy, Actor)
 
-**One deliberate exception: the capability gate stays above the planner.** Unlike
-the gameplay vetoes, the `Gate`/`Verdict` check is not resolved in the handler. It
-sits one layer up, at `dispatch_command`, from the connection's session-cached
-account (see [../authorization.md](../authorization.md)). It keys on the
-*connection*, and an agent has none, so it does not fall through to a planned actor
-the way the handler vetoes do. This is correct, not a gap, and it rests on one
-standing invariant: **plannable ∩ gated = ∅.** Every action a planner can reach is
-ungated (the gameplay verb set); every capability-gated action is admin-only and
-parser-only (the `@`-admin set). The one veto not unified into the handler is
-precisely the one nothing plannable can hit, so the planner never needs it and the
-connection scoping never bites.
+effects:
+    Destroy(target)
+```
 
-If that invariant ever breaks (a planner-reachable action grows a capability
-requirement), the fix is bounded and known: make the requirement a property of the
-**affordance**, checked in the executor's validate phase against `ctx.verdict`,
-where every gameplay veto already lives. That folds the capability check into the
-single veto point rather than adding a parallel one, and it does *not* move
-authority onto the body: the verdict is still resolved per-account and threaded
-through `Ctx` (which already carries it), an agent just supplies one from its
-authority source instead of a connection (an authorization.md concern when it
-lands). Until the affordance table and its by-effect index exist there is nothing
-to hang enforcement on, so this stays a documented invariant; when they exist it
-graduates to a cheap registration-seam assertion, `plannable ⇒ ungated`, that fires
-the moment a gated affordance is registered into the planner's reach.
+Effect-goal unification binds `target` before the requirements are considered.
+The actor must therefore control the exact entity being destroyed, not merely
+some entity bearing `Picture`.
 
-## Two indexes over the set
+### Hang with an inferred fastener
 
-The affordance table is queried two ways, so it needs two indexes, and this is a
-shape decision worth naming now rather than an additive afterthought:
+```text
+hang(item: Entity, support: Entity, fastener: Entity)
 
-- **By name** for the parser: a player types `take`, look up the affordance,
-  bind the frame from the rest of the line. This is today's `CommandTable`.
-- **By effect** for the planner: regression asks "what affordance makes
-  `holds(self, food)` true?" and needs a reverse map from effect-predicate
-  template to the affordances that produce it. The planner never materializes a
-  graph of options; it generates successors lazily through this index, because a
-  materialized graph is every-object times every-verb times every-state.
+requires:
+    RelationTargetIs(item, ControlledBy, Actor)
+    RelationTargetIs(fastener, ControlledBy, Actor)
+    HasComponent(support, HangingSurface)
+    HasComponent(fastener, Fastener)
 
-## Open questions
+effects:
+    SetRelation(item, MountedOn, support)
+```
 
-Deliberately unresolved; listed so they are not mistaken for decided.
+A parser may bind `item` and `support` while candidate solving supplies
+`fastener`. The grounded action contains all three inputs before execution. If
+the fastener is consumed, the same parameter appears in `Destroy(fastener)`.
 
-- **Communicative affordances.** Full table entries with empty world-effects, or a
-  lighter "goal-satisfaction hook" that does not participate in regression the way
-  world-changing actions do? Still open.
-- **Cost model.** *Seam decided; policy open.* Cost is not a field on the
-  affordance but an app-supplied `CostModel::cost(actor, affordance, world)`
-  (built; the generic crate ships only `UnitCost`). Whether an app's model is flat
-  per-affordance or scaled by distance/effort at bind time is still open, as is
-  where soft content preferences land (grade the pencil by uses remaining rather
-  than filter on it; see [preconditions.md](preconditions.md), "Gate or grade").
-  Per-actor *learned* cost is build step 6 over this same seam.
-- **Derived-effect extraction.** *Decided: declared.* The `Affordance` carries an
-  explicit `effect: Clause`, and the by-effect index reads that, keeping the
-  executor's internals out of the mechanism. Auto-projecting the effect off the
-  `Action` a verb commits is a possible later refinement; it is elegant but couples
-  the index to executor internals, and may never be worth it.
+### Speech as an executable, non-planning act
+
+```text
+say(text: Text)
+
+requires:
+    HasComponent(Actor, Voice)
+    ¬HasComponent(Actor, Muted)
+
+effects:
+    []
+```
+
+The handler emits `Speech { speaker: Actor, text }`. Because there is no persistent
+effect, backward planning does not select `say` to satisfy a world-state goal.
+
+## Grounding paths
+
+Each front end produces a partial input substitution:
+
+- A text parser binds the parameters named by its grammar.
+- A pointing client binds the selected entity to the parameter declared by the
+  offer and supplies further picks as needed.
+- A planner binds parameters by effect-goal unification and condition solving.
+- A script may provide every input directly.
+
+Entity parameters left open may be solved against entities known to the actor.
+Non-enumerable inputs such as `Text` must already be ground. A `GroundAction` is created
+only when every input has a value of the declared sort. Results are absent until a
+successful `ActionOutcome`; offers never request them.
+
+No front end receives special permission from having resolved a value. The
+grounded action runs the gate, guards, and declared resolution contract through
+the shared performer.
+
+## Effects and structural actions
+
+The condition/effect algebra mirrors the planner-relevant dimensions of the
+structural action set:
+
+- functional relation targets;
+- component presence;
+- derived enclosing locus;
+- entity existence;
+- qualitative gauge thresholds and strict direction.
+
+The mapping need not be one structural action per affordance. `eat` may destroy a
+food entity and alter a backing hunger component; its planning effects are
+`Destroy(food)` and `ShiftGauge(Actor, Hunger, Down)`. Conversely, speech emits an
+event and performs no structural mutation.
+
+Executable-oracle tests ground the affordance and run its real implementation. A
+deterministic applicable act must commit, every result must have its declared sort,
+every advertised slot assignment must hold afterward, and every gauge shift must
+cross into a different registered region in its advertised direction. Contested
+acts are checked across successful outcomes; opaque acts have no planner contract.
+This prevents metadata from drifting from gameplay truth.
+
+## Guards and resolution
+
+Possession, control, locus, categorical component presence, and qualitative gauge
+thresholds are planner conditions. A condition whose state slot no action changes
+is still declared as a guard and filters candidates.
+
+For a deterministic affordance, ground inputs plus an admitting gate plus true
+guards require commitment. A normal refusal or structural failure is contract
+drift. A contested affordance may fail a valid attempt and trigger replanning. An
+opaque affordance may apply richer unmodeled rules, but it is deliberately absent
+from the planner's effect index. A containment-cycle check belongs to the declared
+acyclic relation transition semantics, which both planner and executor enforce.
+
+Effects describe only what every successful commit guarantees. A consequence that
+fires only at a threshold or on some outcomes is a reaction to a guaranteed state
+change, not a conditional affordance effect.
+
+## Indexes over affordances
+
+The registered set is indexed in two ways:
+
+- **By name/id** for commands, pointing, scripts, and grounded dispatch.
+- **By effect shape** for regression. The key is the closed state-slot variant plus
+  its relation/component/gauge id; term unification happens after lookup. Opaque
+  affordances are excluded.
+
+The planner generates groundings lazily. It does not materialize every
+affordance/entity combination.
+
+## Authoring surface
+
+App content normally declares an affordance with the Rust-embedded `affordance!`
+description language. It resembles a typed function signature with a logical
+contract:
+
+```rust
+affordance! {
+    encourage(attitude: Entity) {
+        requires {
+            attitude.has_component(InterpersonalAttitude)
+                => "That attitude cannot be influenced.";
+        }
+
+        effects {
+            attitude.shift_gauge(Affinity, Up);
+        }
+
+        resolution Deterministic;
+        execute musce_ref::act::encourage;
+        narrate musce_ref::act::narrate_encourage;
+    }
+}
+```
+
+The procedural macro generates typed input/result structs, execution and narration
+adapters, and registration metadata, then lowers the logical declarations into the
+canonical AST. Each `requires` entry pairs a condition with its ordered execution
+refusal reason; the planner consumes the condition and ignores the prose.
+
+```text
+             Rust affordance! declaration
+                         ↓
+typed handler adapter + canonical affordance representation
+                         ↓
+          validation, grounding, and execution
+```
+
+Convenience forms are syntax-level expansions, not new predicates. For example,
+`same_locus(Actor, item)` lowers to two canonical `AtLocus` constraints sharing an
+existential local. No authoring surface may introduce opaque planner callbacks or
+bypass schema validation.
+
+The canonical representation remains independent of Rust macro syntax. A future
+data file or scripting language may lower to the same AST, but it does not define
+a parallel condition/effect model.
+
+## Relation to the other docs
+
+- [../affordances.md](../affordances.md): canonical engine representation,
+  guards, gates, and registration validation.
+- [../affordance-authoring.md](../affordance-authoring.md): complete Rust macro
+  syntax and generated handler interface.
+- [../affordance-contracts.md](../affordance-contracts.md): applicability,
+  resolution modes, and executable oracles.
+- [preconditions.md](preconditions.md): the logical algebra and binding rules.
+- [planner.md](planner.md): effect-goal unification and regression.
+- [../actions.md](../actions.md): structural commit path and atomicity.

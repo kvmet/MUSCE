@@ -1,138 +1,166 @@
-# Offers: enumerating affordances for a client
+# Offers: Partial Grounding for Pointing Clients
 
-> Status: **the query is built and wire-exposed.** In `musce_ref` (`offers.rs`)
-> the enumeration returns the affordances available on an entity, each annotated;
-> `pointing.rs` projects them to the `musce_proto::web` DTOs behind the
-> `App.offers` seam, and the WebSocket read `Query::Offers` round-trips the sim
-> thread to reply with them (see
-> [networking-and-sessions.md](networking-and-sessions.md)). The type filter noted
-> below is still proposed.
+> Status: **target representation specified; implementation and wire update
+> pending.** Offers expose an affordance signature plus a partial typed input
+> substitution. The client supplies missing inputs; successful execution may
+> return typed results.
 
-A text parser never needs to *enumerate* affordances: a player types a verb and
-the parser resolves it straight to one handler. A pointing client (click, tap,
-examine) does need it. It holds an entity and asks the app "what can I do to
-this?", so it can render a live control, a greyed one with the reason, or a
-prompt for a still-missing piece. This is the renderer-side consumer the
-[affordances doc](affordances.md) foreshadowed when it noted a second audience
-could read a guard's `clause` where the handler reads its `reason`.
+A text parser starts with a verb and maps noun phrases onto affordance parameters.
+A pointing client starts with an entity and asks which affordances can accept it.
+Both are partial-grounding front ends over the same affordance schema.
 
-## A pure read, not a verb
+## A pure read
 
-Enumeration is a private read: no world mutation, no audience, no narration. It
-must **not** be wired to the `examine` verb. `examine` is an in-world act that can
-narrate ("the adventurer peers at the chest") and later trigger reactions; routing
-a curious click through it would spam the room and fire side effects on every
-poke. So passive inspection (description + offers, private to that player) is kept
-distinct from active, narrated `examine`. `affordances_on` is a `Ctx`-free
-function over `&World` precisely so it stays off the command/event path by
-construction.
+Offer enumeration is a private query. It performs no mutation, emits no
+narration, and triggers no in-world reactions. Active `examine` remains a gameplay
+act; passively asking what may be done with an entity does not run it.
 
-The same split governs the tree the client shows: "what is here" is
-`World::contents` / `container_of` / `enclosing_locus` rendered as nesting, an
-existing read over containment, not new world state. Each node also carries a
-passive **detail bag**: app-projected `(label, value)` pairs an actor perceives by
-presence (today its `Description`), so a focused entity renders without a second
-round-trip. That bag is the passive-inspection half of the split above, delivered
-as read data; the narrated `examine` act reveals the same prose but broadcasts and
-can trigger reactions, and lands with the `perform` slice. Whether the tree reveals
-the contents of a *closed* container is a visibility layer that does not exist yet
-(`Container` is a bare tag); for now it shows all contents.
+The same boundary applies to entity details and containment trees. They are
+private projections of world state, distinct from narrated actions that may be
+observed or reacted to.
 
-## Three shapes the query forces, that `veto` alone did not
+## Parameter-aware offers
 
-`Affordance::veto` answers one question about one fully-bound frame: does a guard
-fail, and if so which. Enumeration needs three things it cannot give:
+An offer carries:
 
-1. **Which role the pointed-at entity fills** (`focus_role`). The parser's name
-   resolution and `perform`'s match arms both know this implicitly; a
-   resolver-less client has neither, so the convention is stated: `put`/`go` act
-   on a `target` (a container, an exit), the rest on an `object`.
-2. **Unbound-role is not veto.** An unbound role-`Var` reads as a false predicate
-   (`WorldModel::holds` answers a free `Var` as not-held), so bare `veto` on `put`
-   with nothing chosen to put would report "You aren't carrying that" when the
-   truth is "pick something". So role-completeness is checked *before* `veto`, and
-   the status is three-way (`OfferStatus`): `Available`, `Vetoed(reason)`, or
-   `NeedsRole(role)`. `NeedsRole` is the sub-pick the client opens (choose the
-   object once the container is picked); re-classifying the now-complete frame
-   yields `Available` or the real guard `Vetoed`.
-3. **Required roles are free; the parser's type filter is not.** The roles a
-   client must supply are recovered by scanning the affordance's *guards* for
-   role-vars (`required_roles`), so no new field on `Affordance` is needed: arity
-   is already latent in the clauses. Guards, not the effect, because a guard names
-   an entity whose state must be validated, while an effect may name a *derived*
-   destination the app fills itself (`drop`'s target is the actor's room, never a
-   pick). What is *not* recovered is the parser's implicit kind gate: `go north`
-   resolves to an exit by construction, but a click does not, so the query offers
-   `go` on a rock (not locked) and `take` on a chest (not a being). Recovering
-   that filter (a declared focus-role kind, or leaning on click context) is a
-   deferred design decision, pinned by a characterization test so the eventual
-   filter is deliberate, not accidental.
+- the affordance id and display name;
+- its typed input and result declarations;
+- the partial input substitution already supplied;
+- the inputs still requiring values;
+- the result of evaluating every guard that is ground enough to test.
 
-   The resolution scope's *reachability* half **is** recovered, though, because it
-   is a safety boundary, not a nicety: a manipulated object must be `reachable`
-   (held by the actor or loose in the actor's locus), which perception alone is not.
-   Perception spans the whole locus subtree, so an item nested in another creature's
-   inventory is visible; without the reachability gate a click could take it, which
-   the text path's room-scoped resolution never allows. This is one containment
-   level, distinct from the deferred kind filter: a reachable wrong-kind object (a
-   chest on the floor) still classifies by its guards.
+The selected entity does not implicitly mean `object` or `target`. The app's
+offer rule binds it to a declared parameter:
 
-Points 2 and 3 are the same gap the planner has, from a new angle: a
-resolver-less consumer needs the full guard set and loses the resolution scope
-that silently enforced some preconditions (see the affordances doc's note on name
-resolution as an implicit guard). The click UI is the third such consumer, after
-the handler and the planner.
+```text
+selected chest:
+    put.container = chest
 
-## Where it lives
+selected coin:
+    take.item = coin
+    put.item = coin
 
-`offers.rs` is app content in `musce_ref`, like `perform`: it names the concrete
-affordance set and reads them through `RefWorldModel`. The *classification*
-(`classify`, `required_roles`, `focus_role`) is generic and could promote into
-`musce_action` once a second app wants it, the same promotion discipline the
-affordance vocabulary itself followed; it stays in the reference app until that
-second consumer exists.
+selected exit:
+    go.exit = exit
+```
 
-## Open question: the focus role is not carried in-band
+Those parameter names are action-local labels carried in-band. A generic client
+does not need app-specific knowledge of argument positions.
 
-Point 1 above *states* the convention rather than carrying it. `focus_role` is a
-by-name function in `musce_ref` (`put`/`go` act on a `target`, the rest on an
-`object`), consulted twice and independently: once by enumeration to build the
-frame it classifies, and once by `perform` to map an incoming `focus`/`with` pair
-back onto roles (`pointing.rs`). The two agree because they call the same
-app-local function, not because anything on the wire says so.
+## Classification
 
-So a client cannot construct an act for an affordance it was not taught. `Offer`
-carries the affordance's name and its status, and `OfferStatus::NeedsRole`
-carries the role of the *sub-pick*, but the role the clicked entity itself fills
-is never sent. The `Role` type already serializes; it is the focus slot that has
-no field for it.
+Offer status is:
 
-Two reasons this is worth more than a missing field usually is:
+```text
+Available
+Needs(inputs)
+Vetoed(reason)
+```
 
-- **It is the one place "drivable entirely in-band" is currently false.** A
-  generic client holding no app vocabulary can render offers but cannot perform
-  one without knowing the convention out of band, and a second app choosing a
-  different convention would break clients with no wire-visible signal. That
-  makes it the gate on the boundary property the whole offers/perform pair exists
-  to provide.
-- **The envelope is a serialized two-slot shape.** `focus`/`with` fixes both the
-  arity and the anonymity of the roles, and `Frame`'s arity is deliberately fixed
-  to match (`musce_action::affordance`). Declaring roles per offer, or admitting a
-  third slot, is therefore a wire migration rather than an addition.
+- `Available` means every input is ground and every declarative guard holds.
+- `Needs` lists the unbound inputs the client must ask the user or solver to
+  fill.
+- `Vetoed` means at least one fully ground guard is false. Its reason comes from
+  the earliest declared guard currently proven false; an earlier unground guard
+  may later replace that reason.
 
-Deliberately left open rather than solved here. The shape of the fix (carry the
-focus role on `Offer`, or name roles generally and let an offer declare its
-slots) should be clearer once the lower-level predicate and effect wrinkles
-settle, since those determine what an affordance's roles are in the first place.
+`Available` means the attempt is applicable. It guarantees commitment for a
+deterministic affordance; a contested affordance may still resolve as failure.
+Opaque affordances use the same offer classification for their declared guards,
+then apply their additional rule during execution.
+
+An unbound input is not a false predicate. A guard is evaluated only when every
+term used by that guard is ground. This prevents "choose an item" from being
+misreported as "you aren't carrying that."
+
+After each pick, the client sends the expanded partial substitution for
+reclassification. A complete input substitution becomes the same `GroundAction`
+used by text commands, scripts, and plans.
+
+## Types and candidate choices
+
+Each missing input includes its sort and a presentation label. Entity
+inputs may additionally carry candidate ids selected by the app's
+knowledge/perception and reachability policy. Non-enumerable text is supplied through text
+input; it is never enumerated.
+
+Types prevent invalid wire values, but they do not replace guards. Two inputs
+may both be `Entity` while requiring different facts:
+
+```text
+hang.item      requires ControlledBy(item, Actor)
+hang.support   requires HangingSurface(support)
+hang.fastener requires Fastener(fastener)
+```
+
+The app may narrow a picker from these structural conditions. The final grounded
+action still evaluates the full guards before execution.
+
+## Perception is not control
+
+An entity being visible or co-located does not make it usable. Offer enumeration
+uses the same structural distinctions as the affordance:
+
+- perception determines whether an entity may be named or selected;
+- reachability determines whether physical interaction can be attempted;
+- possession and control are explicit relations;
+- component and gauge conditions express categorical and ordered requirements.
+
+No generic `available(actor, entity)` predicate collapses these meanings.
+
+## Wire shape
+
+The wire representation mirrors the canonical signature rather than fixing an
+arity:
+
+```text
+Offer {
+    affordance,
+    parameters: [ParameterDecl], // includes Input/Result mode
+    bindings: [ParameterBinding],
+    status,
+}
+
+Perform {
+    affordance,
+    inputs: [ParameterBinding],
+}
+
+Performed {
+    results: [ParameterBinding],
+}
+```
+
+Bindings name parameters by their stable schema id and carry a typed wire value.
+The client supplies only input bindings; results come only from the successful
+server outcome. The server validates ids, modes, sorts, completeness, visibility,
+and guards; the client cannot gain authority by manufacturing a binding.
+
+The actor is derived from the authenticated session's live embodiment. It is
+never a wire field or caller-supplied parameter binding.
+
+This shape supports any fixed affordance arity, non-entity values, and produced
+results without changing the envelope for each new verb. Results appear in an
+offer for presentation but never under `Needs`.
+
+## Where policy lives
+
+The engine owns generic schema validation and partial-substitution mechanics. The
+app owns:
+
+- which affordances are exposed for a selected entity;
+- which parameter receives that entity;
+- perception and candidate enumeration;
+- concrete guards, refusal prose, and execution.
+
+The division keeps the wire generic without teaching the engine what a chest,
+exit, picture, or fastener means.
 
 ## Relation to the other docs
 
-- [affordances.md](affordances.md): the veto model this reads. `OfferStatus` is
-  the "richer renderer reads the `clause`" audience that doc anticipated.
-- [networking-and-sessions.md](networking-and-sessions.md): the wire form, now
-  built. Because enumeration is a read, it rides a `Query`/`Reply` message pair
-  distinct from the command/event action path, over the WebSocket transport a
-  browser client needs.
-- [agency/README.md](agency/README.md): the planner, the other resolver-less
-  consumer of the same guards, which required the full guard set for the same
-  reason enumeration does.
+- [affordances.md](affordances.md): typed inputs/results, grounding, and guard
+  evaluation.
+- [agency/preconditions.md](agency/preconditions.md): substitution and candidate
+  binding.
+- [networking-and-sessions.md](networking-and-sessions.md): transport of queries,
+  replies, and perform requests.

@@ -1,211 +1,286 @@
-# Affordances, Predicates, and Guards
+# Affordances, Conditions, and Effects
 
-> Status: **phases A, B, and C built.** The affordance/predicate vocabulary lives
-> in the engine, non-optional, in `musce_action` (`affordance.rs`), along with
-> `Guard { clause, reason }` and the `Affordance::veto` evaluator (phase B) and
-> engine-owned negation via `Literal { negated, predicate }` (phase C); the
-> optional `musce_agency` crate re-exports the vocabulary and keeps the
-> planner-side `CostModel` and `bind_var`. `go`'s locked-exit veto is the first
-> negated guard. This doc records the promotion decision and the phased migration;
-> the remaining agency work (the planner and up) sits on top.
+> Status: **target representation specified; implementation pending.** The
+> engine-owned affordance vocabulary will use typed input/result parameters,
+> functional state slots, grounded substitutions, explicit resolution contracts,
+> and a Rust `affordance!` authoring macro. The optional `musce_agency` planner
+> consumes this representation but does not own it.
 
-The affordance vocabulary was built agency-first, on the assumption that only a
-planner needs it. That assumption is wrong in a useful way: a verb-gate ("may
-this actor do this now, and if not, what do they hear?") exists whether or not
-anything plans. The GOAP planner is one *consumer* of that gate, not its owner.
-Promoting the vocabulary and a declarative veto into the engine gives verbs and
-the planner a *single* precondition to read, and leaves agency as what it should
-be: a drive/goal planner on top.
+An **affordance** describes an attempt an actor can make: the values that identify
+the attempt, the world conditions under which it is applicable, the state changes
+it advertises to planners, its authority requirement, and the app implementation
+that validates and commits it.
 
-## Why this belongs in the engine
+The representation belongs in `musce_action`, not in the optional planner. Player
+commands, pointing clients, scripts, and autonomous agents all need to ground and
+validate the same act. GOAP is one consumer of that common representation.
 
-- **Guards are a dispatch concern, not a planner concern.** Gating a verb by a
-  declarative precondition is useful to any app, and to non-GOAP automation, with
-  no planner in sight. That breadth is the justification for making it
-  non-optional, not a violation of minimalism.
-- **"The engine owns a kind iff it reads it" is satisfied.** The `veto` evaluator
-  is engine code that genuinely *reads* predicates: it iterates a guard's clause
-  and calls back into the app-supplied `WorldModel`, the only thing that knows
-  what `"contained_by"` or `"container"` mean. The engine interprets no app
-  vocabulary itself. A handler calls `veto` where its hand-written precondition
-  check used to sit (see the note on *where* the check runs, below).
-- **The planner becomes a client, not the home.** `musce_agency` keeps regression,
-  `bind_var`, `CostModel`, the arbiter, and drives, and depends on the engine
-  vocabulary like any other consumer.
+## Actor and typed inputs/results
 
-## Layering after promotion
+Every affordance has one privileged participant, `Actor`, and a fixed signature of
+typed, action-local parameters:
 
-- **Engine, non-optional (`musce_action`):** `Term` / `Predicate` / `Literal` /
-  `Clause` / `Affordance` / `Frame`, the `WorldModel` evaluation seam, `Guard {
-  clause, reason }`, the `Affordance::veto` evaluator, and the affordance's
-  authority `gate` (`Affordance::permits`), the act's capability requirement that
-  an automation entry checks against the acting verdict, distinct from the gameplay
-  guards (see "The gate" below). This crate already owns the
-  `Action` set the predicates mirror and the command dispatch a handler runs
-  under, so the types land where the handlers that call `veto` are. (The
-  alternative, a new low crate between core and action, was weighed and set aside
-  for crate-count minimalism.)
-- **Optional (`musce_agency`):** the planner regression, `bind_var`, `CostModel`,
-  arbiter, drives. GOAP consumes the engine vocabulary.
+```text
+delete(target: Entity)
+hang(item: Entity, support: Entity, fastener: Entity)
+say(text: Text)
+give(item: Entity, recipient: Entity)
+go(exit: Entity, destination: Entity)
+craft(material: Entity) -> (product: Entity)
+```
 
-## Where the guard check runs: the handler, not `dispatch_command`
+`Actor` is supplied by the execution context. It is privileged because authority,
+cost, agency, and first-person narration are all actor-relative. Parameters define
+the rest of one action occurrence.
 
-The intuitive home for a precondition gate is `dispatch_command`, before the
-handler runs. It cannot live there. Evaluating a guard needs a `Frame` of
-resolved entities, and turning `"coin in chest"` into entities is *name
-resolution*, which is app policy that runs inside the handler. So the engine
-provides the guard vocabulary and `Affordance::veto`, and the handler calls it at
-the point its hand-written check used to sit, once it has resolved its entities.
-This is still the de-duplication that matters: the handler and the planner read
-the *same* affordance clause, so they cannot drift on what a verb permits.
+Input and result names are local identifiers, like Rust function parameter names.
+Inputs are bound before execution. Results are produced by successful execution
+and may be referenced by effects and later plan steps. Names
+carry no engine-wide semantics: `target`, `item`, `recipient`, and `fastener` are
+not members of a universal role taxonomy. Parameter order provides a compact
+runtime index and a stable display order; the engine assigns no meaning such as
+"argument zero is the patient."
 
-A second consequence: name-resolution *scope* already enforces some
-preconditions. `put` resolves its item in the actor's inventory, which *is* the
-"item is held" guard; by the time the handler builds a frame, that guard is
-guaranteed to pass, and the container guard is the one that does real work. The
-planner has no resolver, so it needs the full guard set (held *and* container);
-the handler evaluating a guard resolution already guaranteed is harmless.
+The canonical representation keeps a name and sort:
 
-## The veto model: a guard is a predicate *plus a reason*, not a bool
+```rust
+struct Parameter {
+    id: ParameterId,
+    name: String,
+    sort: ValueSort,
+    mode: ParameterMode, // Input | Result
+    slot: u16,           // compact within its mode
+}
+```
 
-The tempting move is to make the veto a bool, mirroring `WorldModel::holds`. That
-is a regression, because a bare bool cannot carry three things the execution veto
-must produce:
+Conditions and effects refer to `Actor` or a parameter by id. A grounded action
+stores only its bound inputs. Successful execution returns result bindings:
 
-1. **The reason.** "It's locked" / "You aren't carrying that" / "You can't put
-   things in that" are distinct messages the player needs. `holds` is a bool
-   because it answers a *factual* question; a veto answers a *diagnostic* one.
-   Reasons are app content and belong with the verb, never welded into the
-   evaluation seam.
-2. **Structural invariants only knowable by attempting.** The containment cycle
-   ("put the held bag into itself") is not a cheap predicate over app state; the
-   handler discovers it by attempting the `Move` and catching the executor's
-   error. "Try and observe" is beyond predicate evaluation. A proven test pins
-   this: `put`'s precondition *permits* the bag-in-bag case while the handler
-   *refuses* it, and that divergence is correct.
-3. **Stochastic outcomes.** A contested action (combat, a skill roll) resolves by
-   a roll. Its precondition may be a simple bool, but its *resolution* is not a
-   predicate at all.
+```rust
+struct GroundAction {
+    affordance: AffordanceId,
+    actor: EntityId,
+    inputs: Box<[Value]>,
+}
 
-So there are two consumers with genuinely different needs, and one representation
-should not serve both by being worse at each:
+struct ActionOutcome {
+    results: Box<[Value]>,
+}
+```
 
-| consumer | question | reads |
-|----------|----------|-------|
-| planner  | is this applicable? | the guard's `clause` (bool, via `holds`) |
-| player   | may I, and why not? | the failed guard's `reason` |
-| executor | did the commit hold? | attempt-and-observe (structural backstop) |
+`ParameterId` is the stable schema identity used by terms and the wire. `slot`
+indexes the dense input or result array for its mode, so result declarations do not
+leave holes in `GroundAction.inputs`.
 
-`Guard { clause, reason }` unifies the first two without collapsing them: the
-dispatcher evaluates a verb's guards in order via the app's `WorldModel`, and the
-first failing `clause` refuses with its `reason`. The planner reads the same
-`clause`s and ignores the prose. The bool is an *ingredient* of the guard, not the
-whole veto.
+An input may also be affected; no separate `InOut` mode is needed. A result is
+absent from a perform request and from `Needs`, cannot appear in a requirement,
+and must be produced on every successful execution. A plan may carry a symbolic
+reference to a prior step's result until that step executes. Regression through
+fresh creation is deferred, but these shapes avoid an input-only wire migration
+when it is implemented.
 
-`Affordance::veto` returns the whole failing `Guard`, not just its `reason`, so the
-caller decides how to use it: today every caller reads `reason` for the player, but
-a second audience (an observer, a log) or a later rendering rework can read the
-`clause` instead without changing the seam. That keeps the presentation choice with
-the caller rather than baking it into the veto's return type.
+The normal authoring surface is the Rust-embedded `affordance!` description
+language specified below. It assigns the compact ids and lowers its typed names
+into this canonical representation. The canonical types remain directly
+constructible by engine internals and tests, but app content should not manually
+coordinate parameter ids or type-erased values.
 
-**What guards do not replace.** The handler still owns the effect (mutation), the
-narration, the structural invariants the executor re-checks at commit, stochastic
-resolution, and any veto the current vocabulary cannot express. Those stay an
-imperative tail. A guard covers the declarative, app-state portion of the veto,
-which the [expressibility experiment](agency/affordances.md) showed is a large
-share of the common verbs but never all of them.
+## Rust-embedded action description language
 
-## The gate: authority, distinct from the guards
+App content normally uses a procedural `affordance!` macro rather than manually
+assembling ids and type-erased values. It presents the canonical representation as
+a typed function signature with `requires`, `effects`, and an `execute` handler.
+The macro generates typed inputs/results, execution and narration adapters, and
+registration metadata.
 
-An affordance carries an authority `gate: Gate` (`Open`, or `Cap(id)`) alongside
-its guards. The two look alike but answer different questions, and the difference
-is why they are separate fields rather than one predicate set:
+Every DSL construct lowers into the canonical term, formula, guard, and effect
+nodes described here. Convenience forms expand before registration; they never
+become opaque predicates. The full syntax, generated interface, validation split,
+and future external-language boundary are specified in
+[affordance-authoring.md](affordance-authoring.md).
 
-| | guard | gate |
+## Terms and variable scope
+
+A condition or effect refers to values through terms:
+
+```text
+Term = Actor
+     | Input(ParameterId)
+     | Result(ParameterId)
+     | Local(LocalId)
+     | Constant(Value)
+```
+
+Parameters are shared across the whole affordance. Reusing an input in a
+condition and an effect requires both occurrences to denote the same value:
+
+```text
+delete(target: Entity)
+
+requires:
+    HasComponent(target, Picture)
+    RelationTargetIs(target, ControlledBy, Actor)
+
+effects:
+    Destroy(target)
+```
+
+When `Destroy(target)` unifies with the goal `Destroy(Photo42)`, the requirements
+become `HasComponent(Photo42, Picture)` and
+`RelationTargetIs(Photo42, ControlledBy, Actor)`. Control of another picture does not
+satisfy them.
+
+Locals are existential witnesses scoped to a formula. They express joins whose
+identity does not define the action occurrence:
+
+```text
+exists locus:
+    AtLocus(Actor, locus)
+    AtLocus(item, locus)
+```
+
+`AtLocus` is evaluated through the engine's transitive `enclosing_locus` query, so
+nesting depth does not change its meaning. It is not a stored relation. If
+execution needs an existential witness, it becomes an input. A freshly produced
+identity becomes a result. Effects may refer only to `Actor`, inputs, results, and
+constants.
+
+## A closed state algebra
+
+Planner-visible conditions are constraints over a small set of state slots.
+Effects assign or move those same slots:
+
+| State slot | Conditions | Effects |
 |---|---|---|
-| about whom | the acting *body* (actor + objects) | the *principal's* account authority |
-| source of truth | world state, via `WorldModel` | the `Verdict`, deliberately not in the world |
-| applies to an NPC? | yes, same body, same rule | no, an NPC has no account |
-| the planner reads it? | yes, for applicability | no |
+| `RelationTarget(source, K): Option<Entity>` | equals target, unset, or differs from target | `SetRelation(source, K, target)`, `ClearRelation(source, K)` |
+| `ComponentPresent(entity, C): bool` | present or absent | `SetComponent(entity, C)`, `RemoveComponent(entity, C)` |
+| `LocusOf(entity): Option<Entity>` | `AtLocus(entity, locus)` | `SetLocus(entity, locus)` |
+| `GaugeRegion(entity, G)` | registered qualitative threshold or region | `ShiftGauge(entity, G, Up/Down)` |
+| `Exists(entity): bool` | exists or absent | `Create(result)`, `Destroy(entity)` |
 
-Folding the gate into a guard clause would force `WorldModel::holds` to see the
-`Verdict` and let an app conflate "is true in the world" with "is authorized", and
-would make the planner reason about authority an NPC does not have. So the gate is
-its own field, evaluated outside `WorldModel` by whoever performs the act.
+Relations are source-functional in the world: a source has at most one target for
+one relation kind. `SetRelation` overwrites that slot and therefore falsifies an
+equality to every other target. `ClearRelation` has no target argument. Two
+incompatible assignments to the same `(source, K)` slot interfere even when no
+delete effect was separately declared. Surface `Related(a, b, K)` syntax lowers
+to `RelationTarget(a, K) == b`; its negation lowers to inequality, not set removal.
 
-The gate lives on the affordance (not only on the command table) so the *act*
-carries its requirement to every entry: `perform` checks `Affordance::permits`
-against the acting verdict (non-connection automation defaults to `Verdict::guest`,
-so a cap-gated act is unavailable until an app hands the automation authority).
-A player verb's command keeps its `CommandTable` gate, so both entries express the
-same requirement at their own boundary; unifying an act-verb's two gates onto the
-affordance is deferred with the admin-verb table. Read-only commands that perform
-no affordance (a gated query) keep the `CommandTable` gate as their only home.
+`LocusOf` is a derived functional slot. Its evaluator calls `enclosing_locus` over
+containment, and `SetLocus` is a planner-visible guarantee made by movement. It
+does not materialize or maintain `LocatedIn` edges.
 
-## Scope discipline: what we will not build
+An affordance that changes containment across locus boundaries advertises both the
+`SetRelation` assignment and the resulting `SetLocus` projection when both matter.
+Neither effect is inferred from the other: the oracle verifies each declared slot,
+and same-locus reparenting need not claim a locus change.
 
-The generality here is an *emergent property of a clean shape*, not a license to
-build surface no verb exercises. Held lines:
+`Create` binds a fresh entity result and establishes its existence. Result-aware
+regression and cross-step result substitution are deferred, but the canonical
+schema distinguishes results now. `Exists(input)` is redundant because an entity
+input must be live; positive existence is primarily meaningful for results and
+plan validity.
 
-- **Negation only, and only where a verb needs it.** The experiment proved
-  negation is the one real gap (`go`'s `not Locked`, `take`'s non-fixture rule).
-  Disjunction is avoidable with positive markers (`give`'s recipient); value
-  comparison appears in zero current verbs. Negation shipped in phase C as a
-  `Literal` wrapper (below); `go` and `take` use it, and no other predicate
-  operator is built until a verb pulls it.
-- **No general rules engine, guard DSL, or event hooks.** Just `Guard { clause,
-  reason }` over `Literal`s of the vocabulary we have.
+The slot kinds are closed; relation, component, gauge, and qualitative-region ids
+are open app vocabulary. Static comparison first identifies a state slot, then
+unifies its terms and checks assignment compatibility.
 
-## Phased plan
+This constraint is what makes backward planning possible. A callback named
+`feels_really_fondly_about(a, b)` could answer a query but could not be regressed
+unless some effect repeated that exact opaque name. Instead, ordered sentiment is
+a gauge target and actions advertise a direction on the same gauge. See
+[gauges.md](gauges.md).
 
-Each phase is independently falsifiable and reversible until the next begins.
+The logical model is a planning projection of world state, not a vocabulary of
+English conveniences. "Same locus" is a join over `AtLocus`; meaningful control is
+a relation-target equality. They remain distinct formulas. A convenience is
+planner-visible only when it lowers to this algebra and actions expose comparable
+effects on its backing slot.
 
-- **A. Move the vocabulary, no behavior change. (Built.)** `Term`/`Predicate`/
-  `Clause`/`Affordance`/`Frame`/`WorldModel` moved from `musce_agency` into
-  `musce_action` (`affordance.rs`); `musce_agency` re-exports them and the `musce`
-  facade exposes them under `musce::action` (non-optional) as well as through
-  `musce::agency`. Ground truth held: every existing test green after the pure
-  move. `CostModel` / `UnitCost` / `bind_var` stayed on the planner side in
-  `musce_agency`.
-- **B. Guard model and the veto evaluator. (Built.)** Added `Guard { clause,
-  reason }` and `Affordance::veto`, and replaced `put`'s handler `has::<Container>`
-  check with a `veto` call over the same guard clauses the planner reads. Player
-  messages are unchanged; the container check now has a single source of truth.
-  The check runs *in the handler* after entity resolution, not in
-  `dispatch_command` (see "Where the guard check runs"), which the original plan
-  had wrong. `take` stayed guard-less at this phase: its non-fixture rule is a
-  negation the vocabulary could not yet express (converted once phase C shipped
-  negation; `do_take` now reads a `¬locus ∧ ¬player ∧ ¬creature` guard).
-- **C. Negation, when `go` needs it. (Built.)** Added negation as an engine-owned
-  `Literal { negated, predicate }` (a `Clause` is now a conjunction of literals),
-  *not* a `Predicate::Not` variant: the app's `WorldModel::holds` still answers
-  only atomic `Related`/`Tag` questions and never sees `¬`, which the engine
-  evaluates in `Literal::holds` as `holds(predicate) != negated`. `go`'s
-  `¬ tag(exit, "locked")` veto is now a guard, evaluated in `can_traverse` through
-  the same `RefWorldModel` the planner reads; a proven test shows the guard
-  predicts `can_traverse`'s permit/refuse and message. Disjunction and value
-  comparison stay deferred. (The `Predicate::Not` spelling the earlier draft named
-  was set aside because it forces every app's `holds` to implement negation, and
-  to implement it correctly; the wrapper keeps boolean logic engine-side.)
+Categorical state uses relations or component presence. Ordered quantitative
+state uses gauges. An arbitrary calculation that cannot lower into these forms is
+permitted only on an opaque, non-plannable affordance. Soft preferences belong in
+the cost model.
 
-The remaining agency work (the planner, drives, and per-actor learning) then sits
-on top of a stable engine vocabulary.
+## Conditions, guards, and resolution contracts
+
+Ordered guards pair applicability formulas with refusal prose. Every affordance
+also declares `Deterministic`, `Contested`, or `Opaque` resolution. For a
+deterministic act, ground inputs plus an admitting gate plus true guards require a
+successful commit; contested failure is explicit, and opaque acts do not enter
+planning. Advertised effects are unconditional promises of every successful
+commit.
+
+The complete applicability contract, structural-invariant boundary, conditional
+reaction rule, and executable-oracle obligations are specified in
+[affordance-contracts.md](affordance-contracts.md).
+
+## Authority is separate
+
+An affordance carries an authority `Gate` alongside its world-state guards.
+Authority is resolved from a principal's `Verdict`; it is not a world condition
+and the planner does not regress through it.
+
+| | Guard | Gate |
+|---|---|---|
+| concerns | actor and input state | principal authority |
+| source | world | `Verdict` |
+| planner reads | yes | no |
+| failure | gameplay refusal | authorization refusal |
+
+The act carries its gate so every entry point enforces the same authority
+requirement. Automation without an authority source receives the app's default
+verdict.
+
+## Non-entity inputs
+
+Inputs may be values other than entities. Their sorts determine how they may
+be grounded: entities use knowledge-scoped candidates, finite symbols require an
+explicit domain, and non-enumerable text must be supplied rather than invented by
+the planner. An executable act with no persistent effect contributes no backward-
+planning edge. The complete `say(text: Text)` example is in
+[affordance-authoring.md](affordance-authoring.md).
+
+## Registration validation
+
+Affordance registration rejects malformed schemas:
+
+- duplicate parameter names or ids;
+- a term referring to an undeclared parameter or local;
+- a value sort used in an incompatible condition/effect position;
+- an input or result used in an illegal position;
+- `Create` not targeting exactly one entity result;
+- incompatible assignments to the same state slot;
+- both gauge directions on the same gauge slot;
+- an effect whose value is already guaranteed by the requirements, when it is the
+  affordance's only advertised progress;
+- an effect whose declared state id is not registered;
+- an implementation missing for an executable affordance.
+
+Non-enumerable inputs are valid. A text command or script may supply them; a
+planner simply cannot form a grounding while one remains unbound. Redundant
+effects in an otherwise progressive affordance are removed or diagnosed so they
+do not pollute the reverse effect index.
+
+Validation happens once at registration. Grounding then uses compact ids and typed
+values without repeating schema checks. The macro catches structural and sort
+errors that are knowable during Rust compilation; registration handles errors
+that depend on the assembled app vocabulary, such as unknown ids or duplicate
+registrations. Executable-oracle tests enforce behavioral contracts that
+registration cannot infer from arbitrary Rust handler code.
 
 ## Relation to the other docs
 
-- [agency/](agency/README.md): after promotion, the agency docs narrow to the
-  planner, arbiter, and drives. The crate-boundary argument there (the generic /
-  app split) still holds, but the split moves from *crate-optional vocabulary* to
-  *engine-non-optional vocabulary plus an optional planner*.
-- [command-dispatch.md](command-dispatch.md): the dispatch path a handler runs
-  under. The guard check is *not* a `dispatch_command` gate; it is the handler
-  calling `Affordance::veto` after resolving entities (name resolution is app
-  policy, so the frame cannot exist before the handler runs).
-- [actions.md](actions.md): the structural-only executor stays the commit-time
-  backstop that guards deliberately do not replace.
-- [engine-and-app.md](engine-and-app.md): the `WorldModel` seam is the new
-  app-supplied surface this promotion adds to the engine/app boundary.
-- [gauges.md](gauges.md): the split between stored components (truth: present,
-  settable) and gauges (derived, read-only qualitative readings on a bounded
-  quantity space that a planner regresses over by direction), and why an effect on
-  a gauge is a direction rather than an exact transition.
+- [affordance-authoring.md](affordance-authoring.md): the Rust macro syntax and
+  generated typed handler interface.
+- [affordance-contracts.md](affordance-contracts.md): applicability, resolution
+  modes, unconditional effects, and behavioral oracles.
+- [agency/affordances.md](agency/affordances.md): how app verbs instantiate this
+  representation and lower grounded actions to handlers.
+- [agency/preconditions.md](agency/preconditions.md): formula evaluation,
+  substitution, unification, and candidate binding.
+- [agency/planner.md](agency/planner.md): backward regression over the comparable
+  condition/effect pairs.
+- [actions.md](actions.md): the structural mutations a successful grounded action
+  ultimately commits.
+- [gauges.md](gauges.md): normalized readings, targets, and directional effects.
+- [offers.md](offers.md): partial grounding for pointing clients.

@@ -1,6 +1,7 @@
 # Actions and the Executor
 
-> Status: **structural vocabulary built; engine/app split done.** The engine
+> Status: **structural vocabulary built; canonical grounded-action integration
+> pending.** The engine
 > owns the structural executor
 > (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
@@ -50,24 +51,25 @@ principle (a fact recovers only what a reaction cannot reconstruct by querying t
 post-mutation world), each fact's shape, and why most mutations emit none are in
 [facts.md](facts.md).
 
-Gameplay rules and perception prose live one layer up, in the verb handlers. "The
-rule logic exists once" is achieved by a shared **grounded action** per verb, a
-`Ctx`-free function that runs the veto and the commit and leaves the prose to its
-caller: `do_move` (the traversal rule `can_traverse`, today a `Locked`-exit veto),
-and `do_take` / `do_drop` / `do_put` (each folding in the affordance guard it reads
-through `RefWorldModel`). Each is shared by the player verb, the tick-loop movers
-(`wander`, sequences), and the agency layer's `perform`, so a scripted or planned
-actor is vetoed exactly as a player is. Not by pushing rules into `execute`: each
-primitive stays atomic and free of intent, `execute` owns the world, handlers own
-meaning.
+Gameplay rules and perception prose live one layer up, in affordance
+implementations. A **grounded action** is an affordance id, actor, and complete
+typed input array. Text parsing, pointing, scripting, and planning all produce
+that same form; successful execution returns typed result bindings. The shared
+performer checks the gate and declarative guards before calling the implementation.
+A deterministic affordance must then commit; contested resolution is the explicit
+failure mode, and an opaque affordance is excluded from planning. Rules do not move
+into `execute`: each primitive stays atomic and free of intent, `execute` owns
+structural truth, and affordance contracts own gameplay meaning.
 
-**The narration is shared too, one layer higher.** The default prose an affordance
-produces is not the verb handler's to duplicate: a single **narrating perform**
+**The narration is shared too, one layer higher.** An affordance's typed narrator
+receives its actor, generated input fields, and successful result fields, so prose
+does not depend on fixed `object`/`target` roles. A single **narrating perform**
 (`musce_ref`'s `act::perform_narrated`) runs the silent `agency::perform` and emits
 the affordance's first- and third-person lines, so a typed verb, a clicked control,
 and an autonomous agent all narrate the same act identically. A verb handler now
-owns only its parse and name resolution, then hands the ground frame to the shared
-narrator; a click grounds the frame by id and hands it over the same way; a tick
+owns only its parse and name resolution, then hands the grounded action to the shared
+narrator; a click supplies typed input bindings and hands the complete grounding
+over the same way; a tick
 system's driver runs it per beat, so an NPC's acts narrate to the room instead of
 mutating silently. First-person is **entity-addressed** (`to_entity(actor)`, not
 `to_connection`), so it follows embodiment: it reaches a self-acting player, a
@@ -75,9 +77,10 @@ piloting player through the body they drive, and no one for a connless NPC, whil
 the room line reaches bystanders in every case. A performer wanting bespoke,
 goal-flavored narration (the magpie's "tucks it into its nest" for a `put` serving
 its hoard drive, which the affordance-level narrator cannot know) opts out: it runs
-the silent `agency::perform` and emits its own line. `go` stays out of the default
-narrator for now: its dual-locus departure/arrival prose and its follow-on `look`
-are coupled to the derived-destination work deferred with multi-room perception.
+the silent `agency::perform` and emits its own line. `NarrationCtx` carries the
+pre-commit observations captured by the performer plus post-commit world access,
+so `go` can address departure and arrival loci without hiding location state in a
+fixed frame or recomputing the vanished source after movement.
 
 A **Command** is a request with provenance (it may be rejected); an **Action** is
 the authorized, validated mutation it parses into. The command/action boundary,
@@ -111,7 +114,8 @@ mapping straight to the component-insert mutator the way `@tel` maps to
 The executor vocabulary is small and is pure world-mutation:
 
 - `Move(entity, into)` — all containment movement
-- `Relate / Unrelate(source, target, kind)` — non-containment relationships;
+- `Relate(source, target, kind)` / `Unrelate(source, kind)` — functional
+  non-containment relationship assignment and clearing;
   `Move` is the containment face of `Relate`
 - `Create` / `Destroy`
 - `SetComponent / RemoveComponent`
@@ -142,14 +146,23 @@ Event channel and its audience model are covered in
 
 ## Atomicity: validate, then commit
 
-Every handler is shaped validate -> mutate -> emit, and the boundary between
-validate and mutate is the commit point. **All fallible checks precede the first
+Every affordance execution is shaped validate -> mutate -> narrate. The shared
+performer evaluates gate and guards, the typed handler mutates and returns results,
+and the typed narrator emits only after commitment. The boundary between validate
+and mutate is the commit point. **All permitted failures precede the first
 mutation, and the mutate phase is infallible by construction.** On the single sim
 thread with exclusive `&mut World` this makes an action atomic for free: no
 concurrency can interleave it, and there is no failure point partway through to
 unwind. The engine therefore needs no transactions, rollback, or two-phase commit
 inside a tick, and we deliberately do not add them. This is a standing decision,
 not a missing feature; see the README principle.
+
+For a deterministic affordance, the shared gate and guards are the complete
+gameplay validation phase. An implementation that refuses afterward violates its
+contract. A contested implementation may resolve the valid attempt as failure
+before the first mutation. Once mutation begins, every advertised effect is an
+unconditional promise of the successful commit; threshold-triggered or delayed
+consequences belong to reactions.
 
 `relate` in `world.rs` already embodies this: it returns `Err` for missing
 entities and cycles up front, and only then runs `remove_source` / `insert_one` /

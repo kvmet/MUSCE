@@ -1,218 +1,137 @@
-# Drives, and the live agency loop
+# Drives and the Agency Loop
 
-> Status: **built (competing drives, cross-tick commitment, and a consume drive).**
-> The reference app's magpie (`musce_ref`, `hoard.rs`) runs *two* competing drives:
-> a `Hoarder` need it relieves by stowing a shiny in its nest, and a `Curiosity` need
-> it relieves by holding one. They pull the same bead in opposite directions, so the
-> arbiter must commit to one and hold it, which is what makes hysteresis observable
-> and what motivated **cross-tick commitment** (`Arbiter::resume` plus a serializable
-> `Committed` tag). A second agent, a hungry field mouse (`consume.rs`), runs a
-> **consume** drive that exercises the planner's mid-search binding. Per-beat
-> interleaving remains deferred, below.
+> Status: **target integration specified.** Drives remain app policy over need
+> state. Their goals use the closed condition algebra, including gauge targets
+> for ordered needs.
 
-A **drive** turns an NPC's internal need-state into a goal with an urgency. It reads
-the NPC's *own* components, never the world or its beliefs: "am I hungry / restless /
-covetous" is a reading of the self. The arbiter ranks the goals drives emit and commits
-to one; the planner and driver carry it out. The magpie closes this loop on a real
-creature, on the sim tick, through the same `perform` a player hits.
+A drive turns an actor's internal need into a goal and an urgency. It does not
+choose actions. The arbiter chooses among goals, the planner finds grounded
+affordances, and the driver executes them.
 
-## Two drives, one bead
+## Responsibilities
 
-A drive is unfalsifiable until a need-component actually *changes* and some action
-*relieves* it: with a frozen need and no consumer, nothing distinguishes a working
-drive from a constant. The magpie supplies two needs whose relief pulls one object
-opposite ways, which is also what makes the *arbiter* falsifiable:
-
-- **Hoard** is `Hoarder { urge }`. Its goal is `∃x. related(x, nest, contained_by) ∧
-  tag(x, shiny)`: get some shiny thing into the nest. The relieving act is `put`.
-- **Admire** is `Curiosity { itch }`. Its goal is `∃x. related(x, actor, contained_by)
-  ∧ tag(x, shiny)`: hold some shiny thing. The relieving act is `take`.
-
-The two goal predicates differ only in the container (the nest, a constant the bird
-reads from its own `Nest` edge, versus the actor itself), so they are never equal: the
-arbiter can hold one as an incumbent while the other challenges, and the commitment
-record round-trips unambiguously by predicate. `x` is the fungible slot the planner
-binds against what the bird knows; this is the single-existential goal the planner
-already binds (planner step 4b), with `tag(x, shiny)` filtering candidates and
-regression planning the containment.
-
-With both needs pressing, the bead is wanted in the nest and in the claws at once.
-Without a held commitment the bird yo-yos it between the two every tick or two; the
-arbiter's job is to finish one phase before switching. That thrash-versus-commitment
-contrast is the oracle (below).
-
-## Symmetric, state-based relief
-
-Each need moves on its own curve, updated by a **metabolism** step, and the drive reads
-only the resulting component. The metabolism is the one place that reads the world:
+A drive reads the actor's own persisted state:
 
 ```text
-urge:  shiny in nest ? cool toward 0 : warm toward MAX
-itch:  holding shiny ? cool toward 0 : warm toward MAX
+drive(actor) -> Option<Goal { condition, urgency }>
 ```
 
-Two properties of these curves are load-bearing, and both were chosen deliberately
-after a first cut got them wrong:
+It may use exact app components to compute urgency. The goal it emits must use the
+planner's comparable condition algebra. This keeps need policy app-specific while
+goal achievement remains generic.
 
-- **Relief is gradual and symmetric, not an instant reset.** A satisfied need cools one
-  step per tick rather than snapping to zero. That gives the satisfied drive a
-  multi-tick window in which it *still offers its goal*, so the two drives genuinely
-  contend while one is being served. An instant reset would drop the just-served drive
-  out of the running entirely, leaving nothing for the arbiter to hold a commitment
-  *against*, which would make hysteresis untestable (both a committed and an
-  uncommitted bird would behave the same).
-- **The cool floor (zero) sits below the drive threshold.** So a served need eventually
-  falls silent, the drive retires, and the arbiter re-picks. This guarantees the bird
-  cannot deadlock holding a commitment forever; the pursuit always terminates.
+Drives do not query the world for candidate objects. A hunger drive knows that the
+actor wants a lower hunger reading; the planner decides which known food and which
+affordances can move it there.
 
-Satisfaction is read from the world *here*, in the metabolism (the bead's location),
-never in the drive and never in the arbiter. The drive still reads only its own
-component, preserving "a drive reads the self, not the world."
+## Gauge goals
 
-## What the bird can perceive
-
-The planner binds the fungible `x` from a **known** set. The engine's `known_here` seed
-is co-located room contents only. A magpie needs more: to stow the bead it is holding,
-or to reclaim one from its nest, it must *perceive* its own inventory and its own cache,
-neither of which is a room content. So the magpie supplies its own seed, `known_here ∪
-its inventory ∪ its nest's contents`.
-
-This is app policy, not an engine guarantee. A creature is not assumed to see into
-every container it touches (a locked box it carries would not qualify); the magpie
-knows its *own* claws and its *own* nest because those are its own state. General
-perception into arbitrary containers, and sense-propagation at range, stay a deferred
-layer.
-
-## The consume drive, and why it needed mid-search binding
-
-The magpie's two drives are *place*-drives: their relief is a thing's location (a
-shiny in the nest, a shiny in hand), and the fungible thing appears **in the goal**
-(`∃x. related(x, nest, contained_by) ∧ tag(x, shiny)`), so the planner binds it
-before search. A **consume** drive (hunger → eat) cannot be shaped that way, and
-that difference is exactly what it exists to exercise.
-
-The mouse's need is `Hunger { pang }`; its goal is `fed(actor)`. Eating *consumes*
-the food, so the effect the drive chains toward is a fact about the **eater** (a
-`Fed` marker), not about the food's location. The food therefore never appears in
-the goal at all: it surfaces only inside `eat`'s guard (`∃food. related(food, actor,
-contained_by) ∧ tag(food, edible)`), *after* the planner regresses the `eat` step.
-Binding it there is the planner's **mid-search binding** (see
-[planner.md](planner.md)); the plan is `take -> eat`, a genuine two-step chain like
-the hoard's.
-
-- **`eat` is a new affordance** (`agency.rs`) whose grounded action `do_eat`
-  (`verbs/eat.rs`) both a player's `eat` verb and the drive's plan resolve to, so a
-  scripted eat is vetoed exactly as a typed one, the same shared-rule guarantee
-  `take`/`put` have.
-- **Consuming is non-destructive**: eating sets `Fed` on the eater and strips the
-  food's `Edible` tag (the crust is eaten down, not re-eatable). The reference drives
-  change component and containment state and never despawn, so the drive layer stays
-  clear of the structural destruction reaction (`death_cry`), a separate concern; the
-  world-effect stays plain, asserted state rather than "the food vanished."
-- **One drive, no arbiter.** The mouse has nothing to contend with, so `consume`
-  reads the drive, plans, and pursues with no arbiter or commitment (those earn their
-  keep on the magpie's two drives). Relief is the same slow symmetric curve: the pang
-  cools while `Fed`, warms while hungry, floored below threshold so a fed mouse
-  retires.
-
-## The loop, on the sim tick
-
-One system (`hoard`) runs the loop, per uncontrolled magpie, on ticks that are a
-multiple of `HOARD_EVERY`, mirroring `wander`'s cadence and its controller check (a
-piloted bird halts):
+Ordered needs are gauge targets:
 
 ```text
-metabolism:   move both needs from the world (rise while unmet, fall while met)
-drives:       goals = [hoard_drive(bird), admire_drive(bird)]   // 0, 1, or 2 goals
-arbiter:      goal  = commit_and_select(bird, H)                // resume + persist
-driver:       pursue(bird, goal, magpie_known, world, perform-as-beat)
-narrate:      a beat that moved something, by the drive it served
+hunger drive:
+    goal = GaugeAtMost(Actor, Hunger, Sated)
+    urgency = app_curve(current_hunger)
 ```
 
-`commit_and_select` is where cross-tick commitment lives (next section). The driver
-runs the **whole committed plan in this one call**; interleaving it a beat per tick is
-the deferred sim refinement the [execution](execution.md) doc describes. There is no
-separate consummation step any more: relief is the metabolism reading the world next
-tick, not a reset fired off the driver's `Progress`.
+An `eat(food)` affordance advertises:
 
-## Cross-tick commitment (built)
+```text
+ShiftGauge(Actor, Hunger, Down)
+Destroy(food)
+```
 
-Hysteresis only bites across ticks, but the sim's persisted state is the serializable
-world, and agency types (`Goal`, `Clause`, `Arbiter`) deliberately do not serialize. So
-the bird does not keep an arbiter alive between ticks; it records **which drive** it
-committed to as ordinary world state, a `Committed(Drive)` component, and rebuilds the
-arbiter each tick from it:
+The goal identifies no food. During regression, `eat` is selected by the matching
+hunger direction, then its `food` parameter is bound from its conditions:
 
-1. Gather this tick's goals, each labeled by its drive.
-2. Map the persisted `Committed` tag to *this tick's* goal from that drive, the live
-   incumbent, or `None` if that drive has gone quiet, so a stale tag never revives a
-   retired goal.
-3. `Arbiter::resume(hysteresis, incumbent).select(goals)` matches the incumbent into
-   the candidate set by predicate exactly as an in-run commitment is, and applies the
-   band.
-4. Map the chosen goal back to its drive and write `Committed`.
+```text
+HasComponent(food, Edible)
+RelationTargetIs(food, ContainedBy, Actor)
+```
 
-`Arbiter::resume` is the whole engine-side seam this needed (`new(h)` is now just
-`resume(h, None)`); everything else is app content. The loop never calls
-`Arbiter::release`: a served need expresses itself as fading urgency, and when it drops
-below threshold the drive stops offering, so the arbiter retires the incumbent on its
-own. `release` stays for the explicit, event-driven drop an imperative order uses.
+This is the ordinary free-parameter binding path, not a special consume mechanism.
 
-## Two decisions this surfaced
+Categorical drives remain ordinary formulas. A hoarding goal can be:
 
-- **Consummation lives in the app, not the planner.** The needs are the bird's own
-  components; the planner and driver are world-only and never touch them. So the app
-  moves them, in the metabolism, off the world state the driver leaves behind. This
-  keeps `musce_agency` free of any need vocabulary, the boundary the crate split holds.
-- **Cross-tick commitment is an app-owned tag plus one arbiter seam.** The stateful
-  arbiter cannot persist, so the serializable half (which goal) lives on the bird and
-  the logic half (the band, the matching) stays in `musce_agency`, reached through
-  `resume`. This is the resolution of the tension the single-drive wiring first
-  surfaced: the arbiter is reconstructed, not stored.
+```text
+exists item:
+    HasComponent(item, Shiny)
+    RelationTargetIs(item, ContainedBy, nest)
+```
+
+## Urgency and satisfaction
+
+Urgency is drive policy, not generic gauge distance. `GaugeLevel` is ordinal, so
+the engine may not assume that a larger numeric gap means proportionally more
+urgency or effort. The app maps its exact need state to `Urgency`.
+
+A goal already true yields an empty plan and `Achieved`. A standing drive may also
+fade its urgency or stop offering once its need is sufficiently relieved. The
+arbiter does not independently reinterpret the goal.
+
+## Competing drives and commitment
+
+Two near-equal drives must not switch the actor's goal every tick. The arbiter
+holds a commitment and applies hysteresis: a challenger replaces the incumbent
+only when it clears the configured margin.
+
+Cross-tick commitment is app-owned persisted state identifying the selected drive
+or goal family. Each tick:
+
+1. drives compute fresh goals and urgency;
+2. the app maps the persisted commitment to the corresponding live goal;
+3. a reconstructed arbiter resumes that commitment;
+4. selection applies hysteresis;
+5. the selected drive id is persisted again.
+
+The committed goal formula is always taken from current drive output. A stale
+record cannot revive a goal the drive no longer offers.
+
+## Knowledge
+
+The drive does not locate objects. The planner binds entity parameters from the
+actor's known candidates. The app's perception policy decides that set: room
+contents, inventory, a personal cache, sensed entities, and remembered entities
+may differ by actor.
+
+Ignorance remains gameplay. A drive that wants food does not consult a global food
+index.
+
+## The tick loop
+
+```text
+metabolism: update persisted need state
+drives:     produce current goals and urgency
+arbiter:    resume and select one commitment
+planner:    create a plan of affordance steps
+driver:     execute one or more beats, replanning on contested failure
+narration:  emit the app's account of committed acts
+```
+
+Metabolism changes needs according to app rules. Drives only interpret them.
+Planning and execution never reset a drive directly; relief is observable through
+the world state left by successful acts.
+
+Controlled actors may suspend autonomous drive processing while keeping their
+persisted need state. That is app policy over embodiment, not planner behavior.
 
 ## Falsifiability
 
-The oracles are in `hoard.rs`, against a real world through the real `perform`:
+A reference drive is complete only when tests prove:
 
-- **The arbiter earns its keep** (`commitment_stops_the_two_drives_thrashing_the_bead`):
-  with hoard and admire both pressing, a committed bird moves the bead far less than a
-  no-commitment control (a fresh zero-band arbiter each tick) that thrashes it nearly
-  every tick, while still serving both needs (the bead is both held and stowed over the
-  run). The two arms share the same metabolism, drives, and pursuit, so the move-count
-  gap is attributable to commitment alone.
-- **The hoard drive, live** (`an_idle_magpie_grows_restless_then_stows_a_shiny`): an
-  idle bird's urge climbs sub-threshold with the bead loose, then at the threshold the
-  loop plans and runs `take → put`, the bead lands in the nest, and the urge cools as
-  the hoard rests there.
-- **The halts** (`a_controller_halts_it`, `nothing_to_steal_leaves_it_restless`): a
-  piloted bird is frozen and the bead untouched; a bird with no shiny within reach stays
-  restless (the Abandoned branch never relieves the need).
-
-Nothing moves the bead but the arbiter/driver loop and nothing moves a need but the
-metabolism, so a break in any link fails a test.
-
-The consume drive's oracles are in `consume.rs`, plus the mid-search binding it needs
-in `planner.rs` (`binds_a_guard_existential_mid_search`,
-`no_edible_known_yields_no_consume_plan`):
-
-- **The consume drive, live** (`a_hungry_mouse_finds_and_eats_the_bread`): an idle
-  mouse's pang climbs sub-threshold, then at the threshold the loop grounds the unnamed
-  food in `eat`'s guard against what the mouse knows and runs `take -> eat`; the mouse
-  ends fed, the bread ends spent (no longer edible), and the pang cools. Its halts
-  (`a_controller_halts_it`, `nothing_edible_leaves_it_hungry`) mirror the magpie's.
-- **The wiring, end to end** (`a_hungry_creature_finds_and_eats_food_with_no_input`, in
-  `tests/play_session.rs`): a `@create`d hungry mouse eats a `@create`d crust on its
-  own and the narration reaches an idle connection.
+- its need changes over time;
+- its urgency crosses an actionable threshold;
+- the emitted goal selects affordances through static effects;
+- free action parameters bind from known candidates;
+- real execution moves the target gauge or categorical state;
+- satisfaction reduces or retires the drive;
+- competing drives demonstrate commitment rather than thrashing;
+- impossible or contested-failure pursuits do not falsely relieve the need.
 
 ## Relation to the other docs
 
-- [README](README.md): the agency stack and build order; drives are stack layer 1,
-  built last because falsifiability put them there.
-- [arbiter.md](arbiter.md): the layer the drives feed; the goals here are exactly the
-  candidate set `select` ranks, and `resume` is the cross-tick-commitment seam.
-- [execution.md](execution.md): the driver this loop runs, and the one-beat-per-tick
-  interleaving still deferred.
-- [planner.md](planner.md): the single-existential goal binding the magpie drives rely
-  on, and the mid-search binding the consume drive exercises.
-- [../concurrency.md](../concurrency.md): the tick and the system pipeline this loop is
-  a system on, beside `wander`.
+- [README](README.md): the full agency stack.
+- [arbiter.md](arbiter.md): commitment and hysteresis.
+- [planner.md](planner.md): effect-goal matching and free-parameter binding.
+- [execution.md](execution.md): grounded execution and replanning.
+- [../gauges.md](../gauges.md): normalized readings and QSIM direction.

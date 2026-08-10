@@ -1,65 +1,82 @@
 # Gauges
 
-> Status: **foundational value types built; evaluation and agency integration
-> proposed.** `musce_action` provides the bounded `GaugeLevel`, raw
-> `GaugeDirection`, symbolic `GaugeId`, and inclusive `GaugeTarget` algebra. No
-> gauge evaluator, registry, predicate/effect form, or planner behavior is built
-> yet.
+> Status: **foundational raw value types built; qualitative planning layer
+> specified and pending.** `musce_action` provides `GaugeLevel`,
+> `GaugeDirection`, `GaugeId`, and raw `GaugeTarget`. The target representation
+> adds registered qualitative regions, gauge evaluation, threshold conditions,
+> strict directional effects, and bounded QSIM regression.
 
-`tag(e, C)` asks whether an entity bears a component. That is enough for categorical
-facts, but it cannot describe a quantity such as health without exposing the backing
-component's representation to every consumer. Gauges provide the missing value
-shape: a named, read-only measurement projected onto one common bounded ordering.
+Component presence and relations describe categorical facts. They do not describe
+an ordered quantity such as health, hunger, temperature, or affinity without
+exposing app-specific numeric representations. A gauge is a named, read-only,
+normalized projection of such state.
 
-## A gauge is a reading, not a component
+## A reading, not stored truth
 
-Stored state is truth. It lives in an ordinary component, participates in archetype
-membership, persists, and may be changed through the world's validated mutation
-paths. A gauge is a derived view over that truth. It has no per-entity storage or
-presence of its own and cannot be set; changing a gauge means changing the components
-its evaluator reads.
+Stored components and relations are authoritative. A gauge evaluator reads that
+truth and returns a qualitative position:
 
-Most gauges will read one component, but that is not an invariant. A gauge evaluator
-may read whatever app state defines the measurement. Reading a gauge for an entity to
-which it does not apply will eventually return `None`. The point read is the semantic
-primitive; a batched evaluator or derived index can be added later without changing
-what the gauge means.
+```text
+read(entity, GaugeId) -> Option<GaugeLevel>
+```
 
-## The common value space
+A gauge has no independently settable storage. Changing it means executing an
+action that mutates the backing world state. Most evaluators will read one
+component, but they may combine several. `None` means the gauge does not apply to
+that entity.
+
+The point read is the execution and evaluation primitive. Batch evaluation or
+indexing may optimize it later without changing its meaning.
+
+## Common ordered space
 
 `GaugeLevel` is a newtype over the complete `u8` range:
 
 ```rust
-GaugeLevel::MIN       // 0: lower saturation
-GaugeLevel::new(127)  // an ordered interior reading
-GaugeLevel::MAX       // 255: upper saturation
+GaugeLevel::MIN
+GaugeLevel::new(127)
+GaugeLevel::MAX
 ```
 
-The byte is **normalized and ordinal**. Its endpoints are exact, every bit pattern is
-valid, and interior values say only which reading is higher. The generic engine does
-not assign them units, names, or a meaningful distance. In particular, it must not
-assume that moving from 20 to 40 takes twice the effort of moving from 20 to 30.
+The value is normalized and ordinal:
 
-The app keeps the exact value in its backing components and maps it monotonically into
-the byte. A health component may map `0 .. 100` to `0 .. 255`; another gauge may
-combine several inputs. A concept with an unbounded backing representation must choose
-meaningful operational limits before exposing a gauge, because saturation and a
-generic target direction require endpoints.
+- both endpoints are exact saturation;
+- every bit pattern is valid;
+- higher and lower are meaningful;
+- generic numeric distance is not meaningful.
 
-A byte is preferred to a normalized float: it has no NaN or infinity, endpoint and
-threshold comparisons are exact, and its deliberately finite resolution avoids
-claiming generic precision the planner cannot use.
+An app maps its backing representation monotonically into this space. The engine
+does not infer units, linear effort, or valence.
 
-## Bounds, targets, and direction
+The raw level is not planner-authored domain language. Its finite order provides
+evaluation and a termination measure; it does not make 256 universally meaningful
+states or permit the planner to treat numeric distance as cost.
 
-`GaugeLevel::MIN` and `GaugeLevel::MAX` are the two saturated readings. They can
-eventually be point-readable predicates because an evaluator can answer them from one
-world snapshot. They need no separate bound type: a bound is simply a distinguished
-level, and the endpoint target constants provide the common goal form.
+## Registered qualitative regions
 
-`GaugeTarget` is an inclusive interval `[min, max]`. Its constructors cover the useful
-goal shapes without assigning universal names such as `LoLo` or `HiHi` to interior
-levels:
+Each gauge registers an ordered domain vocabulary over the raw space. For example:
+
+```text
+Hunger: Sated < Peckish < Hungry < Starving
+Health: Critical < Hurt < Sound
+```
+
+Each region id maps to a non-overlapping raw interval, in total order, covering
+the gauge's applicable range. Region names are app vocabulary; ordering and
+threshold comparison are engine mechanics. Goals and planner guards use these
+registered ids rather than arbitrary `u8` constants.
+
+The same name on two gauges implies no shared scale. Comparing the hunger of two
+entities, or comparing Hunger with Health, is not a planner operation.
+
+An ordered amount belongs on the entity whose state owns it. Hunger is a gauge on
+the actor; a fungible balance may be a gauge on an account or purse. Proxy entities
+such as one coin per unit are used only when individual identity and transfer are
+gameplay, not merely to make a numeric amount visible to predicates.
+
+## Targets and direction
+
+The built raw `GaugeTarget` remains useful for evaluation and imperative rules:
 
 ```rust
 GaugeTarget::at(level)
@@ -70,76 +87,164 @@ GaugeTarget::MIN
 GaugeTarget::MAX
 ```
 
-A reading inside the interval satisfies the target. A reading below it requires
-`GaugeDirection::Up`; one above it requires `GaugeDirection::Down`. This comparison is
-implemented by `GaugeTarget::required_change` and is the whole target algebra:
+Comparing a reading with a target yields the direction required to approach it:
 
 ```text
 current < target.min  -> Up
-current in target     -> satisfied (`None`)
+current in target     -> satisfied
 current > target.max  -> Down
 ```
 
-`Satisfied` is not a gauge level. It is the result of comparing a reading with a
-particular target. Likewise, `Up` and `Down` are not predicates that hold at a point;
-they describe requested or produced change. The types keep those categories separate:
+`GaugeDirection::{Up, Down}` is raw orientation. It does not mean improve or
+worsen. A healer may drive health up; a poisoner may drive it down. App goals
+choose desirable targets.
 
-- `GaugeLevel`: measured position;
-- `GaugeTarget`: the acceptable interval for one goal;
-- `GaugeDirection`: orientation needed to approach that interval.
+Planner-regressible targets are one-sided qualitative thresholds:
 
-There is deliberately no generic `Stable` direction. Producing no immediate change is
-normally the absence of an effect; actively maintaining a quantity over time requires
-duration and counter-effect semantics that the basic gauge vocabulary does not claim.
-
-## Valence and app policy
-
-Higher is not universally better. `GaugeDirection` is raw orientation, never
-`Improve` or `Worsen`: a healer may drive a creature's health toward `Max`, while a
-poisoner drives the same gauge toward `Min`. Named thresholds such as `LOW_HEALTH`,
-alarm bands such as `LoLo`, and decisions about which target to pursue belong to app
-goal logic. They may be constants over `GaugeLevel`; they are not engine-wide states.
-
-This lets exact app measurements and qualitative action descriptions meet without
-forcing either into the other's representation. Goal logic can read a concrete
-component or a future gauge evaluator, construct a target, and obtain the required
-direction. An affordance can eventually declare only that it moves the named gauge
-`Up` or `Down`, without claiming a magnitude or number of applications.
-
-## What is built
-
-The non-optional `musce_action` crate currently owns only the inert value vocabulary:
-
-```rust
-GaugeId
-GaugeLevel(u8)
-GaugeDirection::{Down, Up}
-GaugeTarget
+```text
+GaugeAtLeast(entity, gauge, region)
+GaugeAtMost(entity, gauge, region)
 ```
 
-`GaugeTarget` validates interval ordering, tests satisfaction with `contains`, and
-derives an optional required direction. These operations read no world and mutate
-nothing.
+An exact raw interior point or bounded interior band remains readable but is not
+regressible from direction alone: one strictly monotone action may skip over it.
+Exact saturation endpoints are safe special cases of one-sided thresholds.
 
-## What is not built
+There is no generic `Stable` effect. No change is the absence of an immediate
+effect; active maintenance requires duration and counter-effect semantics.
 
-- **Evaluator and registry.** There is no `GaugeId -> read(entity)` routing yet.
-- **Predicates and effects.** Bounds are not part of `Predicate`, and directions are
-  not part of an affordance's effect vocabulary.
-- **Planner integration.** The planner does not regress a target through directional
-  effects.
-- **App gauges.** No concrete health, hunger, or other gauge is registered.
-- **Batching and indexing.** A point read will be the semantic primitive; bulk reads
-  and derived indexes wait for a measured need.
-- **Wire representation.** Gauge values and targets do not cross the protocol.
+## The condition/effect dual
+
+Gauges enter the planner's closed state algebra as two different types:
+
+```text
+condition:
+    GaugeAtLeast(entity, gauge, region)
+    GaugeAtMost(entity, gauge, region)
+
+effect:
+    ShiftGauge(entity, gauge, direction)
+```
+
+Threshold conditions are truth-valued in one world snapshot. `ShiftGauge`
+describes a transition and is not itself a predicate.
+
+Static comparison requires:
+
+1. unifiable entity terms;
+2. the same `GaugeId`;
+3. an effect direction equal to the threshold's required change.
+
+An effect promises a strict qualitative-region change in its direction, not a raw
+magnitude or exact landing. A successful `Up` commit must end in a higher registered
+region; a successful `Down` commit must end in a lower one. A raw change that stays
+inside one region is not a planner-visible `ShiftGauge` effect.
+
+The finite registered order provides the bound: each successful shift crosses at
+least one region boundary, so no more than the number of intervening regions is
+needed to reach a one-sided target. The planner may conservatively regress one
+region per application; an action that jumps farther only reaches the target
+earlier. Raw numeric distance is never interpreted as effort, utility, or plan
+length.
+
+This is qualitative simulation: it reasons about ordered regions and directional
+change without pretending to know an app-specific transition function.
+
+## Why not named qualitative predicates
+
+A predicate such as `VeryHungry(actor)` or
+`FeelsReallyFondlyAbout(a, b)` is queryable but not general planning structure.
+Every such predicate would require an effect with the same bespoke name.
+
+The gauge form separates domain vocabulary from planning mechanics:
+
+```text
+GaugeAtMost(actor, Hunger, Sated)
+ShiftGauge(actor, Hunger, Down)
+```
+
+or:
+
+```text
+GaugeAtLeast(attitude, Affinity, Fond)
+ShiftGauge(attitude, Affinity, Up)
+```
+
+`Hunger` and `Affinity` are registered gauge ids; `Sated` and `Fond` are regions
+registered within their respective gauges. Threshold conditions and `ShiftGauge`
+remain the only planning forms.
+
+## Quantities about relationships
+
+Gauges are addressed by one entity. Quantitative state about a pair is represented
+by reifying the relationship:
+
+```text
+RelationTargetIs(attitude, Owner, Alice)
+RelationTargetIs(attitude, Toward, Bob)
+GaugeAtLeast(attitude, Affinity, Fond)
+```
+
+The attitude entity may carry the backing component for affinity and may expose
+other gauges such as trust or fear. This follows the relation layer's general
+approach to richer many-to-many state: the relationship becomes an entity with
+ordinary relations and components.
+
+An action that praises Bob grounds the same `attitude` parameter and advertises:
+
+```text
+ShiftGauge(attitude, Affinity, Up)
+```
+
+Term identity ensures the action changes the attitude entity named by the goal.
+
+## Component values and thresholds
+
+The planner does not expose arbitrary component fields or raw comparisons:
+
+- categorical state is a component-presence or relation condition;
+- ordered state is a gauge target;
+- a hard rule outside this algebra makes an affordance opaque and non-plannable;
+- a soft preference is a cost input.
+
+Named regions are registered data over `GaugeLevel`, not new engine condition
+variants. Raw singleton and band targets may be queried by execution code but do
+not enter the reverse planner index.
+
+## Evaluation and registration
+
+The app registers each `GaugeId` with:
+
+- its name;
+- the entity kinds for which it applies, if useful for validation;
+- a point evaluator;
+- its ordered, non-overlapping qualitative regions and raw boundaries;
+- tests proving monotonic projection from backing state.
+
+Registration gives conditions and effects a statically comparable id while the
+evaluator remains app code. An unknown gauge id is a schema error, not a false
+reading.
+
+## Planner and execution obligations
+
+- Regression compares only matching gauge ids and terms.
+- The current region and threshold select the required direction.
+- A committed directional effect moves to a strictly different qualitative region
+  in that direction.
+- Search bounds repetition by the finite registered region order and its own lower
+  budgets.
+- A grounded step rechecks any gauge guard before committing.
+- After execution, an oracle verifies that the registered region moved strictly in
+  the advertised direction.
+- Staying in the same region or moving oppositely is metadata drift and fails the
+  oracle.
 
 ## Relation to the other docs
 
-- [affordances.md](affordances.md): owns the current predicate/effect vocabulary that
-  future gauge forms may extend.
-- [agency/preconditions.md](agency/preconditions.md): owns the chainable-versus-filter
-  split and the motivation for hiding exact app values from propositional planning.
-- [ecs-and-relations.md](ecs-and-relations.md): owns components and the stored truth a
-  gauge evaluator will read.
-- [indexes.md](indexes.md): owns any future materialized acceleration structure;
-  indexing would not turn the gauge itself into stored truth.
+- [affordances.md](affordances.md): the complete condition/effect algebra and
+  typed term representation.
+- [agency/preconditions.md](agency/preconditions.md): static matching and
+  substitution.
+- [agency/planner.md](agency/planner.md): bounded QSIM regression.
+- [ecs-and-relations.md](ecs-and-relations.md): stored truth and reified
+  relationships.
