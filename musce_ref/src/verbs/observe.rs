@@ -18,7 +18,7 @@ pub fn look(ctx: &mut Ctx, args: &str) {
         examine(ctx, args);
         return;
     }
-    match describe_room(ctx.world, ctx.actor) {
+    match describe_room(ctx.world, ctx.actor()) {
         Some(text) => ctx.emit_self(EventKind::Narration, text),
         None => ctx.emit_self(EventKind::Feedback, "You are nowhere."),
     }
@@ -33,7 +33,7 @@ pub fn examine(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Examine what?");
         return;
     }
-    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor, query) else {
+    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor(), query) else {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
@@ -73,7 +73,7 @@ fn contents_line(world: &World, container: EntityId) -> String {
 pub fn inventory(ctx: &mut Ctx, _args: &str) {
     let items: Vec<String> = ctx
         .world
-        .contents(ctx.actor)
+        .contents(ctx.actor())
         .iter()
         .copied()
         .filter_map(|e| short_name(ctx.world, e))

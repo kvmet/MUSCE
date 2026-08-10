@@ -64,7 +64,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
         return;
     }
     // `resolve` never returns the actor, so there is no self-attack case to guard.
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, query) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Room, query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You don't see \"{query}\" here."),
@@ -76,7 +76,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
         return;
     }
 
-    let dmg = u16::from(attacker_strength(ctx.world, ctx.actor).max(1));
+    let dmg = u16::from(attacker_strength(ctx.world, ctx.actor()).max(1));
 
     // Spend the damage against the target's Health through the mutator, so the write
     // is marked dirty and persists. A raw `ecs().get::<&mut Health>()` here would
@@ -93,9 +93,9 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
         .expect("a resolved fightable target is live");
     debug_assert!(hit, "a fightable target has Health");
 
-    let who = display_name(ctx.world, ctx.actor);
+    let who = display_name(ctx.world, ctx.actor());
     let them = display_name(ctx.world, target);
-    let room = ctx.world.enclosing_locus(ctx.actor);
+    let room = ctx.world.enclosing_locus(ctx.actor());
 
     if killed {
         ctx.emit_self(EventKind::Feedback, format!("You strike {them} down!"));
@@ -131,7 +131,7 @@ pub fn attack(ctx: &mut Ctx, args: &str) {
                 room,
                 EventKind::Narration,
                 format!("{who} hits {them}."),
-                &[ctx.actor, target],
+                &[ctx.actor(), target],
             );
         }
     }

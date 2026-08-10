@@ -20,16 +20,16 @@ use crate::ctx::{Caller, ColdOp, Ctx};
 pub type Handler = fn(&mut Ctx, &str);
 
 /// An app's grounded-act function: perform an affordance whose entities are already
-/// bound (a pointing client clicked them), so there is no noun to resolve. Receives
-/// the command context, the affordance name, the clicked `focus` entity, and any
-/// second entity a role sub-pick supplied. The app maps `focus`/`with` onto the
-/// affordance's roles, since which role the focus fills is app policy. An app
-/// writes this and the engine only invokes it, through [`dispatch_perform`].
-pub type PerformHandler = fn(&mut Ctx, &str, EntityId, Option<EntityId>);
+/// bound (a pointing client clicked them), so there is no noun to resolve. The
+/// bound values travel as one [`Grounded`] value so additions cannot drift across
+/// positional arguments. The app maps `focus`/`with` onto roles, since which role
+/// the focus fills is app policy.
+pub type PerformHandler = fn(&mut Ctx, Grounded<'_>);
 
 /// A grounded act's bound parts: the affordance name and the entities a pointing
 /// client clicked (the `focus`, and any second entity a role sub-pick supplied).
 /// What a name resolver would produce for a typed verb, handed in ready-made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grounded<'a> {
     pub affordance: &'a str,
     pub focus: EntityId,
@@ -170,7 +170,7 @@ pub fn dispatch_perform(
     let mut out: Vec<Outbound> = Vec::new();
     let cold = {
         let mut ctx = Ctx::new(world, caller, &mut out);
-        handler(&mut ctx, act.affordance, act.focus, act.with);
+        handler(&mut ctx, act);
         ctx.take_cold()
     };
 
@@ -364,5 +364,37 @@ mod tests {
             matches!(&out[..], [Outgoing::Event(Delivery { text, .. })] if text.contains("zap")),
             "su should bypass the gate, got: {out:?}"
         );
+    }
+
+    #[test]
+    fn grounded_act_reaches_the_handler_as_one_complete_value() {
+        let (mut world, actors, actor, conn) = world_with_player();
+        let second = world.spawn(EntityBuilder::new());
+        let verdict = Verdict::guest();
+        let mut out = Vec::new();
+        dispatch_perform(
+            &mut world,
+            &actors,
+            Caller::new(actor, conn, &verdict),
+            |ctx, grounded| {
+                ctx.feedback(format!(
+                    "{}:{}:{}",
+                    grounded.affordance,
+                    grounded.focus.0,
+                    grounded.with.unwrap().0
+                ));
+            },
+            Grounded {
+                affordance: "put",
+                focus: actor,
+                with: Some(second),
+            },
+            &mut |outgoing| out.push(outgoing),
+        );
+        assert!(matches!(
+            &out[..],
+            [Outgoing::Event(Delivery { text, .. })]
+                if text == &format!("put:{}:{}", actor.0, second.0)
+        ));
     }
 }

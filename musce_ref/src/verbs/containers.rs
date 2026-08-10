@@ -61,14 +61,14 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let Some(item) = names::resolve(ctx.world, ctx.actor, Scope::Inventory, item_query) else {
+    let Some(item) = names::resolve(ctx.world, ctx.actor(), Scope::Inventory, item_query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You aren't carrying \"{item_query}\"."),
         );
         return;
     };
-    let Some(container) = reachable(ctx.world, ctx.actor, container_query) else {
+    let Some(container) = reachable(ctx.world, ctx.actor(), container_query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You don't see \"{container_query}\" here."),
@@ -76,7 +76,7 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let actor = ctx.actor;
+    let actor = ctx.actor();
     let frame = Frame {
         actor,
         object: Some(item),
@@ -99,14 +99,14 @@ pub fn give(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let Some(item) = names::resolve(ctx.world, ctx.actor, Scope::Inventory, item_query) else {
+    let Some(item) = names::resolve(ctx.world, ctx.actor(), Scope::Inventory, item_query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You aren't carrying \"{item_query}\"."),
         );
         return;
     };
-    let Some(recipient) = names::resolve(ctx.world, ctx.actor, Scope::Room, who_query) else {
+    let Some(recipient) = names::resolve(ctx.world, ctx.actor(), Scope::Room, who_query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You don't see \"{who_query}\" here."),
@@ -120,8 +120,8 @@ pub fn give(ctx: &mut Ctx, args: &str) {
 
     let item_name = display_name(ctx.world, item);
     let them = display_name(ctx.world, recipient);
-    let who = display_name(ctx.world, ctx.actor);
-    let room = ctx.world.enclosing_locus(ctx.actor);
+    let who = display_name(ctx.world, ctx.actor());
+    let room = ctx.world.enclosing_locus(ctx.actor());
 
     // The recipient is a being in the room, not something the held item contains,
     // so this move cannot cycle and has no reachable structural failure; a bug here
@@ -152,7 +152,7 @@ pub fn give(ctx: &mut Ctx, args: &str) {
             room,
             EventKind::Narration,
             format!("{who} gives {item_name} to {them}."),
-            &[ctx.actor, recipient],
+            &[ctx.actor(), recipient],
         );
     }
 }

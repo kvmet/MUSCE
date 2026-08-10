@@ -569,7 +569,7 @@ mod tests {
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
             offers: |_, _, _| Vec::new(),
-            perform: |_, _, _, _| {},
+            perform: |_, _| {},
         }
     }
 

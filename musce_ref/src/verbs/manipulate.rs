@@ -84,12 +84,12 @@ pub fn take(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Take what?");
         return;
     }
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, args) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Room, args) else {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
 
-    let actor = ctx.actor;
+    let actor = ctx.actor();
     let frame = Frame {
         actor,
         object: Some(target),
@@ -108,12 +108,12 @@ pub fn drop(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Drop what?");
         return;
     }
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Inventory, args) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Inventory, args) else {
         ctx.emit_self(EventKind::Feedback, "You aren't carrying that.");
         return;
     };
 
-    let actor = ctx.actor;
+    let actor = ctx.actor();
     let frame = Frame {
         actor,
         object: Some(target),

@@ -79,6 +79,9 @@ Every transport reduces to a bidirectional stream plus capability flags (line- v
   the sim only ever sees typed values. Carries text commands, the structured read
   pair, and perform-by-id. The envelope's ids are strings and its types generate
   the client's TypeScript via `ts-rs` (see the status blockquote).
+  Sim dispatch groups the decoded affordance name, focus id, and optional second id
+  as one `Grounded` value and forwards it intact to the app's `PerformHandler`; the
+  app, not the transport, maps those selections onto affordance roles.
 - **SSH** — first-class for terminal clients, preferred over telnet for the control it gives: a real PTY with raw mode, terminal size, resize events, and auth/encryption for free. Enables TUIs, in-app VI, WASD movement. (`russh` for an in-process server.)
 - **Telnet** — the classic, but the cruftiest (IAC option negotiation). Optional/later behind the same abstraction.
 

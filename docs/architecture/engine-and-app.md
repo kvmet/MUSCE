@@ -121,7 +121,9 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   never supplied by the request. App policy decides which
   affordances a selected entity participates in and which parameter receives it;
   the parameter declaration travels in-band rather than relying on a global role.
-  The engine routes the act through `dispatch_perform` (the same
+  The current callback is `fn(&mut Ctx, Grounded<'_>)`: affordance name, focus, and
+  optional second selection travel as one value and the app destructures it. The
+  engine routes the act through `dispatch_perform` (the same
   `Ctx`-and-audience path a verb narrates through). Distinct from the two reads:
   it mutates and narrates. An app with no pointing client supplies a no-op.
 

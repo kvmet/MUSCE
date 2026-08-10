@@ -38,15 +38,15 @@ impl<'a> Caller<'a> {
         }
     }
 
-    pub fn actor(self) -> EntityId {
+    pub fn actor(&self) -> EntityId {
         self.actor
     }
 
-    pub fn conn(self) -> ConnectionId {
+    pub fn conn(&self) -> ConnectionId {
         self.conn
     }
 
-    pub fn verdict(self) -> &'a Verdict {
+    pub fn verdict(&self) -> &'a Verdict {
         self.verdict
     }
 }
@@ -80,11 +80,20 @@ pub enum ColdOp {
 /// later, by AI and sequences. It also carries the caller's account-scoped verdict
 /// read-only: the command table checks it before invoking a handler, and an inline
 /// rule can ask the same authority without deriving it from the actor body.
+///
+/// The principal fields are read-only to handlers:
+///
+/// ```compile_fail
+/// use musce_action::Ctx;
+/// use musce_core::EntityId;
+///
+/// fn redirect(ctx: &mut Ctx<'_>) {
+///     ctx.actor = EntityId(99);
+/// }
+/// ```
 pub struct Ctx<'a> {
     pub world: &'a mut World,
-    pub actor: EntityId,
-    pub conn: ConnectionId,
-    verdict: &'a Verdict,
+    caller: Caller<'a>,
     out: &'a mut Vec<Outbound>,
     /// Cold-store requests the handler recorded. Owned (not a borrowed sink like
     /// `out`) because a cold op is self-contained and needs no world/actor
@@ -97,30 +106,38 @@ impl<'a> Ctx<'a> {
     pub fn new(world: &'a mut World, caller: Caller<'a>, out: &'a mut Vec<Outbound>) -> Self {
         Ctx {
             world,
-            actor: caller.actor(),
-            conn: caller.conn(),
-            verdict: caller.verdict(),
+            caller,
             out,
             cold: Vec::new(),
         }
+    }
+
+    /// The body this command acts through.
+    pub fn actor(&self) -> EntityId {
+        self.caller.actor()
+    }
+
+    /// The connection that issued this command.
+    pub fn conn(&self) -> ConnectionId {
+        self.caller.conn()
     }
 
     /// The account-scoped authorization this handler runs under. Its lifetime is
     /// independent of the `Ctx` borrow, so a handler may retain it while yielding
     /// the world/output pair to a shared performer.
     pub fn verdict(&self) -> &'a Verdict {
-        self.verdict
+        self.caller.verdict()
     }
 
     /// Whether this caller may exercise `cap`. This names the authorization result,
     /// not literal membership: superuser authority also permits the capability.
     pub fn permits(&self, cap: CapId) -> bool {
-        self.verdict.permits(cap)
+        self.caller.verdict().permits(cap)
     }
 
     /// Whether superuser authority is in force for this command.
     pub fn is_su(&self) -> bool {
-        self.verdict.is_su()
+        self.caller.verdict().is_su()
     }
 
     /// The world and the raw output buffer together. The seam a shared app routine
@@ -137,7 +154,7 @@ impl<'a> Ctx<'a> {
     /// First-person output, straight to the acting connection.
     pub fn emit_self(&mut self, kind: EventKind, text: impl Into<String>) {
         self.out
-            .push(Outbound::new(Event::to_connection(self.conn, kind, text)));
+            .push(Outbound::new(Event::to_connection(self.conn(), kind, text)));
     }
 
     /// Plain feedback to the acting connection. The dispatcher uses this for
@@ -153,7 +170,7 @@ impl<'a> Ctx<'a> {
     pub fn cold_read(&mut self, key: impl Into<String>, kind: EventKind) {
         self.cold.push(ColdOp::Read {
             key: key.into(),
-            conn: self.conn,
+            conn: self.conn(),
             kind,
         });
     }
@@ -165,7 +182,7 @@ impl<'a> Ctx<'a> {
         self.cold.push(ColdOp::Write {
             key: key.into(),
             bytes,
-            conn: self.conn,
+            conn: self.conn(),
         });
     }
 
@@ -197,7 +214,7 @@ impl<'a> Ctx<'a> {
         kind: EventKind,
         text: impl Into<String>,
     ) {
-        let actor = self.actor;
+        let actor = self.actor();
         self.emit_locus_except(locus, kind, text, &[actor]);
     }
 
@@ -336,10 +353,18 @@ mod tests {
 
         let mut world = World::new();
         let mut out = Vec::new();
-        let ctx = Ctx::new(&mut world, caller, &mut out);
+        let mut ctx = Ctx::new(&mut world, caller, &mut out);
+        assert_eq!(ctx.actor(), EntityId(7));
+        assert_eq!(ctx.conn(), ConnectionId(3));
         assert!(ctx.permits(build));
         assert!(!ctx.permits(ban));
         assert!(!ctx.is_su());
         assert!(std::ptr::eq(ctx.verdict(), &verdict));
+
+        ctx.cold_read("book", EventKind::Narration);
+        assert!(matches!(
+            ctx.cold_ops(),
+            [ColdOp::Read { conn, .. }] if *conn == ConnectionId(3)
+        ));
     }
 }

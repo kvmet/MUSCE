@@ -374,7 +374,7 @@ mod tests {
         fn look(ctx: &mut Ctx, _args: &str) {
             let text = ctx
                 .world
-                .enclosing_locus(ctx.actor)
+                .enclosing_locus(ctx.actor())
                 .and_then(|r| ctx.world.get::<Description>(r).map(|d| d.0.clone()))
                 .unwrap_or_else(|| "nowhere".into());
             ctx.emit_self(EventKind::Narration, text);
@@ -415,8 +415,11 @@ mod tests {
             },
             // Echo the affordance name back to the actor so a routing test can
             // observe the seam ran on the resolved actor's Ctx.
-            perform: |ctx, name, _, _| {
-                ctx.emit_self(EventKind::Feedback, format!("performed {name}"))
+            perform: |ctx, grounded| {
+                ctx.emit_self(
+                    EventKind::Feedback,
+                    format!("performed {}", grounded.affordance),
+                )
             },
         }
     }
@@ -963,7 +966,7 @@ mod tests {
             decode_cold: |_| Ok(String::new()),
             snapshot: |_, _| musce_proto::SnapshotData::default(),
             offers: |_, _, _| Vec::new(),
-            perform: |_, _, _, _| {},
+            perform: |_, _| {},
         };
         let dispatch = Dispatch::new(app);
         let mut world = World::new();

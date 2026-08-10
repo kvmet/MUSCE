@@ -15,12 +15,12 @@ pub fn say(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Say what?");
         return;
     }
-    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "There is no one to hear you.");
         return;
     };
 
-    let who = display_name(ctx.world, ctx.actor);
+    let who = display_name(ctx.world, ctx.actor());
     ctx.emit_self(EventKind::Feedback, format!("You say, \"{msg}\""));
     ctx.emit_locus_except_self(room, EventKind::Narration, format!("{who} says, \"{msg}\""));
 }
@@ -41,7 +41,7 @@ pub fn tell(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Tell whom?");
         return;
     }
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, query) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Room, query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You don't see \"{query}\" here."),
@@ -54,7 +54,7 @@ pub fn tell(ctx: &mut Ctx, args: &str) {
         return;
     }
 
-    let who = display_name(ctx.world, ctx.actor);
+    let who = display_name(ctx.world, ctx.actor());
     let them = display_name(ctx.world, target);
     ctx.emit_self(EventKind::Feedback, format!("You tell {them}, \"{msg}\""));
     ctx.emit_entity(
@@ -75,11 +75,11 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
         Some(("at", who)) => who.trim(),
         _ => rest,
     };
-    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "There is no one to see you.");
         return;
     };
-    let who = display_name(ctx.world, ctx.actor);
+    let who = display_name(ctx.world, ctx.actor());
 
     if query.is_empty() {
         ctx.emit_self(EventKind::Feedback, "You wave.");
@@ -87,7 +87,7 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
         return;
     }
 
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, query) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Room, query) else {
         ctx.emit_self(
             EventKind::Feedback,
             format!("You don't see \"{query}\" here."),
@@ -101,6 +101,6 @@ pub fn wave(ctx: &mut Ctx, args: &str) {
         room,
         EventKind::Narration,
         format!("{who} waves at {them}."),
-        &[ctx.actor, target],
+        &[ctx.actor(), target],
     );
 }

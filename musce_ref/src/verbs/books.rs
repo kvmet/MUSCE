@@ -41,7 +41,7 @@ pub fn read(ctx: &mut Ctx, args: &str) {
         ctx.feedback("Read what?");
         return;
     }
-    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor, query) else {
+    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor(), query) else {
         ctx.feedback("You don't see that here.");
         return;
     };
@@ -64,7 +64,7 @@ pub fn inscribe(ctx: &mut Ctx, args: &str) {
         ctx.feedback("Write what?");
         return;
     }
-    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor, name) else {
+    let Some(target) = names::resolve_nearby(ctx.world, ctx.actor(), name) else {
         ctx.feedback("You don't see that here.");
         return;
     };

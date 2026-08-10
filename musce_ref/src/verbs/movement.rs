@@ -21,7 +21,7 @@ use super::observe::look;
 /// exit resolution, and the player-facing prose.
 pub fn go(ctx: &mut Ctx, dir: &str) {
     let dir = dir.trim();
-    if ctx.world.enclosing_locus(ctx.actor).is_none() {
+    if ctx.world.enclosing_locus(ctx.actor()).is_none() {
         ctx.emit_self(EventKind::Feedback, "You are nowhere.");
         return;
     }
@@ -30,13 +30,13 @@ pub fn go(ctx: &mut Ctx, dir: &str) {
         return;
     }
 
-    let Some(exit) = names::resolve(ctx.world, ctx.actor, Scope::Exits, dir) else {
+    let Some(exit) = names::resolve(ctx.world, ctx.actor(), Scope::Exits, dir) else {
         ctx.emit_self(EventKind::Feedback, "You can't go that way.");
         return;
     };
 
-    let who = display_name(ctx.world, ctx.actor);
-    match do_move(ctx.world, ctx.actor, exit) {
+    let who = display_name(ctx.world, ctx.actor());
+    match do_move(ctx.world, ctx.actor(), exit) {
         MoveOutcome::Moved {
             from,
             dest,

@@ -16,8 +16,8 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Pilot what?");
         return;
     }
-    let character = ctx.world.control_root(ctx.actor);
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Room, args) else {
+    let character = ctx.world.control_root(ctx.actor());
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Room, args) else {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
     };
@@ -47,7 +47,7 @@ pub fn pilot(ctx: &mut Ctx, args: &str) {
 /// `release`: drop the character's cursor back to itself, so bare commands drive
 /// you again. Tears down no `Controls` edge, so you can step back in.
 pub fn release(ctx: &mut Ctx, _args: &str) {
-    let character = ctx.world.control_root(ctx.actor);
+    let character = ctx.world.control_root(ctx.actor());
     let Some(piloted) = ctx.world.focus_of(character) else {
         ctx.emit_self(EventKind::Feedback, "You aren't piloting anything.");
         return;

@@ -15,7 +15,7 @@
 //! See `docs/architecture/networking-and-sessions.md` and
 //! `docs/architecture/offers.md`.
 
-use musce::action::Ctx;
+use musce::action::{Ctx, Grounded};
 use musce::agency::Frame;
 use musce::wire::{Entity, EventKind, Offer, OfferStatus, Role, SnapshotData};
 use musce::world::{Description, EntityId, Locus, World};
@@ -138,13 +138,18 @@ fn to_wire_role(role: offers::Role) -> Role {
 ///
 /// The third pointing seam, but an act, not a read: it mutates and narrates. See
 /// `docs/architecture/networking-and-sessions.md`.
-pub fn perform(ctx: &mut Ctx, name: &str, focus: EntityId, with: Option<EntityId>) {
+pub fn perform(ctx: &mut Ctx, grounded: Grounded<'_>) {
+    let Grounded {
+        affordance: name,
+        focus,
+        with,
+    } = grounded;
     // The click carries raw ids, so gate every supplied entity through the actor's
     // perceivable set before grounding. Without this the click path would be
     // strictly more powerful than the typed verbs, whose name resolution is
     // locus-scoped: a client could act on any entity by guessing its id.
-    if !perceivable(ctx.world, ctx.actor, focus)
-        || with.is_some_and(|w| !perceivable(ctx.world, ctx.actor, w))
+    if !perceivable(ctx.world, ctx.actor(), focus)
+        || with.is_some_and(|w| !perceivable(ctx.world, ctx.actor(), w))
     {
         ctx.emit_self(EventKind::Feedback, "You don't see that here.");
         return;
@@ -158,7 +163,7 @@ pub fn perform(ctx: &mut Ctx, name: &str, focus: EntityId, with: Option<EntityId
     // out of another creature's inventory, which the text path's room-scoped name
     // resolution never allows. Targets (a container, an exit) are constrained by
     // their own guards and the perception gate, not this reachability rule.
-    if object.is_some_and(|o| !offers::reachable(ctx.world, ctx.actor, o)) {
+    if object.is_some_and(|o| !offers::reachable(ctx.world, ctx.actor(), o)) {
         ctx.emit_self(EventKind::Feedback, "You can't reach that.");
         return;
     }
@@ -167,7 +172,7 @@ pub fn perform(ctx: &mut Ctx, name: &str, focus: EntityId, with: Option<EntityId
         return;
     };
     let frame = Frame {
-        actor: ctx.actor,
+        actor: ctx.actor(),
         object,
         target,
     };
@@ -182,7 +187,7 @@ pub fn perform(ctx: &mut Ctx, name: &str, focus: EntityId, with: Option<EntityId
         ctx.emit_self(EventKind::Feedback, "You need to choose something first.");
         return;
     }
-    let actor = ctx.actor;
+    let actor = ctx.actor();
     let (world, out) = ctx.world_and_out();
     crate::act::perform_narrated(world, actor, &affordance, &frame, out);
 }
@@ -413,7 +418,14 @@ mod tests {
         let mut f = fixture();
         let rock = f.rock;
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "take", rock, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "take",
+                    focus: rock,
+                    with: None,
+                },
+            );
         });
         assert_eq!(f.world.container_of(rock), Some(f.actor));
         assert!(
@@ -434,7 +446,14 @@ mod tests {
         let mut f = fixture();
         let rock = f.rock;
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "take", rock, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "take",
+                    focus: rock,
+                    with: None,
+                },
+            );
         });
         assert!(
             room_narration(&out)
@@ -459,7 +478,14 @@ mod tests {
         let rock = f.rock;
         let before = f.world.container_of(rock);
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "drop", rock, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "drop",
+                    focus: rock,
+                    with: None,
+                },
+            );
         });
         assert!(
             feedback(&out)
@@ -488,7 +514,14 @@ mod tests {
         f.world.move_entity(far_item, elsewhere).unwrap();
 
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "take", far_item, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "take",
+                    focus: far_item,
+                    with: None,
+                },
+            );
         });
         assert!(
             feedback(&out)
@@ -550,7 +583,14 @@ mod tests {
         f.world.move_entity(crumb, mouse).unwrap();
 
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "take", crumb, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "take",
+                    focus: crumb,
+                    with: None,
+                },
+            );
         });
         assert!(
             feedback(&out).iter().any(|t| t == "You can't reach that."),
@@ -570,7 +610,14 @@ mod tests {
         let coin = f.coin;
         let held = f.world.container_of(coin);
         let out = run(&mut f.world, f.actor, |ctx| {
-            perform(ctx, "put", chest, None);
+            perform(
+                ctx,
+                Grounded {
+                    affordance: "put",
+                    focus: chest,
+                    with: None,
+                },
+            );
         });
         assert!(
             feedback(&out)

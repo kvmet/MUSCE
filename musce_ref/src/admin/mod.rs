@@ -111,7 +111,7 @@ pub fn goto(ctx: &mut Ctx, args: &str) {
     if !commit_or_log(
         ctx.world,
         Action::Move {
-            entity: ctx.actor,
+            entity: ctx.actor(),
             into: room,
         },
         "@goto: move actor into the target's room",
@@ -128,7 +128,7 @@ pub fn summon(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, bad_ref());
         return;
     };
-    let Some(dest) = ctx.world.container_of(ctx.actor) else {
+    let Some(dest) = ctx.world.container_of(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere to summon it to.");
         return;
     };
@@ -158,7 +158,7 @@ pub fn create(ctx: &mut Ctx, args: &str) {
         );
         return;
     };
-    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere to create it.");
         return;
     };
@@ -207,7 +207,7 @@ pub fn dig(ctx: &mut Ctx, args: &str) {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("a freshly dug passage");
-    let Some(here) = ctx.world.enclosing_locus(ctx.actor) else {
+    let Some(here) = ctx.world.enclosing_locus(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere to dig from.");
         return;
     };
@@ -309,12 +309,12 @@ pub fn possess(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, bad_ref());
         return;
     };
-    if target == ctx.actor {
+    if target == ctx.actor() {
         ctx.emit_self(EventKind::Feedback, "You can't possess yourself.");
         return;
     }
     match ctx.world.target_of::<Controls>(target) {
-        Some(c) if c == ctx.actor => {
+        Some(c) if c == ctx.actor() => {
             ctx.emit_self(
                 EventKind::Feedback,
                 format!("You already control #{}.", target.0),
@@ -334,7 +334,7 @@ pub fn possess(ctx: &mut Ctx, args: &str) {
         ctx.world,
         Action::Relate {
             source: target,
-            target: ctx.actor,
+            target: ctx.actor(),
             kind: "controlled_by".into(),
         },
     ) {
@@ -359,7 +359,7 @@ pub fn unpossess(ctx: &mut Ctx, args: &str) {
         return;
     };
     match ctx.world.target_of::<Controls>(target) {
-        Some(c) if c == ctx.actor => {}
+        Some(c) if c == ctx.actor() => {}
         Some(c) => {
             ctx.emit_self(
                 EventKind::Feedback,
@@ -375,14 +375,14 @@ pub fn unpossess(ctx: &mut Ctx, args: &str) {
             return;
         }
     }
-    if let Some(f) = ctx.world.focus_of(ctx.actor)
+    if let Some(f) = ctx.world.focus_of(ctx.actor())
         && (f == target
             || ctx
                 .world
                 .ancestors::<Controls>(f)
                 .any(|ancestor| ancestor == target))
     {
-        ctx.world.clear_focus(ctx.actor);
+        ctx.world.clear_focus(ctx.actor());
     }
     // `Unrelate` of a registered, hardcoded kind only fails on an unknown kind,
     // so this cannot fail; report success, and let `commit_or_log` shout if the
@@ -411,13 +411,12 @@ pub fn destroy(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, bad_ref());
         return;
     };
-    if target == ctx.actor {
+    if target == ctx.actor() {
         ctx.emit_self(EventKind::Feedback, "You can't destroy yourself.");
         return;
     }
-    // `Destroy` is infallible (despawn no-ops on a missing entity), so there is
-    // no error to report; the subject is discarded.
-    let _ = execute(ctx.world, Action::Destroy { entity: target });
+    execute(ctx.world, Action::Destroy { entity: target })
+        .expect("validated destroy target must remain live through execution");
     ctx.emit_self(
         EventKind::Feedback,
         format!(
@@ -436,11 +435,11 @@ pub fn purge(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, bad_ref());
         return;
     };
-    if target == ctx.actor {
+    if target == ctx.actor() {
         ctx.emit_self(EventKind::Feedback, "You can't purge yourself.");
         return;
     }
-    let mut c = ctx.world.container_of(ctx.actor);
+    let mut c = ctx.world.container_of(ctx.actor());
     while let Some(x) = c {
         if x == target {
             ctx.emit_self(
@@ -503,7 +502,7 @@ pub fn setpos(ctx: &mut Ctx, args: &str) {
 pub fn pos(ctx: &mut Ctx, args: &str) {
     let target = match args.trim() {
         "" => {
-            let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+            let Some(room) = ctx.world.enclosing_locus(ctx.actor()) else {
                 ctx.emit_self(EventKind::Feedback, "You are nowhere.");
                 return;
             };
@@ -543,7 +542,7 @@ pub fn nearby(ctx: &mut Ctx, args: &str) {
             }
         },
     };
-    let Some(room) = ctx.world.enclosing_locus(ctx.actor) else {
+    let Some(room) = ctx.world.enclosing_locus(ctx.actor()) else {
         ctx.emit_self(EventKind::Feedback, "You are nowhere.");
         return;
     };

@@ -226,7 +226,9 @@ the audience resolver. See [engine-and-app.md](engine-and-app.md).
 account-scoped `Verdict`. The command table checks that verdict before invoking the
 handler; the handler retains read-only `verdict`, `permits`, and `is_su` access for
 scoped rules a flat command gate cannot express. Authority therefore follows the
-account, never the actor body, through both dispatch and handler code.
+account, never the actor body, through both dispatch and handler code. `Caller`
+remains private inside `Ctx`; handlers read `actor()`/`conn()`/`verdict()` but cannot
+rewrite one principal field independently of the others.
 
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to

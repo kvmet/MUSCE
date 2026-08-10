@@ -54,12 +54,12 @@ pub fn eat(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "Eat what?");
         return;
     }
-    let Some(target) = names::resolve(ctx.world, ctx.actor, Scope::Inventory, args) else {
+    let Some(target) = names::resolve(ctx.world, ctx.actor(), Scope::Inventory, args) else {
         ctx.emit_self(EventKind::Feedback, "You aren't carrying that.");
         return;
     };
 
-    let actor = ctx.actor;
+    let actor = ctx.actor();
     let frame = Frame {
         actor,
         object: Some(target),
