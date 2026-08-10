@@ -1,0 +1,5 @@
+error: undeclared value "missing"
+ --> tests/ui/affordance/undeclared_term.rs:6:13
+  |
+6 |             missing.has_component(Item) => "missing";
+  |             ^^^^^^^

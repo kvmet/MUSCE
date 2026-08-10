@@ -84,15 +84,16 @@ These hold across every subsystem:
   symbol domains, qualitative gauge regions, immutable schema/handler
   registration, structural schema validation, reverse effect indexing, the shared
   performer, its typed execution/observation/narration boundary, and one boot-time
-  registry injected into command and system contexts. Macro
-  authoring, a reusable effect-oracle harness, and text/agency consumer migration
-  pending; reference `give` and generic pointing are migrated.)*
+  registry injected into command and system contexts, and the Rust `affordance!`
+  authoring macro. A reusable effect-oracle harness and remaining text/agency
+  consumer migration are pending; reference `give` and generic pointing are
+  migrated.)*
 - [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
   additive canonical build, cutover boundary, and legacy removal condition.
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
   description language, generated typed handler interface, closed-vocabulary
-  boundary, and path to future non-Rust front ends. *(Built: typed lowering
-  interface; procedural macro pending.)*
+  boundary, and path to future non-Rust front ends. *(Built, with the reference
+  `give` affordance as the first app declaration.)*
 - [affordance-contracts.md](affordance-contracts.md): ordered applicability
   guards, deterministic/contested/opaque resolution, unconditional effects, and
   executable-oracle obligations. *(Built: structural registration checks, shared
@@ -201,6 +202,9 @@ Built:
   output, with both clocks and no actor), the conn->actor audience index
   (`Actors`, derived from the floor's session attachments resolved through
   `Focus`), and the sim-side audience resolver.
+- `musce_macros`: the dependency-light procedural authoring front end. It parses
+  app `affordance!` declarations, rejects declaration-local errors at compile
+  time, and emits only the typed adapters and canonical `musce` action types.
 - `musce_ref`: the reference app and the worked example of standing an app up on
   the engine. Owns the bare verbs (`look`, `examine`/`x`, `read`, `inscribe`,
   `inventory`/`i`, `go`/bare direction, `take`, `drop`, `put`, `eat`, `give`,
@@ -245,10 +249,10 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Affordance/agency integration: consumer migration onto the built immutable
-  registry and shared performer, directional gauge-effect verification, the
-  Rust `affordance!` authoring macro, effect-goal unification, QSIM regression, and
-  parameter-aware pointing wire forms. The target design is in
+- Affordance/agency integration: remaining consumer migration onto the built
+  immutable registry, macro, shared performer, and pointing wire; directional
+  gauge-effect verification, effect-goal unification, and QSIM regression. The
+  target design is in
   `affordances.md`, `affordance-authoring.md`, `affordance-contracts.md`,
   `gauges.md`, `offers.md`, and `agency/`.
 - App logic: timed behavior (sequences and effects) on a shared skeleton is

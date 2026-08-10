@@ -1,0 +1,5 @@
+error: duplicate parameter "item"
+ --> tests/ui/affordance/duplicate_parameter.rs:4:30
+  |
+4 |     sample(item: Entity) -> (item: Entity) {
+  |                              ^^^^

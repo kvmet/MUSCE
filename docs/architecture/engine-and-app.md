@@ -11,11 +11,11 @@
 ## The substrate is not an app
 
 MUSCE is an engine, not an app. The crates built so far (`musce_core`,
-`musce_proto`, `musce_action`, `musce_net`, `musce_host`, `musce_persistence`) are
-substrate: they own world state, the mutation path, the transport, and the
-runtime, and they stay free of any particular app's content. An app supplies the
-content: its verbs and how they parse, what exists at boot, how things read in
-prose, and what the rules are.
+`musce_proto`, `musce_action`, `musce_macros`, `musce_net`, `musce_host`,
+`musce_persistence`) are substrate: they own world state, the mutation and
+authoring paths, the transport, and the runtime, and they stay free of any
+particular app's content. An app supplies the content: its verbs and how they
+parse, what exists at boot, how things read in prose, and what the rules are.
 
 The first action slice put a handful of verbs, a seed world, and name resolution
 inside `musce_action` to prove the plumbing end to end. That was scaffolding: app
@@ -60,8 +60,9 @@ app binds only to the facade, which re-exports the engine layers below it (see
 [The `musce` facade](#the-musce-facade)):
 
 ```
-musce_ref -> musce -> musce_host -> musce_action -> musce_core
-                                                 -> musce_proto   (a dependency-free leaf)
+musce_ref -> musce -> musce_macros
+                   -> musce_host -> musce_action -> musce_core
+                                                -> musce_proto   (a dependency-free leaf)
 ```
 
 `musce_proto` is the wire vocabulary and references no world identity, so it sits
@@ -197,12 +198,12 @@ moving files.
   does the same for autonomous callers, with an explicit verdict.
 - **`execute` / `Action` / `ExecError`.** Already public: the structural mutation
   path an app's rule-checked handlers commit through.
-- **The canonical affordance types and proposed `affordance!` surface.** The
-  engine-owned schema, state registry, immutable affordance registry, and shared
-  performer are built. The proposed app-facing description language declares
+- **The canonical affordance types and `affordance!` surface.** The engine-owned
+  schema, state registry, immutable affordance registry, shared performer, and
+  app-facing procedural macro are built. The description language declares
   typed inputs/results, logical requirements and effects, a resolution contract,
-  and the Rust handler and narrator that implement the act. It will generate typed
-  values, adapters, and registration metadata, then lower to the canonical AST; see
+  and the Rust observer, handler, and narrator that implement the act. It generates
+  typed values, adapters, and registration metadata, then lowers to the canonical AST; see
   [affordance-authoring.md](affordance-authoring.md).
 - **The audience resolver, `Outbound`, and `Actors`.** Engine mechanism the app
   does not touch directly. `dispatch_bare` already takes the command table as a

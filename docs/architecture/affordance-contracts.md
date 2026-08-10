@@ -124,7 +124,7 @@ the effect remains part of the execution contract and of assignment-interference
 analysis.
 
 Validation happens once at registration. Grounding then uses compact ids and typed
-values without repeating schema checks. The pending macro will catch structural
+values without repeating schema checks. The authoring macro catches structural
 and sort errors knowable during Rust compilation; registration handles errors that
 depend on the assembled app vocabulary, such as unknown ids or duplicate
 registrations.

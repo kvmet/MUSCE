@@ -1,11 +1,12 @@
 # Affordance Authoring Language
 
-> Status: **typed lowering interface built; macro pending.**
-> `AffordanceDefinition` now fixes the generated adapter boundary: typed inputs,
-> results, pre-commit observations, mutation-only execution, result encoding, and
-> post-commit narration. App affordances will normally implement it through a Rust
-> `affordance!` procedural macro that lowers into the canonical representation in
-> [affordances.md](affordances.md).
+> Status: **built.** `AffordanceDefinition` fixes the generated adapter boundary:
+> typed inputs, results, pre-commit observations, mutation-only execution, result
+> encoding, and post-commit narration. The app-facing Rust `affordance!` procedural
+> macro implements that boundary and lowers directly into the canonical
+> representation in [affordances.md](affordances.md). The reference `give`
+> affordance exercises the generated registration, grounding, execution, and
+> narration path.
 
 The authoring language resembles a typed function signature with a logical
 contract around an ordinary Rust implementation. It removes parameter-id and
@@ -39,7 +40,9 @@ affordance! {
             item.set_relation(MountedOn, support);
         }
 
+        gate Open;
         resolution Deterministic;
+        observe HangObservations via musce_ref::act::observe_hang;
         execute musce_ref::act::hang;
         narrate musce_ref::act::narrate_hang;
     }
@@ -57,10 +60,20 @@ order; the planner reads only the conditions, and the refusal prose never
 participates in unification.
 
 `effects` contains unconditional planner-visible promises of every successful
-commit. `resolution` declares whether true guards guarantee commitment, permit a
-contested failure, or leave the act opaque and non-plannable. `execute` names the
-ordinary Rust function that commits the act and returns result bindings. `narrate`
-optionally names the shared typed narrator invoked after a commit.
+commit. `gate` is either `Open` or `Cap(name)`. The latter adds an app-minted
+`CapId` named `name` to the generated registration function; capability names are
+still interned by the app, never string-resolved by an action handler. `resolution`
+declares whether true guards guarantee commitment, permit a contested failure, or
+leave the act opaque and non-plannable. `execute` names the ordinary Rust function
+that commits the act and returns result bindings. `narrate` optionally names the
+shared typed narrator invoked after a commit.
+
+`observe ObservationType via function` optionally names a typed pre-commit
+capture. The generated adapter calls
+`function(&World, EntityId, &Inputs) -> ObservationType` after shared checks pass
+but before mutation. If the clause is absent, the observation type is `()` and
+capture is a no-op. This makes departure-state narration explicit without lending
+mutation access to observation code.
 
 For `Deterministic`, the macro adapter and runtime enforce this contract:
 
@@ -78,9 +91,10 @@ tests. `Contested` explicitly permits a valid attempt to fail without committing
 
 The macro expands to ordinary Rust containing:
 
-- a factory for the canonical affordance value and its stable parameter
-  declarations;
+- a registration function for the canonical affordance value, its typed state
+  dependencies, and any runtime capability handle;
 - typed input and result structures such as `HangInputs` and `HangResults`;
+- a grounded-action constructor such as `hang_action`;
 - an adapter that sort-checks canonical values and invokes the typed handler;
 - an adapter that invokes the typed narrator with the same values;
 - registration metadata used by commands, offers, scripts, and planning.
@@ -110,14 +124,18 @@ fn narrate_hang(
 ) -> Narration;
 ```
 
-This boundary is built as `AffordanceDefinition`. App code receives typed fields
-instead of indexed raw value arrays. The canonical `GroundAction` carries inputs
-beneath the adapter; `ActionOutcome` carries encoded results. `observe` captures
-typed app data before mutation. `PerformCtx` can mutate but cannot emit;
-`NarrationCtx` can read the post-commit world and emit but cannot mutate. The
-narrator receives the captured observations separately, so movement can address
-both the vanished departure locus and the resulting arrival locus. The pending
-macro generates the decoding, encoding, and trait implementation.
+This boundary is implemented through `AffordanceDefinition`. App code receives
+typed fields instead of indexed raw value arrays. The canonical `GroundAction`
+carries inputs beneath the adapter; `ActionOutcome` carries encoded results.
+`observe` captures typed app data before mutation. `PerformCtx` can mutate but
+cannot emit; `NarrationCtx` can read the post-commit world and emit but cannot
+mutate. The narrator receives the captured observations separately, so movement
+can address both the vanished departure locus and the resulting arrival locus.
+The macro generates decoding, encoding, typed state-dependency registration, and
+the trait implementation. Relation and component readers are derivable from their
+Rust types and are registered idempotently. Gauge readers and regions remain
+explicit app registry setup because their evaluator behavior cannot be derived
+from a gauge's symbolic id.
 
 ## Result parameters
 
@@ -137,6 +155,7 @@ affordance! {
             product.set_relation(ControlledBy, Actor);
         }
 
+        gate Open;
         resolution Deterministic;
         execute musce_ref::act::craft;
         narrate musce_ref::act::narrate_craft;
@@ -163,6 +182,7 @@ affordance! {
 
         effects {}
 
+        gate Open;
         resolution Deterministic;
         execute musce_ref::act::say;
         narrate musce_ref::act::narrate_say;
@@ -174,6 +194,11 @@ The generated `SayInputs::text` is a typed text value. Its canonical input is
 still subject to the grounding rule that non-enumerable text must be supplied
 rather than invented by the planner.
 
+Input sorts also control candidate generation: entities use knowledge-scoped
+candidates, finite symbols require an explicit registered domain, and text is
+never invented. An executable act with no persistent effect contributes no
+backward-planning edge regardless of its input sorts.
+
 ## Closed logical vocabulary
 
 The macro accepts only constructs that lower into the canonical condition and
@@ -182,8 +207,8 @@ component, and gauge names select registered app vocabulary; they do not add new
 logical operators.
 
 Gauge conditions use only registered qualitative regions through
-`entity.gauge_at_least(gauge, region)` or
-`entity.gauge_at_most(gauge, region)`. Raw singleton and band `GaugeTarget`s are
+`entity.gauge_at_least("gauge", "region")` or
+`entity.gauge_at_most("gauge", "region")`. Raw singleton and band `GaugeTarget`s are
 not authorable in `requires`, `effects`, or planner goals. They remain imperative
 handler-query values and cannot decide whether an otherwise applicable
 deterministic handler commits.
@@ -210,8 +235,9 @@ slot, followed by its registered kind and then its value. Thus
 `item.relation_is(ControlledBy, Actor)` and
 `item.set_relation(ControlledBy, Actor)` retain the same argument order. Component,
 locus, gauge, existence, and relation reads and writes follow this rule. Formula
-binders and combinators such as `exists`, `not`, and the multi-slot `same_locus`
-convenience remain free forms.
+binders and combinators such as `exists`, `all`, `not`, and the multi-slot
+`same_locus` convenience remain free forms. `all { ... }` groups several
+conditions under one ordered refusal reason without introducing a new AST node.
 
 `entity.at_locus(locus)`, `entity.has_no_locus()`, and
 `entity.not_at_locus(locus)` constrain the engine's derived `LocusOf` slot through
@@ -224,9 +250,8 @@ statically comparable.
 
 The procedural macro reports errors knowable from one declaration during Rust
 compilation, including duplicate parameter names, undeclared names, illegal local
-or result use, positive existence tests on entity inputs, and operations
-incompatible with a parameter sort.
-
+or result use, positive existence tests on entity inputs, operations incompatible
+with a parameter sort, unsupported negations, and malformed declaration syntax.
 Registration validates facts that depend on the assembled app vocabulary,
 including unknown relation/component/gauge ids, duplicate affordance ids, missing
 implementations or narrators, contradictory slot assignments, and registry-wide

@@ -1,0 +1,5 @@
+error: "text" is not entity-valued
+ --> tests/ui/affordance/wrong_sort.rs:6:13
+  |
+6 |             text.has_component(Item) => "missing";
+  |             ^^^^

@@ -53,6 +53,8 @@ The backend is chosen by the `MUSCE_DB` URL scheme (`sqlite://…` default,
   feature.
 - `musce_action` — the action layer: the structural executor, verb dispatch, the
   affordance vocabulary and guards. Pure synchronous engine mechanism.
+- `musce_macros` — the procedural authoring front end that lowers app
+  `affordance!` declarations into the canonical action representation.
 - `musce_agency` — the optional planner: the GOAP `Planner`, `Arbiter`, and
   execution `Driver` an app consumes to give NPCs goals.
 - `musce_auth` — account authentication and identity: the `Account` record,

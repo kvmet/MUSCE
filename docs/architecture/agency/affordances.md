@@ -201,9 +201,10 @@ affordance! {
         }
 
         effects {
-            attitude.shift_gauge(Affinity, Up);
+            attitude.shift_gauge("affinity", Up);
         }
 
+        gate Open;
         resolution Deterministic;
         execute musce_ref::act::encourage;
         narrate musce_ref::act::narrate_encourage;

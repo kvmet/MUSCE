@@ -13,8 +13,9 @@
 > The host builds the app registry once after world-type registration and injects
 > it into every command and system context. Generic offer classification, app
 > exposure policy, and the typed perform wire execute through that registry. The
-> `affordance!` macro, executable effect oracles, and planner integration remain
-> pending. The reference `give` verb and pointing surface are canonical consumers.
+> `affordance!` macro is built and the reference `give` declaration exercises it.
+> Executable effect oracles and planner integration remain pending. The reference
+> `give` verb and pointing surface are canonical consumers.
 
 ## Built prototype during migration
 
@@ -263,15 +264,6 @@ and the planner does not regress through it.
 The act carries its gate so every entry point enforces the same authority
 requirement. Automation without an authority source receives the app's default
 verdict.
-
-## Non-entity inputs
-
-Inputs may be values other than entities. Their sorts determine how they may
-be grounded: entities use knowledge-scoped candidates, finite symbols require an
-explicit domain, and non-enumerable text must be supplied rather than invented by
-the planner. An executable act with no persistent effect contributes no backward-
-planning edge. The complete `say(text: Text)` example is in
-[affordance-authoring.md](affordance-authoring.md).
 
 ## Registration validation
 

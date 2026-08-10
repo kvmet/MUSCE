@@ -1,0 +1,5 @@
+error: result parameters cannot appear in requirements
+ --> tests/ui/affordance/result_in_requirement.rs:6:13
+  |
+6 |             product.has_component(Item) => "missing";
+  |             ^^^^^^^

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["musce","musce_action", "musce_agency", "musce_auth", "musce_core", "musce_host", "musce_index", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
+members = ["musce", "musce_action", "musce_agency", "musce_auth", "musce_core", "musce_host", "musce_index", "musce_macros", "musce_net", "musce_persistence", "musce_proto", "musce_ref"]
 
 [workspace.package]
 license = "MPL-2.0"
@@ -17,6 +17,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 criterion = { version="0.8.2", features = ["html_reports"] }
 uuid = { version = "1.24.0", features = ["v7", "serde"] }
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
+syn = { version = "2.0.117", features = ["full", "extra-traits"] }
+trybuild = "1.0.116"
 
 # internal
 musce = { path = "musce" }
@@ -26,6 +30,7 @@ musce_auth = { path = "musce_auth" }
 musce_core = { path = "musce_core" }
 musce_host = { path = "musce_host" }
 musce_index = { path = "musce_index" }
+musce_macros = { path = "musce_macros" }
 musce_net = { path = "musce_net" }
 musce_persistence = { path = "musce_persistence" }
 musce_proto = { path = "musce_proto" }

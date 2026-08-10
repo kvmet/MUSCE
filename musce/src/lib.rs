@@ -12,6 +12,8 @@
 //! surface self-testing: a gap is a compile error there, not a discovery by a
 //! downstream consumer. See `docs/architecture/engine-and-app.md`.
 
+pub use musce_macros::affordance;
+
 /// Identity, components, relations, and the world queries: the `musce_core`
 /// layer an app builds its entities and rules on. `hecs` is re-exported for
 /// `EntityBuilder` and the raw query API; a `hecs` major version is therefore

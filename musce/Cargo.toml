@@ -13,5 +13,6 @@ musce_agency = { workspace = true, optional = true }
 musce_core = { workspace = true }
 musce_host = { workspace = true }
 musce_index = { workspace = true, optional = true }
+musce_macros = { workspace = true }
 musce_persistence = { workspace = true }
 musce_proto = { workspace = true }

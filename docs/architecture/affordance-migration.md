@@ -3,7 +3,8 @@
 > Status: **in progress.** The canonical schema/value substrate, typed state
 > readers, qualitative gauges, immutable registration, typed execution/narration,
 > runtime injection, generic pointing offers, and typed perform wire are built.
-> The reference `give` command and pointing surface are canonical; text and agency
+> The reference `give` command and pointing surface are canonical, and `give` is
+> authored through the canonical `affordance!` macro; remaining text and agency
 > consumers and the final prototype removal remain pending.
 
 The running engine still carries the smaller prototype that the canonical
@@ -33,7 +34,8 @@ containment effect, and post-commit narration. Pointing proposals are classified
 against that schema, and complete client groundings execute through that same
 performer. The planner path still uses the prototype.
 
-The text verb only resolves `item` and `recipient`. The typed definition owns the
+The text verb only resolves `item` and `recipient`. The macro-authored typed
+definition owns the
 held-item, explicit gift-recipient, distinct-recipient, and shared-locus guards;
 advertises the containment assignment; commits the `Move`; and narrates from
 observations captured before mutation. It is contested rather than deterministic

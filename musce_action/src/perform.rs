@@ -165,8 +165,8 @@ impl<T> TypedHandlerOutcome<T> {
     }
 }
 
-/// The permanent typed interface implemented by app content and, later, emitted
-/// by `affordance!`. Inputs decode once; observations are captured before the
+/// The permanent typed interface emitted for app content by `affordance!`.
+/// Inputs decode once; observations are captured before the
 /// mutation; narration receives both plus successful typed results afterward.
 pub trait AffordanceDefinition: Send + Sync + 'static {
     type Inputs: Send + Sync + 'static;
