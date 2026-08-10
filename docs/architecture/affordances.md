@@ -9,8 +9,9 @@
 > validates their world wiring, and evaluates the closed condition algebra with
 > explicit errors for unknown vocabulary. `AffordanceRegistryBuilder` validates and
 > freezes schemas with typed definitions; `Ctx` and `SystemCtx` lend actions to one
-> authority-, grounding-, guard-, result-, and post-commit-narration performer. The
-> `affordance!` macro, runtime registry injection, executable effect oracles, wire
+> authority-, grounding-, guard-, result-, and post-commit-narration performer.
+> The host builds the app registry once after world-type registration and injects
+> it into every command and system context. The `affordance!` macro, executable effect oracles, wire
 > migration, and planner integration remain pending.
 
 ## Built prototype during migration

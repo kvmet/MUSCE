@@ -1,6 +1,7 @@
 # Engine and App
 
-> Status: **engine/app boundary built; typed grounded-perform seam pending.** The
+> Status: **engine/app boundary and canonical registry injection built; typed
+> pointing-perform seam pending.** The
 > runtime (`musce_host`) is a library parameterized by an
 > injected `App`; the engine crates carry no app content; the reference app
 > `musce_ref` owns the verbs, the seed world, name resolution, the `@play` actor
@@ -99,6 +100,12 @@ below the action layer as a leaf rather than in a line above `musce_core`.
   `Aliases`, the sequence types) here. An app-defined relation must be registered
   before any world that uses it is built or loaded, since registration is what
   wires its serialization and cascade; `register` runs before load and seed.
+- **`affordances: fn(&World, &CapRegistry) -> Result<AffordanceRegistry, _>`**
+  builds and activates the app's immutable canonical action vocabulary after
+  world-type registration. Boot fails if its schemas or typed state readers do
+  not match the registered world. The host owns the result and injects the same
+  registry into every `Ctx` and `SystemCtx`, so verbs, clicks, scripts, and
+  autonomous systems cannot accidentally execute against different vocabularies.
 - **`caps: CapRegistry`** the app's capability vocabulary, interned to `CapId`s as
   it wires its `Gate::Cap` gates. The runtime resolves account grant strings against
   this same registry (see [authorization.md](authorization.md)); opaque ids carry
@@ -184,14 +191,16 @@ moving files.
   asserts that each startup declaration is a nonempty lowercase parser word and is
   not an exact duplicate; ambiguous prefixes remain intentional and use order.
 - **`Ctx` and a public emit API.** The handler context takes one `Caller` bundle
-  (actor, connection, account-scoped `Verdict`) beside `&mut World`, preventing
+  (actor, connection, account-scoped `Verdict`) beside `&mut World` and the
+  host-owned affordance registry, preventing
   those inputs from drifting. It exposes read-only `verdict`/`permits`/`is_su`
   authority queries plus a small public emit surface: a first-person line to the
   actor, a third-person line to the room excluding a set of parties (the actor, or
   the actor and a directed target both), and a directed line to a specific entity
   (resolved to its driving connections). Handlers are
   `fn(&mut Ctx, &str)`. The exact method names are an open detail; the shape is
-  fixed.
+  fixed. `Ctx::perform` always uses that injected registry. `SystemCtx::perform`
+  does the same for autonomous callers, with an explicit verdict.
 - **`execute` / `Action` / `ExecError`.** Already public: the structural mutation
   path an app's rule-checked handlers commit through.
 - **The canonical affordance types and proposed `affordance!` surface.** The

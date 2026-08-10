@@ -52,6 +52,7 @@ pub fn app() -> App {
             systems::death_cry,
         ],
         register: systems::register,
+        affordances: |world, _| musce::action::AffordanceRegistry::empty(world),
         caps: Arc::new(caps),
         // This reference game gates no logins beyond the engine's own `Disabled`
         // hard gate, so it admits every authenticated account.

@@ -44,10 +44,12 @@ fn world_with_builder() -> (World, EntityId, EntityId) {
 }
 
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
+    let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
     let mut out = Vec::new();
     let verdict = Verdict::guest();
     let mut ctx = Ctx::new(
         world,
+        &affordances,
         Caller::new(actor, ConnectionId(1), &verdict),
         &mut out,
     );

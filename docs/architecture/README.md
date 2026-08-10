@@ -83,7 +83,8 @@ These hold across every subsystem:
   outcomes, typed state-reader registration, closed-condition evaluation, finite
   symbol domains, qualitative gauge regions, immutable schema/handler
   registration, structural schema validation, reverse effect indexing, the shared
-  performer, and its typed execution/observation/narration boundary. Macro
+  performer, its typed execution/observation/narration boundary, and one boot-time
+  registry injected into command and system contexts. Macro
   authoring, effect oracles, and consumer migration pending.)*
 - [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
   additive canonical build, cutover boundary, and legacy removal condition.

@@ -113,8 +113,8 @@ pub mod agency {
 
 // The composition-root API: what an app's `main` wires up and hands to `run`.
 pub use musce_host::{
-    App, ChooseActor, Config, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed, TICK_INTERVAL,
-    TickCtx, WS_LISTEN_ADDR, run,
+    App, BuildAffordances, ChooseActor, Config, LISTEN_ADDR, Register, RunReport, SAVE_EVERY, Seed,
+    TICK_INTERVAL, TickCtx, WS_LISTEN_ADDR, run,
 };
 
 /// The high-frequency surface, for `use musce::prelude::*;`. Curated, not a glob

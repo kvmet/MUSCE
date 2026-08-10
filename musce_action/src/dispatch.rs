@@ -13,6 +13,7 @@ use crate::audience::{self, Outbound};
 use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
 use crate::ctx::{Caller, ColdOp, Ctx};
+use crate::perform::AffordanceRegistry;
 
 /// A verb's parse-and-act function. Receives the command context and the
 /// argument tail (everything after the verb word). An app writes these and
@@ -128,6 +129,7 @@ impl Default for CommandTable {
 pub fn dispatch_command(
     table: &CommandTable,
     world: &mut World,
+    affordances: &AffordanceRegistry,
     actors: &Actors,
     caller: Caller,
     line: &str,
@@ -152,7 +154,7 @@ pub fn dispatch_command(
     // its tail hands back the cold-store requests the handler queued (a plain move,
     // since a cold op needs no world/actor resolution).
     let cold = {
-        let mut ctx = Ctx::new(world, caller, &mut out);
+        let mut ctx = Ctx::new(world, affordances, caller, &mut out);
         match table.lookup(&word.to_lowercase()) {
             Some(verb) if verb.gate.permits(ctx.verdict()) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
@@ -177,6 +179,7 @@ pub fn dispatch_command(
 /// still pending; this entry point only routes the grounded callback.
 pub fn dispatch_perform(
     world: &mut World,
+    affordances: &AffordanceRegistry,
     actors: &Actors,
     caller: Caller,
     handler: PerformHandler,
@@ -185,7 +188,7 @@ pub fn dispatch_perform(
 ) -> Vec<ColdOp> {
     let mut out: Vec<Outbound> = Vec::new();
     let cold = {
-        let mut ctx = Ctx::new(world, caller, &mut out);
+        let mut ctx = Ctx::new(world, affordances, caller, &mut out);
         handler(&mut ctx, act);
         ctx.take_cold()
     };
@@ -271,10 +274,12 @@ mod tests {
         line: &str,
     ) -> Vec<String> {
         let table = table();
+        let affordances = AffordanceRegistry::empty(world).unwrap();
         let mut out = Vec::new();
         dispatch_command(
             &table,
             world,
+            &affordances,
             actors,
             Caller::new(actor, conn, &Verdict::guest()),
             line,
@@ -330,10 +335,12 @@ mod tests {
         t.register("yell", Gate::Open, |c, _| {
             c.emit_self(EventKind::Narration, "loud")
         });
+        let affordances = AffordanceRegistry::empty(&world).unwrap();
         let mut out = Vec::new();
         dispatch_command(
             &t,
             &mut world,
+            &affordances,
             &actors,
             Caller::new(actor, conn, &Verdict::guest()),
             "yell",
@@ -359,6 +366,7 @@ mod tests {
 
         let mut t = CommandTable::new();
         t.register("smite", Gate::Cap(cap), |c, _| c.feedback("zap"));
+        let affordances = AffordanceRegistry::empty(&world).unwrap();
 
         // Guest verdict lacks the cap: refused.
         let guest = Verdict::guest();
@@ -366,6 +374,7 @@ mod tests {
         dispatch_command(
             &t,
             &mut world,
+            &affordances,
             &actors,
             Caller::new(actor, conn, &guest),
             "smite",
@@ -383,6 +392,7 @@ mod tests {
         dispatch_command(
             &t,
             &mut world,
+            &affordances,
             &actors,
             Caller::new(actor, conn, &granted),
             "smite",
@@ -399,6 +409,7 @@ mod tests {
         dispatch_command(
             &t,
             &mut world,
+            &affordances,
             &actors,
             Caller::new(actor, conn, &su),
             "smite",
@@ -415,9 +426,11 @@ mod tests {
         let (mut world, actors, actor, conn) = world_with_player();
         let second = world.spawn(EntityBuilder::new());
         let verdict = Verdict::guest();
+        let affordances = AffordanceRegistry::empty(&world).unwrap();
         let mut out = Vec::new();
         dispatch_perform(
             &mut world,
+            &affordances,
             &actors,
             Caller::new(actor, conn, &verdict),
             |ctx, grounded| {

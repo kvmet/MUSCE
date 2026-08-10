@@ -95,6 +95,7 @@ pub enum ColdOp {
 /// ```
 pub struct Ctx<'a> {
     pub world: &'a mut World,
+    affordances: &'a AffordanceRegistry,
     caller: Caller<'a>,
     out: &'a mut Vec<Outbound>,
     /// Cold-store requests the handler recorded. Owned (not a borrowed sink like
@@ -105,9 +106,15 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(world: &'a mut World, caller: Caller<'a>, out: &'a mut Vec<Outbound>) -> Self {
+    pub fn new(
+        world: &'a mut World,
+        affordances: &'a AffordanceRegistry,
+        caller: Caller<'a>,
+        out: &'a mut Vec<Outbound>,
+    ) -> Self {
         Ctx {
             world,
+            affordances,
             caller,
             out,
             cold: Vec::new(),
@@ -155,11 +162,7 @@ impl<'a> Ctx<'a> {
 
     /// Run a canonical action through the shared performer under this command's
     /// account authority. The action cannot substitute a different actor body.
-    pub fn perform(
-        &mut self,
-        registry: &AffordanceRegistry,
-        action: &GroundAction,
-    ) -> Result<PerformOutcome, PerformError> {
+    pub fn perform(&mut self, action: &GroundAction) -> Result<PerformOutcome, PerformError> {
         if action.actor() != self.actor() {
             return Err(PerformError::ActorMismatch {
                 caller: self.actor(),
@@ -167,7 +170,8 @@ impl<'a> Ctx<'a> {
             });
         }
         let verdict = self.caller.verdict();
-        registry.perform(self.world, self.out, verdict, action)
+        self.affordances
+            .perform(self.world, self.out, verdict, action)
     }
 
     /// First-person output, straight to the acting connection.
@@ -280,6 +284,7 @@ pub type System = fn(&mut SystemCtx);
 /// system never sees a fact another system in the same pass emitted.
 pub struct SystemCtx<'a> {
     pub world: &'a mut World,
+    affordances: &'a AffordanceRegistry,
     pub tick: u64,
     pub now: SystemTime,
     pub facts: &'a [Fact],
@@ -289,6 +294,7 @@ pub struct SystemCtx<'a> {
 impl<'a> SystemCtx<'a> {
     pub fn new(
         world: &'a mut World,
+        affordances: &'a AffordanceRegistry,
         tick: u64,
         now: SystemTime,
         facts: &'a [Fact],
@@ -296,6 +302,7 @@ impl<'a> SystemCtx<'a> {
     ) -> Self {
         SystemCtx {
             world,
+            affordances,
             tick,
             now,
             facts,
@@ -323,11 +330,11 @@ impl<'a> SystemCtx<'a> {
     /// default verdict instead of deriving authority from the chosen actor.
     pub fn perform(
         &mut self,
-        registry: &AffordanceRegistry,
         verdict: &Verdict,
         action: &GroundAction,
     ) -> Result<PerformOutcome, PerformError> {
-        registry.perform(self.world, self.out, verdict, action)
+        self.affordances
+            .perform(self.world, self.out, verdict, action)
     }
 }
 
@@ -347,6 +354,7 @@ impl<'a> SystemCtx<'a> {
 /// [`dispatch_command`]: crate::dispatch_command
 pub fn run_systems(
     world: &mut World,
+    affordances: &AffordanceRegistry,
     systems: &[System],
     actors: &Actors,
     tick: u64,
@@ -357,7 +365,7 @@ pub fn run_systems(
     for system in systems {
         let mut out: Vec<Outbound> = Vec::new();
         {
-            let mut sctx = SystemCtx::new(world, tick, now, &facts, &mut out);
+            let mut sctx = SystemCtx::new(world, affordances, tick, now, &facts, &mut out);
             system(&mut sctx);
         }
         for ob in out {
@@ -383,8 +391,9 @@ mod tests {
         assert_eq!(caller.conn(), ConnectionId(3));
 
         let mut world = World::new();
+        let affordances = AffordanceRegistry::empty(&world).unwrap();
         let mut out = Vec::new();
-        let mut ctx = Ctx::new(&mut world, caller, &mut out);
+        let mut ctx = Ctx::new(&mut world, &affordances, caller, &mut out);
         assert_eq!(ctx.actor(), EntityId(7));
         assert_eq!(ctx.conn(), ConnectionId(3));
         assert!(ctx.permits(build));

@@ -7,7 +7,8 @@
 //! `docs/architecture/actions.md` and `docs/architecture/engine-and-app.md`.
 
 use musce_action::{
-    Caller, ColdOp, CommandTable, Grounded, dispatch_command, dispatch_perform, run_systems,
+    AffordanceRegistry, Caller, ColdOp, CommandTable, Grounded, RegistryError, dispatch_command,
+    dispatch_perform, run_systems,
 };
 use musce_core::{EntityId, World};
 use musce_proto::{
@@ -36,14 +37,19 @@ pub struct Dispatch {
     /// `choose_actor` policy backs the floor's `@play`. The runtime holds no app
     /// content beyond this value.
     app: App,
+    /// The app's canonical action vocabulary, activated once at boot and shared
+    /// read-only by every command, click, and tick-system context.
+    affordances: AffordanceRegistry,
 }
 
 impl Dispatch {
-    pub fn new(app: App) -> Self {
-        Self {
+    pub fn new(app: App, world: &World) -> Result<Self, RegistryError> {
+        let affordances = (app.affordances)(world, &app.caps)?;
+        Ok(Self {
             floor: Sessions::default(),
             app,
-        }
+            affordances,
+        })
     }
 
     /// Route one inbound command, pushing output through `emit` and returning any
@@ -108,7 +114,15 @@ impl Dispatch {
     /// (owned, so it does not borrow the world the systems mutate).
     pub fn run_systems(&self, world: &mut World, ctx: &TickCtx, emit: &mut impl FnMut(Outgoing)) {
         let actors = self.floor.audience_index(world);
-        run_systems(world, &self.app.systems, &actors, ctx.tick, ctx.now, emit);
+        run_systems(
+            world,
+            &self.affordances,
+            &self.app.systems,
+            &actors,
+            ctx.tick,
+            ctx.now,
+            emit,
+        );
     }
 
     /// Answer a read query for the connection's actor. A pure read: it runs the
@@ -217,6 +231,7 @@ impl Dispatch {
         let actors = self.floor.audience_index(world);
         dispatch_perform(
             world,
+            &self.affordances,
             &actors,
             Caller::new(actor, id, &verdict),
             self.app.perform,
@@ -267,16 +282,32 @@ impl Dispatch {
             {
                 ops.into_iter().map(HostOp::Account).collect()
             } else {
-                dispatch_through_actor(&self.floor, &self.app.admin, id, rest, world, emit)
-                    .into_iter()
-                    .map(HostOp::Cold)
-                    .collect()
-            }
-        } else {
-            dispatch_through_actor(&self.floor, &self.app.commands, id, line, world, emit)
+                dispatch_through_actor(
+                    &self.floor,
+                    &self.app.admin,
+                    &self.affordances,
+                    id,
+                    rest,
+                    world,
+                    emit,
+                )
                 .into_iter()
                 .map(HostOp::Cold)
                 .collect()
+            }
+        } else {
+            dispatch_through_actor(
+                &self.floor,
+                &self.app.commands,
+                &self.affordances,
+                id,
+                line,
+                world,
+                emit,
+            )
+            .into_iter()
+            .map(HostOp::Cold)
+            .collect()
         }
     }
 }
@@ -297,6 +328,7 @@ fn parse_wire_id(s: &str) -> Option<EntityId> {
 fn dispatch_through_actor(
     floor: &Sessions,
     table: &CommandTable,
+    affordances: &AffordanceRegistry,
     id: ConnectionId,
     line: &str,
     world: &mut World,
@@ -319,6 +351,7 @@ fn dispatch_through_actor(
     dispatch_command(
         table,
         world,
+        affordances,
         &actors,
         Caller::new(actor, id, &verdict),
         line,
@@ -397,6 +430,7 @@ mod tests {
             choose_actor,
             systems: vec![],
             register: |_| {},
+            affordances: |world, _| AffordanceRegistry::empty(world),
             caps: Arc::new(caps),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
@@ -550,8 +584,8 @@ mod tests {
     /// The `@`-namespace still reaches the floor: connect then `@quit` closes.
     #[test]
     fn at_command_routes_to_floor() {
-        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -565,8 +599,8 @@ mod tests {
     /// A bare command before `@play` reports having no character.
     #[test]
     fn bare_without_actor_reports_no_character() {
-        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -587,7 +621,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -605,7 +639,7 @@ mod tests {
     #[test]
     fn a_query_without_a_character_is_refused_with_a_play_hint() {
         let mut world = World::new();
-        let mut d = Dispatch::new(test_app());
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -625,7 +659,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -654,7 +688,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -686,7 +720,7 @@ mod tests {
     #[test]
     fn a_perform_without_a_character_is_refused_with_a_play_hint() {
         let mut world = World::new();
-        let mut d = Dispatch::new(test_app());
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -710,7 +744,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -737,7 +771,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_su(&mut d, id);
@@ -757,7 +791,7 @@ mod tests {
         let poke = app.caps.resolve("poke").unwrap();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_capped(&mut d, id, poke);
@@ -776,7 +810,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         line(&mut d, &mut world, id, "@play");
@@ -797,7 +831,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
         bind_su(&mut d, id);
@@ -824,8 +858,8 @@ mod tests {
     /// pending; a line arriving before the result lands is rejected, not run.
     #[test]
     fn login_marks_pending_and_rejects_in_flight_lines() {
-        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -873,7 +907,7 @@ mod tests {
         let app = test_app();
         let mut world = World::new();
         (app.seed)(&mut world);
-        let mut d = Dispatch::new(app);
+        let mut d = Dispatch::new(app, &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -905,8 +939,8 @@ mod tests {
     /// connection would be wedged, rejecting every retry.
     #[test]
     fn refused_auth_outcome_clears_pending() {
-        let mut d = Dispatch::new(test_app());
         let mut world = World::new();
+        let mut d = Dispatch::new(test_app(), &world).unwrap();
         let id = ConnectionId(1);
         connect(&mut d, &mut world, id);
 
@@ -961,6 +995,7 @@ mod tests {
             choose_actor: |_, _| None,
             systems: vec![add_a, add_b],
             register: |_| {},
+            affordances: |world, _| AffordanceRegistry::empty(world),
             caps: Arc::new(CapRegistry::new()),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),
@@ -968,8 +1003,8 @@ mod tests {
             offers: |_, _, _| Vec::new(),
             perform: |_, _| {},
         };
-        let dispatch = Dispatch::new(app);
         let mut world = World::new();
+        let dispatch = Dispatch::new(app, &world).unwrap();
         let ctx = TickCtx {
             tick: 1,
             now: SystemTime::UNIX_EPOCH,

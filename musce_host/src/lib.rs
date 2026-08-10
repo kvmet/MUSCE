@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
-use musce_action::{CapRegistry, ColdOp, CommandTable, System};
+use musce_action::{AffordanceRegistry, CapRegistry, ColdOp, CommandTable, RegistryError, System};
 use musce_auth::Account;
 use musce_core::{EntityBlob, EntityId, Snapshot, World};
 use musce_persistence::{AccountStore, KvStore, Loaded, Persistence, SCHEMA_VERSION, WorldStore};
@@ -85,6 +85,11 @@ pub type ChooseActor = fn(&World, Option<AccountId>) -> Option<EntityId>;
 /// components register themselves in `World::new`; this is where an app adds its.
 pub type Register = fn(&mut World);
 
+/// Build the app's immutable canonical affordance registry after all world types
+/// have been registered. Capability ids come from the same frozen vocabulary as
+/// command gates, so an affordance gate and an account grant cannot drift.
+pub type BuildAffordances = fn(&World, &CapRegistry) -> Result<AffordanceRegistry, RegistryError>;
+
 /// The whole of what the runtime needs from an app: its bare and admin verb
 /// registries, its world seed, and its `@play` actor-choice policy. A plain struct
 /// of values plus fn pointers; the runtime never depends on a particular app,
@@ -109,6 +114,10 @@ pub struct App {
     /// load or seed. The runtime calls this so a wanderer (or any app type)
     /// deserializes and persists. No-op for an app that adds no types.
     pub register: Register,
+    /// Builds and activates the canonical affordance vocabulary once at boot,
+    /// after app world-type registration. The runtime injects the resulting
+    /// immutable registry into every command and system context.
+    pub affordances: BuildAffordances,
     /// The app's capability vocabulary, interned to `CapId`s while it wired its
     /// gates. Shared (`Arc`) so the off-thread account task resolves an account's
     /// grant names against the same registry the gates use, so a gate's id and a
@@ -417,7 +426,15 @@ fn sim_loop(
         tracing::info!("seeded starter world");
     }
 
-    let mut dispatch = Dispatch::new(app);
+    let mut dispatch = match Dispatch::new(app, &world) {
+        Ok(dispatch) => dispatch,
+        Err(e) => {
+            let msg = format!("failed to build affordance registry: {e}; refusing to boot");
+            tracing::error!(error = %e, "failed to build affordance registry; refusing to boot");
+            let _ = done_tx.send(Err(msg));
+            return;
+        }
+    };
     let mut tick: u64 = 0;
     let mut since_save: u32 = 0;
     let mut pending_saves: u32 = 0;
@@ -564,6 +581,7 @@ mod tests {
             choose_actor: |_, _| None,
             systems: vec![],
             register: |_| {},
+            affordances: |world, _| AffordanceRegistry::empty(world),
             caps: Arc::new(CapRegistry::new()),
             login_veto: |_| Ok(()),
             decode_cold: |_| Ok(String::new()),

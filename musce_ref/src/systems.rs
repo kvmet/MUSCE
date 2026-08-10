@@ -200,16 +200,32 @@ mod tests {
 
     /// Run `wander` at an explicit tick, returning its emitted outbound buffer.
     fn tick(world: &mut World, tick: u64) -> Vec<Outbound> {
+        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
         let mut out = Vec::new();
-        let mut ctx = SystemCtx::new(world, tick, SystemTime::UNIX_EPOCH, &[], &mut out);
+        let mut ctx = SystemCtx::new(
+            world,
+            &affordances,
+            tick,
+            SystemTime::UNIX_EPOCH,
+            &[],
+            &mut out,
+        );
         wander(&mut ctx);
         out
     }
 
     /// Run `death_cry` against a given fact batch, returning its outbound buffer.
     fn cry(world: &mut World, facts: &[Fact]) -> Vec<Outbound> {
+        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
         let mut out = Vec::new();
-        let mut ctx = SystemCtx::new(world, 1, SystemTime::UNIX_EPOCH, facts, &mut out);
+        let mut ctx = SystemCtx::new(
+            world,
+            &affordances,
+            1,
+            SystemTime::UNIX_EPOCH,
+            facts,
+            &mut out,
+        );
         death_cry(&mut ctx);
         out
     }

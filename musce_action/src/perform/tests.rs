@@ -536,13 +536,10 @@ fn player_context_cannot_substitute_another_actor() {
     let verdict = Verdict::guest();
     let caller = Caller::new(caller_actor, ConnectionId(1), &verdict);
     let mut out = Vec::new();
-    let mut ctx = Ctx::new(&mut world, caller, &mut out);
+    let mut ctx = Ctx::new(&mut world, &registry, caller, &mut out);
 
     assert!(matches!(
-        ctx.perform(
-            &registry,
-            &GroundAction::new(id("wait"), other_actor, Vec::new())
-        ),
+        ctx.perform(&GroundAction::new(id("wait"), other_actor, Vec::new())),
         Err(PerformError::ActorMismatch { .. })
     ));
 }
@@ -575,14 +572,21 @@ fn system_context_requires_an_explicit_verdict_for_autonomous_actions() {
     let facts = Vec::new();
     let mut out = Vec::new();
     let granted = Verdict::new([cap].into_iter().collect(), false);
-    let mut ctx = SystemCtx::new(&mut world, 1, SystemTime::now(), &facts, &mut out);
+    let mut ctx = SystemCtx::new(
+        &mut world,
+        &registry,
+        1,
+        SystemTime::now(),
+        &facts,
+        &mut out,
+    );
 
     assert_eq!(
-        ctx.perform(&registry, &Verdict::guest(), &action).unwrap(),
+        ctx.perform(&Verdict::guest(), &action).unwrap(),
         PerformOutcome::Refused(Refusal::Gate)
     );
     assert!(matches!(
-        ctx.perform(&registry, &granted, &action),
+        ctx.perform(&granted, &action),
         Ok(PerformOutcome::Committed(_))
     ));
 }

@@ -222,10 +222,12 @@ mod tests {
     /// Run a Ctx closure and return its emitted (pre-resolution) outbound buffer, so
     /// a perform test reads the actor feedback the seam emits.
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
+        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
         let mut out = Vec::new();
         let verdict = Verdict::guest();
         let mut ctx = Ctx::new(
             world,
+            &affordances,
             Caller::new(actor, ConnectionId(1), &verdict),
             &mut out,
         );

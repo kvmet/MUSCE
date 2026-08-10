@@ -403,6 +403,12 @@ pub struct AffordanceRegistry {
 }
 
 impl AffordanceRegistry {
+    /// Build an activated registry with no affordances. Useful for apps that have
+    /// not adopted canonical actions yet and for focused context tests.
+    pub fn empty(world: &World) -> Result<Self, RegistryError> {
+        AffordanceRegistryBuilder::new(StateRegistry::new()).build(world)
+    }
+
     pub fn schema(&self, id: &AffordanceId) -> Option<&AffordanceSchema> {
         self.entries.get(id).map(|entry| &entry.schema)
     }

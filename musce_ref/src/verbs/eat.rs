@@ -172,8 +172,10 @@ mod tests {
 
         let mut out: Vec<Outbound> = Vec::new();
         let verdict = Verdict::guest();
+        let affordances = musce::action::AffordanceRegistry::empty(&f.world).unwrap();
         let mut ctx = Ctx::new(
             &mut f.world,
+            &affordances,
             Caller::new(f.mouse, ConnectionId(1), &verdict),
             &mut out,
         );

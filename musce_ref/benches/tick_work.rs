@@ -15,7 +15,7 @@ use std::hint::black_box;
 use std::time::SystemTime;
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use musce::action::{Actors, System, run_systems};
+use musce::action::{Actors, AffordanceRegistry, System, run_systems};
 use musce::world::World;
 use musce::{Register, Seed};
 
@@ -25,14 +25,15 @@ use musce::{Register, Seed};
 const TICKS: u64 = 100;
 
 /// A freshly registered and seeded reference world, plus the game's systems.
-fn setup() -> (World, Vec<System>) {
+fn setup() -> (World, AffordanceRegistry, Vec<System>) {
     let app = musce_ref::app();
     let register: Register = app.register;
     let seed: Seed = app.seed;
     let mut world = World::new();
     register(&mut world);
     seed(&mut world);
-    (world, app.systems)
+    let affordances = (app.affordances)(&world, &app.caps).unwrap();
+    (world, affordances, app.systems)
 }
 
 fn tick_work(c: &mut Criterion) {
@@ -44,10 +45,11 @@ fn tick_work(c: &mut Criterion) {
     group.bench_function("seed_world", |b| {
         b.iter_batched_ref(
             setup,
-            |(world, systems)| {
+            |(world, affordances, systems)| {
                 for t in 1..=TICKS {
                     run_systems(
                         world,
+                        affordances,
                         systems,
                         &actors,
                         t,

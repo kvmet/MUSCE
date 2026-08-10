@@ -9,7 +9,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use musce::action::{Actors, Caller, CommandTable, Verdict, dispatch_command};
+use musce::action::{Actors, AffordanceRegistry, Caller, CommandTable, Verdict, dispatch_command};
 use musce::wire::ConnectionId;
 use musce::world::{EntityId, World};
 use musce::{ChooseActor, Register, Seed};
@@ -21,6 +21,7 @@ const CONN: ConnectionId = ConnectionId(1);
 /// needs to run a line as a player.
 struct Bench {
     commands: CommandTable,
+    affordances: AffordanceRegistry,
     world: World,
     actor: EntityId,
     actors: Actors,
@@ -36,11 +37,13 @@ fn setup() -> Bench {
     register(&mut world);
     seed(&mut world);
     let actor = choose(&world, None).expect("the seed places a player avatar");
+    let affordances = (app.affordances)(&world, &app.caps).unwrap();
 
     let mut actors = Actors::default();
     actors.bind(CONN, actor);
     Bench {
         commands: app.commands,
+        affordances,
         world,
         actor,
         actors,
@@ -55,6 +58,7 @@ fn run(bench: &mut Bench, line: &str) {
     dispatch_command(
         &bench.commands,
         &mut bench.world,
+        &bench.affordances,
         &bench.actors,
         caller,
         line,

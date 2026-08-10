@@ -1,7 +1,7 @@
 # Actions and the Executor
 
 > Status: **structural vocabulary and canonical grounded-action performer built;
-> typed narration boundary built, consumer migration pending.** The engine
+> typed narration and runtime registry injection built, consumer migration pending.** The engine
 > owns the structural executor
 > (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
