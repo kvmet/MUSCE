@@ -16,7 +16,7 @@
 //! erased into two closures (a per-entity key reader and a full-world enumerator),
 //! leaving the key type `K` as the only generic parameter an [`Index`] carries.
 
-use std::any::Any;
+use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::hash::Hash;
 
@@ -33,6 +33,63 @@ pub enum Cardinality {
 
 type ReadKey<K> = Box<dyn Fn(&World, EntityId) -> Option<K> + Send + Sync>;
 type Enumerate = Box<dyn Fn(&World) -> Vec<EntityId> + Send + Sync>;
+#[derive(Clone, Copy)]
+struct SourceHooks {
+    type_id: TypeId,
+    type_name: &'static str,
+    is_registered: fn(&World) -> bool,
+    track: fn(&mut World),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IndexLookupError {
+    UnknownName {
+        name: String,
+    },
+    WrongKeyType {
+        name: String,
+        requested_type: &'static str,
+        registered_type: &'static str,
+    },
+}
+
+impl std::fmt::Display for IndexLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownName { name } => write!(f, "unknown index {name:?}"),
+            Self::WrongKeyType {
+                name,
+                requested_type,
+                registered_type,
+            } => write!(
+                f,
+                "index {name:?} uses key type {registered_type}, not requested type {requested_type}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for IndexLookupError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IndexBuildError {
+    UnregisteredSource { tag: &'static str },
+}
+
+impl std::fmt::Display for IndexBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnregisteredSource { tag } => {
+                write!(
+                    f,
+                    "index source component {tag:?} is not registered in the world"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for IndexBuildError {}
 
 /// One secondary index, generic over its key type `K`. The source component type
 /// is erased into `read_key` and `enumerate`, so this type never names it.
@@ -140,6 +197,7 @@ trait AnyIndex: Any + Send + Sync {
     fn on_removed(&mut self, entity: EntityId);
     fn rebuild(&mut self, world: &World);
     fn as_any(&self) -> &dyn Any;
+    fn key_type_name(&self) -> &'static str;
 }
 
 impl<K: Eq + Hash + Clone + Send + Sync + 'static> AnyIndex for Index<K> {
@@ -155,16 +213,22 @@ impl<K: Eq + Hash + Clone + Send + Sync + 'static> AnyIndex for Index<K> {
     fn as_any(&self) -> &dyn Any {
         self
     }
+    fn key_type_name(&self) -> &'static str {
+        type_name::<K>()
+    }
 }
 
 /// The set of named indexes, homed in a [`World`] resource. Registration is by
 /// index name (unique); a component-tag -> names table fans one `ComponentChanged`
 /// out to every index over that component, which is what lets many indexes read
-/// one component with different keys at no extra cost.
+/// one component with different keys at no extra cost. Registration is frozen by
+/// the first successful baseline, and one source tag may denote only one Rust type.
 #[derive(Default)]
 pub struct IndexRegistry {
     by_name: HashMap<&'static str, Box<dyn AnyIndex>>,
     by_tag: HashMap<&'static str, Vec<&'static str>>,
+    source_hooks: HashMap<&'static str, SourceHooks>,
+    activated: bool,
 }
 
 impl IndexRegistry {
@@ -194,9 +258,11 @@ impl IndexRegistry {
         self.register_with(name, Cardinality::Unique, key);
     }
 
-    /// Shared registration path. `C` must be tracked
-    /// (`world.track_component::<C>()`) for incremental updates; registration does
-    /// not track it because that startup wiring must precede any write.
+    /// Shared registration path. Activation via [`IndexRegistry::baseline`] tracks
+    /// `C` before scanning: the scan absorbs all earlier writes and tracking covers
+    /// every later one, so index intent and its trigger prerequisite cannot drift.
+    /// Registration rejects a source tag already bound to another Rust type and is
+    /// unavailable after activation.
     fn register_with<C, K>(
         &mut self,
         name: &'static str,
@@ -207,9 +273,23 @@ impl IndexRegistry {
         K: Eq + Hash + Clone + Send + Sync + 'static,
     {
         assert!(
+            !self.activated,
+            "cannot register index {name:?} after index activation"
+        );
+        assert!(
             !self.by_name.contains_key(name),
             "duplicate index name {name:?}"
         );
+        if let Some(existing) = self.source_hooks.get(C::TAG) {
+            assert_eq!(
+                existing.type_id,
+                TypeId::of::<C>(),
+                "index source tag {:?} is already bound to {}, not {}",
+                C::TAG,
+                existing.type_name,
+                type_name::<C>()
+            );
+        }
         let read_key: ReadKey<K> =
             Box::new(move |world, entity| world.get::<C>(entity).map(|c| key(&c)));
         let enumerate: Enumerate = Box::new(|world| {
@@ -228,23 +308,50 @@ impl IndexRegistry {
             reverse: HashMap::new(),
         };
         self.by_tag.entry(C::TAG).or_default().push(name);
+        self.source_hooks.entry(C::TAG).or_insert(SourceHooks {
+            type_id: TypeId::of::<C>(),
+            type_name: type_name::<C>(),
+            is_registered: is_source_registered::<C>,
+            track: track_source::<C>,
+        });
         self.by_name.insert(name, Box::new(index));
     }
 
-    /// Borrow a named index at its concrete key type, for querying. `None` if the
-    /// name is unknown or `K` does not match the index's key type.
-    pub fn index<K: 'static>(&self, name: &str) -> Option<&Index<K>> {
-        self.by_name
+    /// Borrow a named index at its concrete key type, retaining enough context to
+    /// distinguish missing startup wiring from a caller asking for the wrong key.
+    pub fn index<K: 'static>(&self, name: &str) -> Result<&Index<K>, IndexLookupError> {
+        let idx = self
+            .by_name
             .get(name)
-            .and_then(|idx| idx.as_any().downcast_ref::<Index<K>>())
+            .ok_or_else(|| IndexLookupError::UnknownName {
+                name: name.to_owned(),
+            })?;
+        idx.as_any()
+            .downcast_ref::<Index<K>>()
+            .ok_or_else(|| IndexLookupError::WrongKeyType {
+                name: name.to_owned(),
+                requested_type: type_name::<K>(),
+                registered_type: idx.key_type_name(),
+            })
     }
 
-    /// Rebuild every index from a full scan of the world. Run once at boot, after
-    /// the world is materialized.
-    pub fn baseline(&mut self, world: &World) {
+    /// Activate each source component's change stream, then rebuild every index
+    /// from a full scan. Run once at boot after the world is materialized. The scan
+    /// establishes the current baseline; trigger tracking keeps later writes live.
+    pub fn baseline(&mut self, world: &mut World) -> Result<(), IndexBuildError> {
+        for (&tag, hooks) in &self.source_hooks {
+            if !(hooks.is_registered)(world) {
+                return Err(IndexBuildError::UnregisteredSource { tag });
+            }
+        }
+        for hooks in self.source_hooks.values() {
+            (hooks.track)(world);
+        }
         for idx in self.by_name.values_mut() {
             idx.rebuild(world);
         }
+        self.activated = true;
+        Ok(())
     }
 
     /// Apply a tick's fact batch: fan each `ComponentChanged` to every index over
@@ -292,10 +399,20 @@ pub fn maintain(world: &mut World, facts: &[Fact], init: impl FnOnce(&mut IndexR
         None => {
             let mut registry = IndexRegistry::default();
             init(&mut registry);
-            registry.baseline(world);
+            registry
+                .baseline(world)
+                .expect("registered indexes must name registered source components");
             world.insert_resource(registry);
         }
     }
+}
+
+fn is_source_registered<C: NamedComponent>(world: &World) -> bool {
+    world.is_component_registered::<C>()
+}
+
+fn track_source<C: NamedComponent>(world: &mut World) {
+    world.track_component::<C>();
 }
 
 #[cfg(test)]
@@ -317,6 +434,20 @@ mod tests {
 
     impl NamedComponent for Level {
         const TAG: &'static str = "level";
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    struct AliasCell(i64);
+
+    impl NamedComponent for AliasCell {
+        const TAG: &'static str = Cell::TAG;
+    }
+
+    fn test_world() -> World {
+        let mut world = World::new();
+        world.register_component::<Cell>();
+        world.register_component::<Level>();
+        world
     }
 
     fn spawn_cell(world: &mut World, c: i64) -> EntityId {
@@ -346,13 +477,13 @@ mod tests {
 
     #[test]
     fn baseline_indexes_existing_entities() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let b = spawn_cell(&mut world, 1);
         let c = spawn_cell(&mut world, 2);
 
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         let idx = reg.index::<i64>("cell").unwrap();
         assert_eq!(idx.get(&1), &[a, b]);
@@ -361,13 +492,90 @@ mod tests {
     }
 
     #[test]
-    fn changed_moves_between_buckets() {
+    fn lookup_distinguishes_unknown_name_from_wrong_key_type() {
+        let reg = cell_index();
+        assert_eq!(
+            reg.index::<i64>("missing").err().unwrap(),
+            IndexLookupError::UnknownName {
+                name: "missing".into()
+            }
+        );
+        assert_eq!(
+            reg.index::<String>("cell").err().unwrap(),
+            IndexLookupError::WrongKeyType {
+                name: "cell".into(),
+                requested_type: type_name::<String>(),
+                registered_type: type_name::<i64>(),
+            }
+        );
+    }
+
+    #[test]
+    fn baseline_rejects_an_unregistered_source_by_tag() {
         let mut world = World::new();
+        let mut reg = cell_index();
+        assert_eq!(
+            reg.baseline(&mut world),
+            Err(IndexBuildError::UnregisteredSource { tag: Cell::TAG })
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "index source tag \"cell\" is already bound")]
+    fn registration_rejects_two_component_types_with_one_tag() {
+        let mut reg = cell_index();
+        reg.register_many::<AliasCell, i64>("alias_cell", |cell| cell.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "after index activation")]
+    fn registration_rejects_a_new_index_after_baseline() {
+        let mut world = test_world();
+        let mut reg = cell_index();
+        reg.baseline(&mut world).unwrap();
+
+        reg.register_many::<Level, i64>("late_level", |level| level.0);
+    }
+
+    #[test]
+    fn an_activated_registry_can_repeat_its_baseline() {
+        let mut world = test_world();
+        let entity = spawn_cell(&mut world, 1);
+        let mut reg = cell_index();
+        reg.baseline(&mut world).unwrap();
+        world.insert(entity, Cell(2)).unwrap();
+
+        reg.baseline(&mut world).unwrap();
+
+        assert_eq!(reg.index::<i64>("cell").unwrap().get(&2), &[entity]);
+    }
+
+    #[test]
+    fn baseline_automatically_tracks_future_real_mutator_facts() {
+        let mut world = test_world();
+        let entity = spawn_cell(&mut world, 1);
+        let mut reg = cell_index();
+        reg.baseline(&mut world).unwrap();
+        let _ = world.take_facts();
+
+        world.insert(entity, Cell(2)).unwrap();
+        let facts = world.take_facts();
+        assert!(matches!(
+            facts.as_slice(),
+            [Fact::ComponentChanged { entity: changed, tag: "cell" }] if *changed == entity
+        ));
+        reg.apply(&world, &facts);
+        assert_eq!(reg.index::<i64>("cell").unwrap().get(&2), &[entity]);
+    }
+
+    #[test]
+    fn changed_moves_between_buckets() {
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
-        world.insert(a, Cell(2));
+        world.insert(a, Cell(2)).unwrap();
         reg.apply(&world, &[changed(a, "cell")]);
 
         let idx = reg.index::<i64>("cell").unwrap();
@@ -378,12 +586,12 @@ mod tests {
 
     #[test]
     fn duplicate_triggers_are_idempotent() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
-        world.insert(a, Cell(2));
+        world.insert(a, Cell(2)).unwrap();
         reg.apply(&world, &[changed(a, "cell"), changed(a, "cell")]);
 
         let idx = reg.index::<i64>("cell").unwrap();
@@ -393,12 +601,12 @@ mod tests {
 
     #[test]
     fn removed_component_drops_entity() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
-        world.remove::<Cell>(a);
+        world.remove::<Cell>(a).unwrap();
         reg.apply(&world, &[changed(a, "cell")]);
 
         assert_eq!(
@@ -409,10 +617,10 @@ mod tests {
 
     #[test]
     fn destroyed_evicts_from_index() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         reg.apply(&world, &[destroyed(a)]);
 
@@ -424,10 +632,10 @@ mod tests {
 
     #[test]
     fn change_then_destroy_same_batch_converges() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         // The change fact precedes the despawn that produced the destroy fact.
         world.despawn(a);
@@ -442,10 +650,10 @@ mod tests {
 
     #[test]
     fn destroy_then_change_same_batch_converges() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         world.despawn(a);
         reg.apply(&world, &[destroyed(a), changed(a, "cell")]);
@@ -459,16 +667,16 @@ mod tests {
 
     #[test]
     fn one_change_fans_out_to_every_index_over_the_component() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
 
         let mut reg = IndexRegistry::default();
         // Two indexes over the same component, different keys.
         reg.register_many::<Cell, i64>("cell_exact", |c| c.0);
         reg.register_many::<Cell, i64>("cell_band", |c| c.0 / 10);
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
-        world.insert(a, Cell(25));
+        world.insert(a, Cell(25)).unwrap();
         reg.apply(&world, &[changed(a, "cell")]);
 
         assert_eq!(reg.index::<i64>("cell_exact").unwrap().get(&25), &[a]);
@@ -477,7 +685,7 @@ mod tests {
 
     #[test]
     fn indexes_over_distinct_components_do_not_cross_react() {
-        let mut world = World::new();
+        let mut world = test_world();
         let mut b = EntityBuilder::new();
         b.add(Cell(1));
         b.add(Level(7));
@@ -486,10 +694,10 @@ mod tests {
         let mut reg = IndexRegistry::default();
         reg.register_many::<Cell, i64>("cell", |c| c.0);
         reg.register_many::<Level, i64>("level", |l| l.0);
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         // A "cell" change must not disturb the "level" index.
-        world.insert(a, Cell(9));
+        world.insert(a, Cell(9)).unwrap();
         reg.apply(&world, &[changed(a, "cell")]);
 
         assert_eq!(reg.index::<i64>("cell").unwrap().get(&9), &[a]);
@@ -498,14 +706,14 @@ mod tests {
 
     #[test]
     fn unique_conflicts_borrow_the_key_and_complete_bucket() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 1);
         let b = spawn_cell(&mut world, 1);
         spawn_cell(&mut world, 2);
 
         let mut reg = IndexRegistry::default();
         reg.register_unique::<Cell, i64>("cell", |c| c.0);
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         let idx = reg.index::<i64>("cell").unwrap();
         assert_eq!(idx.cardinality(), Cardinality::Unique);
@@ -517,12 +725,12 @@ mod tests {
 
     #[test]
     fn many_valued_shared_buckets_are_not_conflicts() {
-        let mut world = World::new();
+        let mut world = test_world();
         spawn_cell(&mut world, 1);
         spawn_cell(&mut world, 1);
 
         let mut reg = cell_index();
-        reg.baseline(&world);
+        reg.baseline(&mut world).unwrap();
 
         let idx = reg.index::<i64>("cell").unwrap();
         assert_eq!(idx.cardinality(), Cardinality::Many);
@@ -532,7 +740,7 @@ mod tests {
 
     #[test]
     fn maintain_bootstraps_then_applies_via_resource() {
-        let mut world = World::new();
+        let mut world = test_world();
         let a = spawn_cell(&mut world, 5);
 
         let init = |reg: &mut IndexRegistry| {
@@ -544,7 +752,7 @@ mod tests {
         assert!(world.resource::<IndexRegistry>().is_some());
 
         // A change plus its trigger, applied on the next call.
-        world.insert(a, Cell(6));
+        world.insert(a, Cell(6)).unwrap();
         maintain(&mut world, &[changed(a, "cell")], init);
 
         let idx_reg = world.resource::<IndexRegistry>().unwrap();

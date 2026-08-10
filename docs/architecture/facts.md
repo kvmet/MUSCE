@@ -31,7 +31,8 @@ fact for one of two reasons, and only these:
    react to the handful of entities that moved instead of the whole table. This is
    the **trigger** role; `ComponentChanged` fills it. It stays bounded by an explicit
    opt-in (`World::track_component`): a component emits nothing until a consumer asks
-   to track it, so the stream can never grow to narrate everything.
+   to track it. The secondary-index registry makes that request automatically when
+   its baseline activates, keeping registration intent and tracking from drifting.
 
 The two roles are not disjoint, and that is the point that keeps widening honest:
 `Destroyed` already serves both. It carries an unrecoverable payload for `death_cry`
@@ -154,7 +155,8 @@ also does not split set from remove: reread folds both into one reconcile step
 consumer nothing it cannot already see by presence, and is not added.
 
 **Bounded by opt-in.** A component emits nothing until a consumer calls
-`World::track_component::<C>()`. The tracked set is what stops this from becoming a
+`World::track_component::<C>()`; `IndexRegistry::baseline` does so automatically
+for each registered index source before scanning. The tracked set is what stops this from becoming a
 narrate-every-write channel: fact volume is proportional to the components someone
 actually indexes, not to all mutation.
 

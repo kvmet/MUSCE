@@ -51,6 +51,7 @@ fn naive_region(world: &World, center: &Xyz, radius: i64) -> Vec<EntityId> {
 /// point at the lattice center. Setup only; not measured.
 fn build(n: usize) -> (World, Xyz) {
     let mut world = World::new();
+    world.register_component::<Xyz>();
     let side = (n as f64).cbrt().ceil() as i64;
     let mut count = 0usize;
     'fill: for i in 0..side {
@@ -73,7 +74,7 @@ fn build(n: usize) -> (World, Xyz) {
 
     let mut reg = IndexRegistry::default();
     register_indexes(&mut reg);
-    reg.baseline(&world);
+    reg.baseline(&mut world).unwrap();
     world.insert_resource(reg);
 
     let mid = (side / 2) * SPACING;
@@ -92,7 +93,7 @@ fn index_query(c: &mut Criterion) {
     for n in [100usize, 1_000, 10_000, 100_000] {
         let (world, center) = build(n);
         group.bench_with_input(BenchmarkId::new("indexed", n), &n, |b, _| {
-            b.iter(|| black_box(near(&world, &center, RADIUS)));
+            b.iter(|| black_box(near(&world, &center, RADIUS).unwrap()));
         });
         group.bench_with_input(BenchmarkId::new("naive_scan", n), &n, |b, _| {
             b.iter(|| black_box(naive_region(&world, &center, RADIUS)));

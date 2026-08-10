@@ -551,8 +551,18 @@ pub fn nearby(ctx: &mut Ctx, args: &str) {
         ctx.emit_self(EventKind::Feedback, "This room has no coordinates.");
         return;
     };
+    let nearby = match near(ctx.world, &here, radius) {
+        Ok(nearby) => nearby,
+        Err(error) => {
+            ctx.emit_self(
+                EventKind::Feedback,
+                format!("Spatial index is misconfigured: {error}"),
+            );
+            return;
+        }
+    };
     let mut lines = Vec::new();
-    for entity in near(ctx.world, &here, radius) {
+    for entity in nearby {
         if entity == room {
             continue; // the room you are standing in
         }

@@ -42,8 +42,12 @@ state; the index is its first user.
 A read-model rebuilt by full scan on every query is not maintained: it just moves
 the scan. So the index is built once and kept current by reacting to change:
 
-- **Baseline** on the maintainer system's first run: a full scan seeds every index,
-  and the registry is stored in the resource. This runs post-load, inside the tick
+- **Baseline** on the maintainer system's first run: activation first calls
+  `track_component::<C>()` for every registered source (and errors with the source
+  tag if the component was not registered), then a full scan seeds every index,
+  and the registry is stored in the resource. The scan absorbs all writes before
+  activation; tracking covers all writes after it, so index registration and its
+  trigger prerequisite cannot drift. This runs post-load, inside the tick
   loop, not from a host boot hook. No client is connected at tick 0 (sessions are
   not persisted) and commands drain before systems within a tick, so there is no
   observable window where a query sees an empty index. A host hook stays a cheap
@@ -60,8 +64,17 @@ same tick reads the updated index. A command-phase reader (`@nearby`) runs befor
 the system loop, so it sees last-boundary (one-tick-lagged) values, which is
 consistent with the rest of the reaction channel.
 
-Only components a consumer opts into via `World::track_component` emit the trigger,
-so the fact stream stays bounded to what is actually indexed.
+Only components a consumer opts into emit the trigger, so the fact stream stays
+bounded. `IndexRegistry` registration is that explicit consumer intent and
+activation performs the tracking; non-index consumers may still call
+`World::track_component` directly.
+
+Registration is a pre-activation schema. One source tag denotes exactly one Rust
+component type, matching the component registry's invariant; attempting to reuse a
+tag for another type is rejected before baseline can validate or track the wrong
+source. A successful baseline freezes the schema, so a later registration cannot
+install an untracked, unscanned index. Repeating baseline for the existing schema is
+allowed as an explicit rebuild.
 
 ## Many indexes over one component
 
@@ -80,6 +93,12 @@ to identify at most one entity. A rebuilt read model cannot intercept writes, so
 `Unique` is diagnostic metadata, never enforcement. `conflicts()` borrows each
 violating `(key, entities)` bucket without allocating; the app enforces the invariant
 at its write boundary and can inspect the index for drift.
+
+Named lookup is diagnostic rather than optional once a registry exists:
+`index::<K>(name)` returns `IndexLookupError::UnknownName` or `WrongKeyType`, retaining
+the name plus requested/registered Rust type names. Resource absence remains the
+only “index registry not initialized yet” state. The reference `near` query returns
+lookup misconfiguration instead of turning it into an empty gameplay result.
 
 ## The reference consumer
 

@@ -165,6 +165,13 @@ impl World {
         self.components.register::<C>();
     }
 
+    /// Whether startup wiring registered component type `C` for persistence and
+    /// type-erased mutation. Primarily lets derived-state consumers validate their
+    /// own activation prerequisites without relying on a later panic.
+    pub fn is_component_registered<C: 'static>(&self) -> bool {
+        self.components.tag_of::<C>().is_some()
+    }
+
     /// Opt a component into the `ComponentChanged` trigger stream. Until a component
     /// is tracked it emits nothing; this is the bound that keeps the trigger charter
     /// honest (see fact.rs). `C` must be registered, so every mutator path can

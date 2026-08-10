@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 /// A room's integer position. Rooms only: it exists for range and line-of-sight
 /// queries between places, while ordinary containment (a thing in a room) stays
-/// room-based. Registered and tracked in [`register`], so it persists and every
-/// write feeds the index.
+/// room-based. Registered for persistence in [`register`]; index activation opts it
+/// into tracking before the baseline scan, so every later write feeds the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Xyz {
     pub x: i64,
@@ -55,12 +55,11 @@ fn cell_of(p: &Xyz) -> Cell {
     )
 }
 
-/// Register the game's `xyz` component and its two indexes' wiring: the component
-/// is registered (so coordinates persist) and tracked (so writes feed the index).
+/// Register the game's `xyz` component for persistence. Index activation owns
+/// trigger tracking and baselines all writes that happened before activation.
 /// Called from `App.register`, before load or seed.
 pub(crate) fn register(world: &mut World) {
     world.register_component::<Xyz>();
-    world.track_component::<Xyz>();
 }
 
 /// Register the game's spatial indexes into `reg`. Shared by the maintainer's boot
@@ -91,13 +90,15 @@ pub fn coords(world: &World, entity: EntityId) -> Option<Xyz> {
 /// caller that needs exact distance filters this batch itself (the index does
 /// retrieval, not geometry). Empty if the index is not built yet (before the
 /// maintainer's first run).
-pub fn near(world: &World, center: &Xyz, radius: i64) -> Vec<EntityId> {
+pub fn near(
+    world: &World,
+    center: &Xyz,
+    radius: i64,
+) -> Result<Vec<EntityId>, musce::index::IndexLookupError> {
     let Some(reg) = world.resource::<IndexRegistry>() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let Some(idx) = reg.index::<Cell>(CELL_INDEX) else {
-        return Vec::new();
-    };
+    let idx = reg.index::<Cell>(CELL_INDEX)?;
     let (cx, cy, cz) = cell_of(center);
     let span = radius.div_euclid(CELL) + 1;
     let mut out = Vec::new();
@@ -108,7 +109,7 @@ pub fn near(world: &World, center: &Xyz, radius: i64) -> Vec<EntityId> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -123,9 +124,10 @@ mod tests {
     }
 
     fn build_index(world: &mut World) {
+        register(world);
         let mut reg = IndexRegistry::default();
         register_indexes(&mut reg);
-        reg.baseline(world);
+        reg.baseline(world).unwrap();
         world.insert_resource(reg);
     }
 
@@ -137,7 +139,7 @@ mod tests {
         let far = place(&mut w, 100, 0, 0); // cell (10,0,0), outside the covered span
         build_index(&mut w);
 
-        let hits = near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10);
+        let hits = near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10).unwrap();
         assert!(hits.contains(&here) && hits.contains(&close));
         assert!(!hits.contains(&far));
     }
@@ -159,13 +161,26 @@ mod tests {
                 z: 0,
             },
             5,
-        );
+        )
+        .unwrap();
         assert!(hits.contains(&a) && hits.contains(&b));
     }
 
     #[test]
     fn near_is_empty_before_the_index_exists() {
         let w = World::new();
-        assert!(near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10).is_empty());
+        assert!(near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn near_propagates_a_present_but_misconfigured_registry() {
+        let mut w = World::new();
+        w.insert_resource(IndexRegistry::default());
+
+        assert!(matches!(
+            near(&w, &Xyz { x: 0, y: 0, z: 0 }, 10),
+            Err(musce::index::IndexLookupError::UnknownName { name })
+                if name == CELL_INDEX
+        ));
     }
 }
