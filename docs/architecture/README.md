@@ -89,7 +89,8 @@ These hold across every subsystem:
   pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
   raw normalized readings, registered qualitative regions, strict directional
-  effects, and bounded QSIM regression. *(Specified; implementation pending.)*
+  effects, and bounded QSIM regression. *(Built: the foundational value vocabulary;
+  evaluator registration, regions, effects, and planner integration pending.)*
 - [offers.md](offers.md): parameter-aware affordance enumeration for pointing
   clients, partial typed input substitutions, result declarations,
   missing-input picks, and the generic perform wire shape. *(Target
