@@ -257,9 +257,9 @@ fn commit_and_select(world: &mut World, bird: EntityId, hysteresis: u32) -> Opti
 /// perception into arbitrary containers stays deferred (see the agency docs).
 fn magpie_known(world: &World, bird: EntityId) -> Vec<EntityId> {
     let mut known = known_here(world, bird);
-    known.extend(world.contents(bird));
+    known.extend_from_slice(world.contents(bird));
     if let Some(nest) = world.target_of::<Nest>(bird) {
-        known.extend(world.contents(nest));
+        known.extend_from_slice(world.contents(nest));
     }
     known
 }

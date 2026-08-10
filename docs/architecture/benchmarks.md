@@ -53,6 +53,9 @@ automatically.
   that only bites at scale, which is exactly the cost a redesign is weighed
   against.
 
+`contents` measures iterating the borrowed reverse-index slice. The lookup itself is
+O(1) and allocation-free; the sweep catches regressions in per-occupant traversal.
+
 ### What the set already shows
 
 Two findings are durable enough to record, because they point at where the next

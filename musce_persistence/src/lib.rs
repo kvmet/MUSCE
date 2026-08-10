@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(w2.container_of(coin), Some(bag));
         assert_eq!(w2.container_of(bag), Some(hall));
         assert_eq!(w2.enclosing_locus(coin), Some(hall));
-        assert_eq!(w2.contents(bag), vec![coin]);
+        assert_eq!(w2.contents(bag), &[coin]);
         assert!(w2.has::<Locus>(hall));
         assert_eq!(w2.get::<Description>(bag).unwrap().0, "bag");
         assert_eq!(w2.get::<Description>(coin).unwrap().0, "coin");

@@ -125,15 +125,16 @@ principle, and would spam besides (a character with fifty items would emit fifty
 and stops.
 
 The **right way for a consumer** to react to the carried subtree is to start from the
-mover's fact and walk `descendants(entity)` itself, once, only when it needs to (a
-region trigger usually cares about the character stepping into the lava, not each coin
-in the bag). Pushing this to the app is deliberate: only the app knows *whether* the
-subtree matters for a given reaction, and it computes it cheaply on demand, whereas
+mover's fact and recursively follow `contents(entity)`, only when it needs to (a region
+trigger usually cares about the character stepping into the lava, not each coin in the
+bag). The engine exposes the immediate borrowed query rather than a generic descendant
+walker: only the app knows *whether* the subtree matters and which pruning, ordering,
+or termination policy the reaction needs. It computes that cheaply on demand, whereas
 the engine emitting it eagerly would pay that cost on every move for reactions that
 mostly do not want it. The rule (fire for the entity whose own link changed) is also
 exactly the rule the reparent cascade already obeys: a destroyed container's surviving
-children each have their *own* link rewritten, so they emit; a carried item never
-does. One rule, no special cases, derived data left where it can be computed lazily.
+children each have their *own* link rewritten, so they emit; a carried item never does.
+One rule, no special cases, derived data left where it can be computed lazily.
 **This is settled, not a limitation to lift later:** revisiting it means re-deriving
 in the engine what the consumer can already derive itself, at a cost the consumer does
 not always want to pay.
@@ -177,21 +178,17 @@ leaves a stale index entry.
 **The raw `&mut` bypass.** `ComponentChanged` fires only for writes that pass through
 the `World` mutator. A raw `&mut C` component borrow mutates in place *below* that
 layer and emits nothing, so a tracked index over such a component silently desyncs.
-The public API no longer exposes such a borrow at all (there is no raw hecs handle;
-see ecs-and-relations.md), so this is reachable only from in-crate code through the
-`pub(crate)` raw path. Two guardrails remain for that: `World::modify<C>(id, f)` is
-the supported in-place path (mutate, then mark dirty and emit), and
-`World::forbid_tracking::<C>()` lets code declare a raw-mutated type, after which
-`track_component` of it is a hard panic rather than a silent desync. Neither is a
-debug-only reconciliation (the "`except -> pass`"
-pattern the repo forbids on the critical path); they fail loud at startup.
+The public API does not expose such a borrow at all (there is no raw hecs handle; see
+ecs-and-relations.md). `World::modify<C>(id, f)` is the supported in-place path: its
+module-private raw borrow is immediately followed by both the dirty mark and trigger.
+A second production raw-mutation path would have to reproduce both obligations, so it
+must not be added as a component-specific escape hatch.
 
 A hygiene check (`bb/guards.clj`, run by `bb/hygiene.clj`) closes the remaining
 in-crate gap: every raw `&mut` component borrow in `musce_core` must carry an
 explicit `hygiene:allow-raw-mut` waiver, so a new unwaived one fails the gate rather
 than silently dropping writes from the delta. The one production site (`modify`,
-routed through the private `raw_get_mut` funnel) plus the footgun test that proves
-the bypass are waived and greppable in one search.
+routed through the private `raw_get_mut` funnel) is waived and greppable.
 
 ## Created, Related, and Unrelated get no fact
 

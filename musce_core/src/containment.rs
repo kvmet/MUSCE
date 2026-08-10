@@ -25,8 +25,9 @@ impl World {
 
     /// Immediate contents of a container (one level). **Unordered** (see
     /// [`World::sources_of`]): order is not stable across a save/load, so a caller
-    /// wanting a stable display order sorts at the display site.
-    pub fn contents(&self, container: EntityId) -> Vec<EntityId> {
+    /// wanting a stable display order sorts at the display site. Borrowed directly
+    /// from the reverse index; no list is cloned for a read.
+    pub fn contents(&self, container: EntityId) -> &[EntityId] {
         self.sources_of::<Containment>(container)
     }
 

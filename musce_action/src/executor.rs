@@ -174,7 +174,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(w.container_of(sword), Some(hall));
-        assert_eq!(w.contents(hall), vec![sword]);
+        assert_eq!(w.contents(hall), &[sword]);
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
         .unwrap();
         assert_eq!(subject, puppet);
         assert_eq!(w.target_of::<Controls>(puppet), Some(controller));
-        assert_eq!(w.sources_of::<Controls>(controller), vec![puppet]);
+        assert_eq!(w.sources_of::<Controls>(controller), &[puppet]);
 
         execute(
             &mut w,

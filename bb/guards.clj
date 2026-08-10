@@ -34,12 +34,11 @@
 ;; this check needs to scan.
 (def default-root "musce_core/src")
 
-;; A borrow carrying this marker is a deliberate, reviewed raw write (e.g. `modify`
-;; itself, the derived `RelSources` reverse-index maintenance, or a test that
-;; proves the footgun). The marker is greppable, so every raw borrow in the engine
-;; is auditable in one search. It counts on the borrow line or an immediately
-;; adjacent one, because a hand-written waiver reads best directly above the
-;; statement while `rustfmt` reparks a trailing waiver onto the line just below.
+;; A borrow carrying this marker is a deliberate, reviewed raw write (`modify`
+;; itself is the sole production site). The marker is greppable, so every raw borrow
+;; in the engine is auditable in one search. It counts on the borrow line or an
+;; immediately adjacent one, because a hand-written waiver reads best directly above
+;; the statement while `rustfmt` reparks a trailing waiver onto the line just below.
 (def waiver "hygiene:allow-raw-mut")
 
 ;; Mutable component borrows off the raw hecs handle. These are specific enough to

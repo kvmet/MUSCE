@@ -3,8 +3,8 @@
 //! serialization. These measure the in-memory ECS layer in isolation, with no
 //! app content and no persistence I/O; the persistence crate benches the DB
 //! round-trip separately. The scaling cases (`contents`, `snapshot`) sweep world
-//! size so a regression that turns a linear cost superlinear shows up as a change
-//! in slope, not just a single number.
+//! size so a regression that turns a linear traversal superlinear shows up as a
+//! change in slope, not just a single number.
 
 use std::hint::black_box;
 
@@ -66,7 +66,11 @@ fn contents(c: &mut Criterion) {
         let (world, room, _items) = room_with_items(n);
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| black_box(world.contents(room)));
+            b.iter(|| {
+                for &entity in world.contents(room) {
+                    black_box(entity);
+                }
+            });
         });
     }
     group.finish();

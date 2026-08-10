@@ -58,7 +58,8 @@ pub fn examine(ctx: &mut Ctx, args: &str) {
 fn contents_line(world: &World, container: EntityId) -> String {
     let items: Vec<String> = world
         .contents(container)
-        .into_iter()
+        .iter()
+        .copied()
         .filter_map(|e| short_name(world, e))
         .collect();
     if items.is_empty() {
@@ -73,7 +74,8 @@ pub fn inventory(ctx: &mut Ctx, _args: &str) {
     let items: Vec<String> = ctx
         .world
         .contents(ctx.actor)
-        .into_iter()
+        .iter()
+        .copied()
         .filter_map(|e| short_name(ctx.world, e))
         .collect();
     if items.is_empty() {
@@ -97,7 +99,8 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     s.push_str("\nExits: ");
     let dirs: Vec<String> = world
         .exits_of(room)
-        .into_iter()
+        .iter()
+        .copied()
         .filter_map(|e| world.name_of(e))
         .collect();
     if dirs.is_empty() {
@@ -109,7 +112,8 @@ fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
 
     let others: Vec<String> = world
         .contents(room)
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|&e| e != viewer)
         .filter_map(|e| short_name(world, e))
         .collect();

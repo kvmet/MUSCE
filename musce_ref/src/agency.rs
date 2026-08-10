@@ -267,7 +267,8 @@ pub fn known_here(world: &World, actor: EntityId) -> Vec<EntityId> {
     match world.enclosing_locus(actor) {
         Some(locus) => world
             .contents(locus)
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|&e| e != actor)
             .collect(),
         None => Vec::new(),

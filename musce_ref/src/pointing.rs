@@ -42,13 +42,13 @@ pub fn snapshot(world: &World, actor: EntityId) -> SnapshotData {
 /// Walk containment depth-first from `id`, pushing one [`Entity`] per node.
 /// Containment is acyclic, so this terminates without a visited set.
 fn collect(world: &World, id: EntityId, out: &mut Vec<Entity>) {
-    let mut contents = world.contents(id);
+    let mut contents = world.contents(id).to_vec();
     // A locus's exits are relation-backed (`LeadsFrom`), not containment children,
     // so raw containment misses them. The pointing client has no `go` box to type
     // into: it reaches an exit by clicking it, so project the room's exits as nodes
     // under it. This is the one place the client's tree diverges from containment.
     if world.has::<Locus>(id) {
-        contents.extend(world.exits_of(id));
+        contents.extend_from_slice(world.exits_of(id));
     }
     out.push(Entity {
         id: id.0.to_string(),

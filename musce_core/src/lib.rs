@@ -60,7 +60,7 @@ mod tests {
         w.move_entity(sword, hall).unwrap();
 
         assert_eq!(w.container_of(sword), Some(hall));
-        assert_eq!(w.contents(hall), vec![sword]);
+        assert_eq!(w.contents(hall), &[sword]);
     }
 
     #[test]
@@ -86,8 +86,8 @@ mod tests {
         w.move_entity(gem, chest).unwrap();
 
         assert_eq!(w.container_of(gem), Some(chest));
-        assert_eq!(w.contents(hall), Vec::<EntityId>::new());
-        assert_eq!(w.contents(chest), vec![gem]);
+        assert!(w.contents(hall).is_empty());
+        assert_eq!(w.contents(chest), &[gem]);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         assert_eq!(w.container_of(coin), Some(hall));
         assert_eq!(w.enclosing_locus(coin), Some(hall));
         assert!(!w.contains(bag));
-        let mut contents = w.contents(hall);
+        let mut contents = w.contents(hall).to_vec();
         contents.sort();
         assert_eq!(contents, vec![coin]);
     }
@@ -273,29 +273,6 @@ mod tests {
         );
         // The coin stayed enclosed by the hall throughout, so no LocusChanged.
         assert!(!facts.iter().any(|f| matches!(f, Fact::LocusChanged { .. })));
-    }
-
-    #[test]
-    fn descendants_predicate_stops() {
-        let mut w = World::new();
-        let hall = locus(&mut w, "hall");
-        let bag = container(&mut w, "bag");
-        let coin = item(&mut w, "coin");
-        w.move_entity(bag, hall).unwrap();
-        w.move_entity(coin, bag).unwrap();
-
-        // descend everywhere: see bag and coin
-        let mut all = Vec::new();
-        w.descendants::<Containment, _, _>(hall, |_| true, |e| all.push(e));
-        all.sort();
-        let mut expect = vec![bag, coin];
-        expect.sort();
-        assert_eq!(all, expect);
-
-        // never descend: see only direct contents (bag), not coin
-        let mut shallow = Vec::new();
-        w.descendants::<Containment, _, _>(hall, |_| false, |e| shallow.push(e));
-        assert_eq!(shallow, vec![bag]);
     }
 
     #[test]
@@ -462,7 +439,7 @@ mod tests {
         let err = w.set_component(coin, "contained_by", serde_json::json!(chest.0));
         assert!(matches!(err, Err(MutateError::RelationTag(_))));
         assert_eq!(w.container_of(coin), Some(hall));
-        assert_eq!(w.contents(chest), Vec::<EntityId>::new());
+        assert!(w.contents(chest).is_empty());
     }
 
     #[test]
@@ -531,7 +508,7 @@ mod tests {
         assert_eq!(w2.container_of(coin), Some(bag));
         assert_eq!(w2.container_of(bag), Some(hall));
         assert_eq!(w2.enclosing_locus(coin), Some(hall));
-        assert_eq!(w2.contents(bag), vec![coin]);
+        assert_eq!(w2.contents(bag), &[coin]);
         // A marker and a newtype both round-trip through the snapshot.
         assert!(w2.has::<Locus>(hall));
         assert_eq!(w2.get::<Description>(coin).unwrap().0, "coin");
@@ -648,44 +625,5 @@ mod tests {
         assert!(!w.modify::<Description>(bare, |d| d.0 = "unreached".into()));
 
         assert_eq!(changed_tags(&w.take_facts()), ["description"]);
-    }
-
-    #[test]
-    fn raw_ecs_mutation_bypasses_the_trigger() {
-        // The footgun `modify` and `forbid_tracking` exist for: an in-place write
-        // through the raw ecs handle mutates below the mutator layer and emits
-        // nothing, so a tracked index over it would silently desync.
-        let mut w = World::new();
-        w.track_component::<Description>();
-        let it = item(&mut w, "x");
-        let _ = w.take_facts();
-
-        {
-            // The in-crate raw path (the `ecs` field) is the only remaining way to
-            // reach a `&mut` component borrow; the public API exposes none.
-            let e = w.index().get(it).unwrap();
-            let mut d = w.ecs.get::<&mut Description>(e).unwrap(); // hygiene:allow-raw-mut
-            d.0 = "silently changed".into();
-        }
-        assert!(
-            w.take_facts().is_empty(),
-            "a raw &mut write cannot signal the change"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot be tracked")]
-    fn tracking_a_forbidden_component_panics() {
-        let mut w = World::new();
-        w.forbid_tracking::<Description>();
-        w.track_component::<Description>();
-    }
-
-    #[test]
-    #[should_panic(expected = "already tracked")]
-    fn forbidding_a_tracked_component_panics() {
-        let mut w = World::new();
-        w.track_component::<Description>();
-        w.forbid_tracking::<Description>();
     }
 }

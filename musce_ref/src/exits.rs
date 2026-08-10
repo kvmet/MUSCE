@@ -47,14 +47,14 @@ pub(crate) fn register(world: &mut World) {
 /// Exit-graph queries over the world the engine already exposes. An extension
 /// trait so call sites keep reading `world.exits_of(..)`.
 pub(crate) trait ExitQueries {
-    /// The exits leading out of a locus (the reverse index of `LeadsFrom`).
-    fn exits_of(&self, locus: EntityId) -> Vec<EntityId>;
+    /// The exits leading out of a locus, borrowed from the `LeadsFrom` reverse index.
+    fn exits_of(&self, locus: EntityId) -> &[EntityId];
     /// The locus an exit leads to, if its destination is still set.
     fn exit_destination(&self, exit: EntityId) -> Option<EntityId>;
 }
 
 impl ExitQueries for World {
-    fn exits_of(&self, locus: EntityId) -> Vec<EntityId> {
+    fn exits_of(&self, locus: EntityId) -> &[EntityId] {
         self.sources_of::<LeadsFrom>(locus)
     }
 
@@ -103,7 +103,7 @@ mod tests {
         };
         let north = exit(&mut w, hall, garden, "north");
 
-        assert_eq!(w.exits_of(hall), vec![north]);
+        assert_eq!(w.exits_of(hall), &[north]);
         assert_eq!(w.exit_destination(north), Some(garden));
         assert_eq!(w.name_of(north), Some("north".to_string()));
     }
@@ -132,7 +132,7 @@ mod tests {
         assert!(!w.contains(out));
         assert!(!w.contains(back));
         assert!(w.contains(garden));
-        assert_eq!(w.exits_of(garden), Vec::<EntityId>::new());
+        assert!(w.exits_of(garden).is_empty());
     }
 
     #[test]

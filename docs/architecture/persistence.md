@@ -30,8 +30,9 @@ coverage of that layer: a persisted component changed *through* `World`
 The only way to change one *without* being seen is a raw `&mut` component borrow
 below the mutator layer, and that is no longer reachable outside the engine core:
 there is no public raw hecs handle (see ecs-and-relations.md), so app and app code
-cannot open this hole at all. In-crate code that reaches through the `pub(crate)`
-raw path owns the same discipline `forbid_tracking` already names.
+cannot open this hole at all. The one in-crate raw borrow is module-private inside
+`modify`, which immediately performs the dirty and trigger bookkeeping; the hygiene
+gate rejects any new unwaived raw component borrow.
 
 What is and isn't serialized:
 

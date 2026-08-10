@@ -177,7 +177,7 @@ mod tests {
         // their reverse indexes were rebuilt on load.
         assert_eq!(w2.target_of::<Controls>(robot), Some(character));
         assert_eq!(w2.focus_of(character), Some(robot));
-        assert_eq!(w2.sources_of::<Controls>(character), vec![robot]);
+        assert_eq!(w2.sources_of::<Controls>(character), &[robot]);
     }
 
     #[test]

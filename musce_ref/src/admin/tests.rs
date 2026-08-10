@@ -67,7 +67,8 @@ fn re(id: EntityId) -> String {
 /// The destination of a room's exit in a given direction, if any.
 fn exit_to(w: &World, room: EntityId, dir: &str) -> Option<EntityId> {
     w.exits_of(room)
-        .into_iter()
+        .iter()
+        .copied()
         .find(|&e| w.name_of(e).as_deref() == Some(dir))
         .and_then(|e| w.exit_destination(e))
 }

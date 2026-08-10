@@ -118,6 +118,9 @@ Rooms, containers, and inventories are all containers. See
   subtree (see [facts.md](facts.md)).
 - Helpers: `contents` (one level), `container_of` (immediate parent),
   `enclosing_locus` (walk up to the nearest `Locus`, the perception boundary).
+  `contents` and the generic `sources_of` borrow their reverse-index slices, so
+  read-only queries allocate nothing; mutation during traversal first copies at
+  that explicit ownership boundary.
 
 ## Control and focus
 
@@ -285,10 +288,10 @@ and whether the closure returns "did I change it" to keep fact emission precise)
 it is built with the first hot bulk-write system that defines those, as a pure
 addition.
 
-The recursive contents walk (`descendants`) is a predicate-driven, visitor-based
-tree walk: the engine is the mechanism, the caller supplies the descent policy
-(e.g. stop at creatures or closed containers for looting; descend everywhere for
-persistence). Visitor-based so callers can early-exit without allocating.
+Recursive containment policy stays app-side. A consumer that needs a subtree
+composes the immediate `contents` query and chooses its own pruning, ordering, and
+termination rules; the engine does not carry a generic traversal API without a
+concrete consumer to shape it.
 
 Proximity queries ("things near `[x,y]`") are a different beast needing a spatial
 index, and belong to app logic once coordinates exist. Deferred.

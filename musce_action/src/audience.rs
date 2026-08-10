@@ -70,7 +70,7 @@ pub fn resolve(world: &World, actors: &Actors, out: Outbound, emit: &mut impl Fn
             }
         }
         Audience::Locus(locus) => {
-            for occupant in world.contents(locus) {
+            for &occupant in world.contents(locus) {
                 for conn in actors.conns_for(occupant) {
                     deliver(conn);
                 }

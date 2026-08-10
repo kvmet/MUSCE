@@ -460,7 +460,7 @@ pub fn purge(ctx: &mut Ctx, args: &str) {
 /// is gone before its parent. Contents are collected into an owned Vec first, as
 /// despawning mutates the world while we walk it.
 fn purge_entity(world: &mut World, e: EntityId) {
-    for child in world.contents(e) {
+    for child in world.contents(e).to_vec() {
         purge_entity(world, child);
     }
     let _ = execute(world, Action::Destroy { entity: e });
@@ -642,7 +642,8 @@ fn opposite_dir(d: &str) -> Option<(&'static str, &'static str)> {
 fn has_exit(world: &World, room: EntityId, dir: &str) -> bool {
     world
         .exits_of(room)
-        .into_iter()
+        .iter()
+        .copied()
         .any(|e| world.name_of(e).as_deref() == Some(dir))
 }
 

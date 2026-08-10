@@ -68,8 +68,8 @@ pub struct World {
     /// the set for the next one, and a failed save restores the drained ids via
     /// `remark_dirty`. A raw in-crate `&mut` component write (via `entity_ref` or the
     /// `ecs` field) bypasses this, the same boundary `ComponentChanged` and
-    /// `forbid_tracking` already draw; the public API has no such path, so outside the
-    /// core the only way to change a persisted component is through `modify` and the
+    /// raw-mutation hygiene guard polices; the public API has no such path, so outside
+    /// the core the only way to change a persisted component is through `modify` and the
     /// other mutators. `load` does not mark (a loaded world already matches the store);
     /// only a schema migration re-dirties it, via `mark_all_dirty`.
     dirty: HashSet<EntityId>,
@@ -81,11 +81,6 @@ pub struct World {
     /// `ComponentChanged` fact fires only for a tag in this set, keeping the trigger
     /// stream bounded to components someone actually maintains an index over.
     tracked: HashSet<&'static str>,
-    /// Component types an app declared unsafe to track (via `forbid_tracking`)
-    /// because it mutates them in place through a raw `&mut` component borrow, below
-    /// the mutator layer where no fact can fire. `track_component` refuses these, so a
-    /// tracked index can never silently desync; `modify` is the supported path.
-    forbid_track: HashSet<TypeId>,
     /// Transient singleton state an app hangs off the world without persisting it:
     /// derived, rebuilt-on-boot data (a secondary index, a cache), keyed by type,
     /// at most one value per type. Like `facts` and `tracked` it lives beside the
@@ -127,7 +122,6 @@ impl World {
             dirty: HashSet::new(),
             facts: Vec::new(),
             tracked: HashSet::new(),
-            forbid_track: HashSet::new(),
             resources: HashMap::new(),
             reverse: HashMap::new(),
         };
@@ -154,37 +148,15 @@ impl World {
     /// Opt a component into the `ComponentChanged` trigger stream. Until a component
     /// is tracked it emits nothing; this is the bound that keeps the trigger charter
     /// honest (see fact.rs). `C` must be registered, so every mutator path can
-    /// resolve its tag, and must not have been `forbid_tracking`-marked. Startup
-    /// wiring; tracking the same component twice is a harmless no-op.
+    /// resolve its tag. Startup wiring; tracking the same component twice is a
+    /// harmless no-op.
     pub fn track_component<C: NamedComponent>(&mut self) {
         assert!(
             self.components.tag_of::<C>().is_some(),
             "cannot track unregistered component {:?}; register it first",
             C::TAG
         );
-        assert!(
-            !self.forbid_track.contains(&TypeId::of::<C>()),
-            "component {:?} is mutated in place below the mutator layer and cannot \
-             be tracked; route its writes through World::modify first",
-            C::TAG
-        );
         self.tracked.insert(C::TAG);
-    }
-
-    /// Declare a component unsafe to track: it is mutated in place below the mutator
-    /// layer (a raw in-crate `&mut` borrow), which cannot emit `ComponentChanged`, so
-    /// a tracked index over it would silently desync. A later `track_component` of the same
-    /// type is then a hard error. Lift the restriction by routing those writes
-    /// through `World::modify` and dropping this call.
-    pub fn forbid_tracking<C: hecs::Component>(&mut self) {
-        if let Some(tag) = self.components.tag_of::<C>() {
-            assert!(
-                !self.tracked.contains(tag),
-                "component {:?} is already tracked; cannot forbid tracking it",
-                tag
-            );
-        }
-        self.forbid_track.insert(TypeId::of::<C>());
     }
 
     // --- transient resources --------------------------------------------
@@ -503,7 +475,7 @@ impl World {
     /// The sanctioned in-place write, and the only one available outside the core
     /// (there is no public `&mut` component borrow); a raw in-crate `&mut` write would
     /// mutate below the mutator layer, drop the change from the next delta snapshot,
-    /// and silently desync a tracked index (see `forbid_tracking`). Returns `false`
+    /// and silently desync a tracked index. Returns `false`
     /// (touching nothing) if the entity or the component is absent, so no trigger or
     /// dirty mark claims a change that did not happen. Typed and JSON-free, for the
     /// hot path.
@@ -633,13 +605,15 @@ impl World {
     /// a derived index rebuilt from the forward links on load, not preserved live
     /// order. A caller that wants a stable display order (contents, exits,
     /// inventory) sorts at the display site by something meaningful to it; the
-    /// engine promises membership, not order.
-    pub fn sources_of<R: Relation>(&self, target: EntityId) -> Vec<EntityId> {
+    /// engine promises membership, not order. Borrowed from the reverse index so
+    /// read-only callers pay no allocation; a caller that mutates `World` while
+    /// iterating must copy at that ownership boundary.
+    pub fn sources_of<R: Relation>(&self, target: EntityId) -> &[EntityId] {
         self.reverse
             .get(&TypeId::of::<R>())
             .and_then(|m| m.get(&target))
-            .cloned()
-            .unwrap_or_default()
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Ancestor chain (immediate target first), following the relation upward.
@@ -651,23 +625,6 @@ impl World {
             cur = self.target_of::<R>(c);
         }
         out
-    }
-
-    /// Walk all descendants of `root`. `descend` decides whether to recurse into
-    /// a given node (app policy); `visit` is called for every descendant.
-    pub fn descendants<R, D, V>(&self, root: EntityId, mut descend: D, mut visit: V)
-    where
-        R: Relation,
-        D: FnMut(EntityId) -> bool,
-        V: FnMut(EntityId),
-    {
-        let mut stack = self.sources_of::<R>(root);
-        while let Some(n) = stack.pop() {
-            visit(n);
-            if descend(n) {
-                stack.extend(self.sources_of::<R>(n));
-            }
-        }
     }
 
     pub fn clear_target<R: Relation>(&mut self, source: EntityId) {
@@ -872,7 +829,9 @@ fn despawn_relation<R: Relation>(world: &mut World, id: EntityId) {
         world.remove_source::<R>(t, id);
     }
     // As a target: apply the cascade to its sources.
-    let sources = world.sources_of::<R>(id);
+    // The cascade mutates the same reverse index, so take ownership at this
+    // mutation boundary rather than making every read-only caller clone.
+    let sources = world.sources_of::<R>(id).to_vec();
     if sources.is_empty() {
         return;
     }

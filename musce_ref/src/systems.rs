@@ -79,7 +79,7 @@ pub fn wander(ctx: &mut SystemCtx) {
         // so sort by id and take the lowest exit with a destination for a
         // deterministic step. The traversal veto (a locked exit) is left to
         // `do_move`, the shared rule path a player's `go` also runs.
-        let mut exits = ctx.world.exits_of(room);
+        let mut exits = ctx.world.exits_of(room).to_vec();
         exits.sort();
         let Some(exit) = exits
             .into_iter()

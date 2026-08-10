@@ -346,7 +346,8 @@ mod tests {
         // North out of the start room reaches a room.
         let north = w
             .exits_of(start)
-            .into_iter()
+            .iter()
+            .copied()
             .find(|&e| w.name_of(e).as_deref() == Some("north"))
             .expect("a north exit out of the start room");
         assert!(w.exit_destination(north).is_some());

@@ -49,7 +49,7 @@ pub fn resolve(world: &World, actor: EntityId, scope: Scope, query: &str) -> Opt
         return None;
     }
 
-    let candidates: Vec<EntityId> = match scope {
+    let candidates = match scope {
         Scope::Inventory => world.contents(actor),
         Scope::Room => world
             .enclosing_locus(actor)
@@ -61,7 +61,7 @@ pub fn resolve(world: &World, actor: EntityId, scope: Scope, query: &str) -> Opt
             .unwrap_or_default(),
     };
 
-    match_query(world, actor, &candidates, &needle)
+    match_query(world, actor, candidates, &needle)
 }
 
 /// Resolve `query` against everything the actor can refer to right now: itself
