@@ -67,8 +67,8 @@ pub(crate) fn register(world: &mut World) {
 /// build and the benchmarks, so both exercise the same indexes: `xyz_cell` (the
 /// spatial hash) and `xyz_level` (one bucket per z-level), both over `xyz`.
 pub fn register_indexes(reg: &mut IndexRegistry) {
-    reg.register::<Xyz, Cell>(CELL_INDEX, cell_of);
-    reg.register::<Xyz, i64>(LEVEL_INDEX, |p| p.z);
+    reg.register_many::<Xyz, Cell>(CELL_INDEX, cell_of);
+    reg.register_many::<Xyz, i64>(LEVEL_INDEX, |p| p.z);
 }
 
 /// The index maintainer, registered first in `App.systems` so later systems in

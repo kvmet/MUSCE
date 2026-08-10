@@ -24,8 +24,10 @@ exist before any character, must not ride the world's snapshot cadence, and must
 be walked by app systems or the reflection admin layer. So they are *not* entities
 in the ECS world. They are a thin, columnar table in the same store as the world.
 Authorization is then a `Verdict` resolved from an account's capabilities and its
-superuser bit. The built command dispatch seam consults it through a verb's
-`CommandTable` gate before constructing the handler context. The target canonical
+superuser bit. `Caller` keeps the actor, connection, and verdict together; the built
+command dispatch seam constructs `Ctx` from that one bundle and consults the verdict
+through a verb's `CommandTable` gate. Handlers retain read-only `verdict`, `permits`,
+and `is_su` queries for scoped rules. The target canonical
 grounded-action performer will likewise consult it through the affordance's own
 gate before app code runs; that integration is not yet built (see
 [affordances.md](affordances.md)).

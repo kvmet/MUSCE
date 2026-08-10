@@ -20,7 +20,7 @@ pub mod world {
     pub use musce_core::hecs;
     pub use musce_core::{Map, Value};
 
-    pub use musce_core::{Cascade, RelTarget, Relation, RelationError};
+    pub use musce_core::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
     pub use musce_core::{
         ComponentBlob, Description, Id, Locus, Name, NamedComponent, RegistryError,
     };
@@ -46,6 +46,7 @@ pub mod action {
     };
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
+    pub use musce_action::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 }
 
 /// Durable storage. `WorldStore` is the app-facing handle, chosen by URL scheme

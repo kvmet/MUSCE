@@ -32,7 +32,7 @@ impl CapRegistry {
         if let Some(&id) = self.ids.get(name) {
             return id;
         }
-        let id = CapId(self.ids.len() as u32);
+        let id = CapId::from_index(self.ids.len() as u32);
         self.ids.insert(name.to_owned(), id);
         id
     }

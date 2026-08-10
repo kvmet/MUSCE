@@ -22,12 +22,22 @@ use std::hash::Hash;
 
 use musce_core::{EntityId, Fact, Id, NamedComponent, World};
 
+/// The number of entities an index expects per key. This is diagnostic metadata,
+/// not write enforcement: the index is derived state and cannot intercept the
+/// mutation that introduced a duplicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cardinality {
+    Many,
+    Unique,
+}
+
 type ReadKey<K> = Box<dyn Fn(&World, EntityId) -> Option<K> + Send + Sync>;
 type Enumerate = Box<dyn Fn(&World) -> Vec<EntityId> + Send + Sync>;
 
 /// One secondary index, generic over its key type `K`. The source component type
 /// is erased into `read_key` and `enumerate`, so this type never names it.
 pub struct Index<K> {
+    cardinality: Cardinality,
     source_tag: &'static str,
     read_key: ReadKey<K>,
     enumerate: Enumerate,
@@ -47,6 +57,21 @@ impl<K: Eq + Hash + Clone> Index<K> {
     /// The key an entity currently indexes under, if it is in this index.
     pub fn key_of(&self, entity: EntityId) -> Option<&K> {
         self.reverse.get(&entity)
+    }
+
+    pub fn cardinality(&self) -> Cardinality {
+        self.cardinality
+    }
+
+    /// Every bucket that violates a [`Cardinality::Unique`] declaration, including
+    /// both the colliding key and its entities. Borrowed and allocation-free; a
+    /// many-valued index yields no conflicts because shared keys are intentional.
+    pub fn conflicts(&self) -> impl Iterator<Item = (&K, &[EntityId])> {
+        let unique = self.cardinality == Cardinality::Unique;
+        self.forward
+            .iter()
+            .filter(move |(_, entities)| unique && entities.len() > 1)
+            .map(|(key, entities)| (key, entities.as_slice()))
     }
 
     /// The tag of the component this index reads.
@@ -143,13 +168,39 @@ pub struct IndexRegistry {
 }
 
 impl IndexRegistry {
-    /// Add an index named `name` over component `C`, keyed by `key`. Panics on a
-    /// duplicate name. `C` must be tracked (`world.track_component::<C>()`) for the
-    /// index to receive incremental updates; registration here does not track it,
-    /// because tracking is startup wiring that must precede any write.
-    pub fn register<C, K>(
+    /// Add a many-valued index named `name` over component `C`, keyed by `key`.
+    pub fn register_many<C, K>(
         &mut self,
         name: &'static str,
+        key: impl Fn(&C) -> K + Send + Sync + 'static,
+    ) where
+        C: NamedComponent,
+        K: Eq + Hash + Clone + Send + Sync + 'static,
+    {
+        self.register_with(name, Cardinality::Many, key);
+    }
+
+    /// Add an index whose keys are expected to identify at most one entity.
+    /// Duplicates remain present in the bucket and are reported by
+    /// [`Index::conflicts`]; enforcement belongs at the app's write boundary.
+    pub fn register_unique<C, K>(
+        &mut self,
+        name: &'static str,
+        key: impl Fn(&C) -> K + Send + Sync + 'static,
+    ) where
+        C: NamedComponent,
+        K: Eq + Hash + Clone + Send + Sync + 'static,
+    {
+        self.register_with(name, Cardinality::Unique, key);
+    }
+
+    /// Shared registration path. `C` must be tracked
+    /// (`world.track_component::<C>()`) for incremental updates; registration does
+    /// not track it because that startup wiring must precede any write.
+    fn register_with<C, K>(
+        &mut self,
+        name: &'static str,
+        cardinality: Cardinality,
         key: impl Fn(&C) -> K + Send + Sync + 'static,
     ) where
         C: NamedComponent,
@@ -169,6 +220,7 @@ impl IndexRegistry {
                 .collect()
         });
         let index = Index {
+            cardinality,
             source_tag: C::TAG,
             read_key,
             enumerate,
@@ -288,7 +340,7 @@ mod tests {
 
     fn cell_index() -> IndexRegistry {
         let mut reg = IndexRegistry::default();
-        reg.register::<Cell, i64>("cell", |c| c.0);
+        reg.register_many::<Cell, i64>("cell", |c| c.0);
         reg
     }
 
@@ -412,8 +464,8 @@ mod tests {
 
         let mut reg = IndexRegistry::default();
         // Two indexes over the same component, different keys.
-        reg.register::<Cell, i64>("cell_exact", |c| c.0);
-        reg.register::<Cell, i64>("cell_band", |c| c.0 / 10);
+        reg.register_many::<Cell, i64>("cell_exact", |c| c.0);
+        reg.register_many::<Cell, i64>("cell_band", |c| c.0 / 10);
         reg.baseline(&world);
 
         world.insert(a, Cell(25));
@@ -432,8 +484,8 @@ mod tests {
         let a = world.spawn(b);
 
         let mut reg = IndexRegistry::default();
-        reg.register::<Cell, i64>("cell", |c| c.0);
-        reg.register::<Level, i64>("level", |l| l.0);
+        reg.register_many::<Cell, i64>("cell", |c| c.0);
+        reg.register_many::<Level, i64>("level", |l| l.0);
         reg.baseline(&world);
 
         // A "cell" change must not disturb the "level" index.
@@ -445,12 +497,46 @@ mod tests {
     }
 
     #[test]
+    fn unique_conflicts_borrow_the_key_and_complete_bucket() {
+        let mut world = World::new();
+        let a = spawn_cell(&mut world, 1);
+        let b = spawn_cell(&mut world, 1);
+        spawn_cell(&mut world, 2);
+
+        let mut reg = IndexRegistry::default();
+        reg.register_unique::<Cell, i64>("cell", |c| c.0);
+        reg.baseline(&world);
+
+        let idx = reg.index::<i64>("cell").unwrap();
+        assert_eq!(idx.cardinality(), Cardinality::Unique);
+        let conflicts: Vec<_> = idx.conflicts().collect();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(*conflicts[0].0, 1);
+        assert_eq!(conflicts[0].1, &[a, b]);
+    }
+
+    #[test]
+    fn many_valued_shared_buckets_are_not_conflicts() {
+        let mut world = World::new();
+        spawn_cell(&mut world, 1);
+        spawn_cell(&mut world, 1);
+
+        let mut reg = cell_index();
+        reg.baseline(&world);
+
+        let idx = reg.index::<i64>("cell").unwrap();
+        assert_eq!(idx.cardinality(), Cardinality::Many);
+        assert_eq!(idx.get(&1).len(), 2);
+        assert_eq!(idx.conflicts().count(), 0);
+    }
+
+    #[test]
     fn maintain_bootstraps_then_applies_via_resource() {
         let mut world = World::new();
         let a = spawn_cell(&mut world, 5);
 
         let init = |reg: &mut IndexRegistry| {
-            reg.register::<Cell, i64>("cell", |c| c.0);
+            reg.register_many::<Cell, i64>("cell", |c| c.0);
         };
 
         // First call: builds the registry, baselines, homes it in the resource.

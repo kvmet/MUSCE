@@ -6,7 +6,7 @@
 //! `World` helper block.
 
 use crate::id::EntityId;
-use crate::relation::{Cascade, Relation, RelationError};
+use crate::relation::{AcyclicRelation, Cascade, Relation, RelationError};
 use crate::world::World;
 
 /// The capability wiring: which controller an entity is plugged into and *may* be
@@ -21,6 +21,8 @@ impl Relation for Controls {
     const ON_TARGET_DESPAWN: Cascade = Cascade::Detach;
     const TARGET_TAG: &'static str = "controlled_by";
 }
+
+impl AcyclicRelation for Controls {}
 
 /// The control cursor: which single entity in a controller's chain its input is
 /// live on *right now*. Source = the controller; target = the focused entity. One
@@ -39,6 +41,8 @@ impl Relation for Focus {
     const ON_TARGET_DESPAWN: Cascade = Cascade::Detach;
     const TARGET_TAG: &'static str = "focus";
 }
+
+impl AcyclicRelation for Focus {}
 
 impl World {
     /// The entity a controller is currently piloting, if any.

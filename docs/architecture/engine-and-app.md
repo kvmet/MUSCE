@@ -178,8 +178,10 @@ moving files.
   handler. The lookup (exact name, then first registered prefix), the gate check,
   and `dispatch_command` (which both the embodiment and admin frames run through)
   stay engine mechanism; the verbs and their parsing are the app's.
-- **`Ctx` and a public emit API.** The handler context (`&mut World`, the actor,
-  the connection) plus a small public emit surface: a first-person line to the
+- **`Ctx` and a public emit API.** The handler context takes one `Caller` bundle
+  (actor, connection, account-scoped `Verdict`) beside `&mut World`, preventing
+  those inputs from drifting. It exposes read-only `verdict`/`permits`/`is_su`
+  authority queries plus a small public emit surface: a first-person line to the
   actor, a third-person line to the room excluding a set of parties (the actor, or
   the actor and a directed target both), and a directed line to a specific entity
   (resolved to its driving connections). Handlers are

@@ -199,8 +199,15 @@ mod tests {
     }
 
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
+        use musce::action::{Caller, Verdict};
+
         let mut out = Vec::new();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
+        let verdict = Verdict::guest();
+        let mut ctx = Ctx::new(
+            world,
+            Caller::new(actor, ConnectionId(1), &verdict),
+            &mut out,
+        );
         f(&mut ctx);
         out
     }

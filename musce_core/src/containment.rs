@@ -1,6 +1,6 @@
 use crate::component::Locus;
 use crate::id::EntityId;
-use crate::relation::{Cascade, Relation, RelationError};
+use crate::relation::{AcyclicRelation, Cascade, Relation, RelationError};
 use crate::world::World;
 
 /// The containment hierarchy: rooms, containers, and inventories are all the
@@ -15,6 +15,8 @@ impl Relation for Containment {
     // `Locus` is a perception-scope change. See the movement facts in `fact.rs`.
     const EMITS_MOVEMENT: bool = true;
 }
+
+impl AcyclicRelation for Containment {}
 
 impl World {
     /// Move an entity into a container. The single mutator for containment:

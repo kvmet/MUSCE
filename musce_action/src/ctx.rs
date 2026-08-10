@@ -15,7 +15,41 @@ use musce_proto::{ConnectionId, EventKind, Outgoing};
 
 use crate::audience::{Outbound, resolve};
 use crate::bindings::Actors;
+use crate::caps::{CapId, Verdict};
 use crate::event::Event;
+
+/// The acting principal a command runs under: the actor entity the connection
+/// drives, the connection that issued the command, and the account-scoped
+/// authorization verdict. Constructed as one value so those three inputs cannot
+/// drift between dispatch and the handler context.
+#[derive(Clone, Copy)]
+pub struct Caller<'a> {
+    actor: EntityId,
+    conn: ConnectionId,
+    verdict: &'a Verdict,
+}
+
+impl<'a> Caller<'a> {
+    pub fn new(actor: EntityId, conn: ConnectionId, verdict: &'a Verdict) -> Self {
+        Self {
+            actor,
+            conn,
+            verdict,
+        }
+    }
+
+    pub fn actor(self) -> EntityId {
+        self.actor
+    }
+
+    pub fn conn(self) -> ConnectionId {
+        self.conn
+    }
+
+    pub fn verdict(self) -> &'a Verdict {
+        self.verdict
+    }
+}
 
 /// A handler's request to the cold content store ([`musce_persistence::KvStore`]),
 /// recorded during a command and carried out afterward, off the sim thread. A verb
@@ -43,35 +77,50 @@ pub enum ColdOp {
 /// The per-command context handed to a handler: the world it mutates, the actor
 /// it acts through, the connection that issued it, and the output buffer it emits
 /// into. The actor is explicit so handlers are callable directly in tests and,
-/// later, by AI and sequences. Command authority is checked by the dispatcher
-/// before constructing this context.
+/// later, by AI and sequences. It also carries the caller's account-scoped verdict
+/// read-only: the command table checks it before invoking a handler, and an inline
+/// rule can ask the same authority without deriving it from the actor body.
 pub struct Ctx<'a> {
     pub world: &'a mut World,
     pub actor: EntityId,
     pub conn: ConnectionId,
+    verdict: &'a Verdict,
     out: &'a mut Vec<Outbound>,
     /// Cold-store requests the handler recorded. Owned (not a borrowed sink like
     /// `out`) because a cold op is self-contained and needs no world/actor
     /// resolution: the dispatcher moves this vec out after the handler and routes it
-    /// to the cold task. Keeping it internal is what leaves `Ctx::new`'s signature
-    /// unchanged for the many handlers and tests that build a `Ctx` directly.
+    /// to the cold task.
     cold: Vec<ColdOp>,
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(
-        world: &'a mut World,
-        actor: EntityId,
-        conn: ConnectionId,
-        out: &'a mut Vec<Outbound>,
-    ) -> Self {
+    pub fn new(world: &'a mut World, caller: Caller<'a>, out: &'a mut Vec<Outbound>) -> Self {
         Ctx {
             world,
-            actor,
-            conn,
+            actor: caller.actor(),
+            conn: caller.conn(),
+            verdict: caller.verdict(),
             out,
             cold: Vec::new(),
         }
+    }
+
+    /// The account-scoped authorization this handler runs under. Its lifetime is
+    /// independent of the `Ctx` borrow, so a handler may retain it while yielding
+    /// the world/output pair to a shared performer.
+    pub fn verdict(&self) -> &'a Verdict {
+        self.verdict
+    }
+
+    /// Whether this caller may exercise `cap`. This names the authorization result,
+    /// not literal membership: superuser authority also permits the capability.
+    pub fn permits(&self, cap: CapId) -> bool {
+        self.verdict.permits(cap)
+    }
+
+    /// Whether superuser authority is in force for this command.
+    pub fn is_su(&self) -> bool {
+        self.verdict.is_su()
     }
 
     /// The world and the raw output buffer together. The seam a shared app routine
@@ -266,5 +315,31 @@ pub fn run_systems(
         for ob in out {
             resolve(world, actors, ob, emit);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CapRegistry;
+
+    #[test]
+    fn caller_keeps_body_connection_and_account_authority_together() {
+        let mut caps = CapRegistry::new();
+        let build = caps.register("build");
+        let ban = caps.register("ban");
+        let verdict = Verdict::new([build].into_iter().collect(), false);
+        let caller = Caller::new(EntityId(7), ConnectionId(3), &verdict);
+
+        assert_eq!(caller.actor(), EntityId(7));
+        assert_eq!(caller.conn(), ConnectionId(3));
+
+        let mut world = World::new();
+        let mut out = Vec::new();
+        let ctx = Ctx::new(&mut world, caller, &mut out);
+        assert!(ctx.permits(build));
+        assert!(!ctx.permits(ban));
+        assert!(!ctx.is_su());
+        assert!(std::ptr::eq(ctx.verdict(), &verdict));
     }
 }

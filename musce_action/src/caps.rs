@@ -11,7 +11,13 @@ use std::collections::HashSet;
 /// only compared here. Equality is identity, so two ids name the same capability iff
 /// they came from the same registration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct CapId(pub u32);
+pub struct CapId(u32);
+
+impl CapId {
+    pub(crate) const fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+}
 
 /// The set of capabilities an account holds, resolved from its grant strings to ids
 /// once at load. Membership is the whole query a gate asks of it.

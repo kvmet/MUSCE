@@ -36,6 +36,24 @@ pub trait Relation: 'static + Send + Sync {
     const EMITS_MOVEMENT: bool = false;
 }
 
+/// A relation whose forward links are guaranteed acyclic. Tree-walking queries
+/// require this marker so a cyclic relation cannot accidentally enter an
+/// unbounded ancestor or descendant walk. Implementors must also set
+/// [`Relation::ACYCLIC`] to `true`; `World::relate` enforces that promise on every
+/// write.
+pub trait AcyclicRelation: Relation {}
+
+/// What a descendant visitor wants to do after seeing one entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Walk {
+    /// Continue into this entity's sources.
+    Descend,
+    /// Keep walking elsewhere, but skip this entity's subtree.
+    Prune,
+    /// Stop the whole traversal immediately.
+    Stop,
+}
+
 /// Forward link, stored on the source side: which target this source points to.
 /// This is the source of truth and is persisted.
 pub struct RelTarget<R: Relation>(pub EntityId, PhantomData<R>);

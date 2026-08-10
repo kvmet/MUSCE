@@ -115,7 +115,8 @@ Built:
   component, wired with the `DespawnSources` cascade; the `Exit` kind marker itself
   is app vocabulary), the structural-fact channel
   (`Fact::Destroyed`/`Moved`/`LocusChanged`, emitted at the mutator layer; see
-  facts.md), JSON snapshot, and a transient `World` resource store for derived,
+  facts.md), compile-time acyclic ancestor/descendant walking with caller-controlled
+  pruning, JSON snapshot, and a transient `World` resource store for derived,
   non-persisted singletons (type-keyed, snapshot-excluded; see indexes.md).
   (Permissions are
   no longer a core marker: authorization is account-scoped, see authorization.md.)
@@ -169,7 +170,8 @@ Built:
   the `Gate` variants (`Open`/`Cap(CapId)`) with the account-scoped capability check
   (`CapId`/`CapSet`/`Verdict`/`permits`, the `CapRegistry` name->id interner, and
   `Verdict::resolved` carrying the quell rule, plus the verdict carried read-only on
-  `Ctx`),
+  `Ctx`), the foundational gauge value algebra (`GaugeId`/`GaugeLevel`/
+  `GaugeDirection`/`GaugeTarget`),
   and `dispatch_command` (run by both the embodiment and
   admin frames), `Ctx` and its public emit API (the surface an app's verb handlers
   program against), `SystemCtx` and the `System` type (the tick-loop analogue of
@@ -210,8 +212,9 @@ Built:
   query (the renderer-side "what can I do to this?" read over the veto model, with a
   three-way `OfferStatus`; see offers.md); builds the `App`
   and has `main` plus the end-to-end test. A real app forks this crate.
-- `musce_index`: a generic, type-agnostic secondary index over a component (a key
-  function per index and exact `get`), maintained incrementally off the
+- `musce_index`: a generic, type-agnostic secondary index over a component (explicit
+  many/unique registration, exact `get`, and keyed borrowed uniqueness diagnostics),
+  maintained incrementally off the
   `ComponentChanged` trigger and
   `Destroyed`, homed in a `World` resource (transient, never persisted). Its
   reference consumer is `musce_ref`'s coordinate layer: an integer `Xyz` on rooms,

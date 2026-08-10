@@ -10,7 +10,7 @@ use crate::containment::Containment;
 use crate::control::{Controls, Focus};
 use crate::fact::{DestroyCause, Fact};
 use crate::id::{EntityId, EntityIndex};
-use crate::relation::{Cascade, RelTarget, Relation, RelationError};
+use crate::relation::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
 
 type DespawnHandler = fn(&mut World, EntityId);
 type RebuildHandler = fn(&mut World);
@@ -617,7 +617,11 @@ impl World {
     }
 
     /// Ancestor chain (immediate target first), following the relation upward.
-    pub fn ancestors<R: Relation>(&self, start: EntityId) -> Vec<EntityId> {
+    pub fn ancestors<R: AcyclicRelation>(&self, start: EntityId) -> Vec<EntityId> {
+        assert!(
+            R::ACYCLIC,
+            "AcyclicRelation implementors must set Relation::ACYCLIC"
+        );
         let mut out = Vec::new();
         let mut cur = self.target_of::<R>(start);
         while let Some(c) = cur {
@@ -625,6 +629,32 @@ impl World {
             cur = self.target_of::<R>(c);
         }
         out
+    }
+
+    /// Walk every descendant of `root` in an acyclic relation. `visit` sees each
+    /// descendant once and controls traversal with [`Walk`]: descend into that
+    /// entity, prune its subtree, or stop the whole walk. The root itself is not
+    /// visited. Order is unspecified because reverse relation lists are unordered.
+    ///
+    /// The traversal owns its DFS stack; the underlying [`World::sources_of`]
+    /// query remains allocation-free for ordinary reads.
+    pub fn walk_descendants<R: AcyclicRelation>(
+        &self,
+        root: EntityId,
+        mut visit: impl FnMut(EntityId) -> Walk,
+    ) {
+        assert!(
+            R::ACYCLIC,
+            "AcyclicRelation implementors must set Relation::ACYCLIC"
+        );
+        let mut stack = self.sources_of::<R>(root).to_vec();
+        while let Some(entity) = stack.pop() {
+            match visit(entity) {
+                Walk::Descend => stack.extend_from_slice(self.sources_of::<R>(entity)),
+                Walk::Prune => {}
+                Walk::Stop => break,
+            }
+        }
     }
 
     pub fn clear_target<R: Relation>(&mut self, source: EntityId) {

@@ -21,7 +21,7 @@ pub use containment::Containment;
 pub use control::{Controls, Focus, FocusError};
 pub use fact::{DestroyCause, Fact};
 pub use id::{EntityId, EntityIndex};
-pub use relation::{Cascade, RelTarget, Relation, RelationError};
+pub use relation::{AcyclicRelation, Cascade, RelTarget, Relation, RelationError, Walk};
 pub use snapshot::{EntityBlob, Snapshot};
 pub use world::{MutateError, World};
 
@@ -88,6 +88,49 @@ mod tests {
         assert_eq!(w.container_of(gem), Some(chest));
         assert!(w.contents(hall).is_empty());
         assert_eq!(w.contents(chest), &[gem]);
+    }
+
+    #[test]
+    fn descendant_walk_descends_prunes_and_stops() {
+        let mut w = World::new();
+        let hall = locus(&mut w, "hall");
+        let bag = container(&mut w, "bag");
+        let coin = item(&mut w, "coin");
+        let pebble = item(&mut w, "pebble");
+        w.move_entity(bag, hall).unwrap();
+        w.move_entity(coin, bag).unwrap();
+        w.move_entity(pebble, hall).unwrap();
+
+        let mut all = Vec::new();
+        w.walk_descendants::<Containment>(hall, |entity| {
+            all.push(entity);
+            Walk::Descend
+        });
+        all.sort();
+        let mut expected = vec![bag, coin, pebble];
+        expected.sort();
+        assert_eq!(all, expected);
+
+        let mut pruned = Vec::new();
+        w.walk_descendants::<Containment>(hall, |entity| {
+            pruned.push(entity);
+            if entity == bag {
+                Walk::Prune
+            } else {
+                Walk::Descend
+            }
+        });
+        pruned.sort();
+        let mut expected = vec![bag, pebble];
+        expected.sort();
+        assert_eq!(pruned, expected);
+
+        let mut visits = 0;
+        w.walk_descendants::<Containment>(hall, |_| {
+            visits += 1;
+            Walk::Stop
+        });
+        assert_eq!(visits, 1);
     }
 
     #[test]

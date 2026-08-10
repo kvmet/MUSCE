@@ -73,8 +73,8 @@ pub enum Fact {
     /// change is *derivable* from this fact plus the containment tree (the sword is
     /// under the character, so it went where the character went), and a fact exists
     /// only for what a reaction cannot reconstruct. A consumer that needs the moved
-    /// subtree recursively follows `contents(entity)` from this fact, only when it
-    /// cares. See `docs/architecture/facts.md`.
+    /// subtree calls `walk_descendants::<Containment>` from this fact, only when it
+    /// cares, supplying its own pruning policy. See `docs/architecture/facts.md`.
     Moved {
         entity: EntityId,
         from: Option<EntityId>,

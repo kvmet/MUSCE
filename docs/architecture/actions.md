@@ -222,6 +222,12 @@ surface the engine exposes. `musce_action` is pure engine mechanism: the
 executor, the `CommandTable` lookup and registration, `Ctx` and its emit API, and
 the audience resolver. See [engine-and-app.md](engine-and-app.md).
 
+`Ctx` is constructed from one `Caller` carrying actor, connection, and the
+account-scoped `Verdict`. The command table checks that verdict before invoking the
+handler; the handler retains read-only `verdict`, `permits`, and `is_su` access for
+scoped rules a flat command gate cannot express. Authority therefore follows the
+account, never the actor body, through both dispatch and handler code.
+
 The action layer is its own crate, `musce_action`, depending on `musce_core` and
 `musce_proto` and free of `tokio`, so it stays pure synchronous logic and fast to
 test. The wire vocabulary (`Command`/`Input`, `Outgoing` carrying a

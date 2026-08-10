@@ -288,10 +288,12 @@ and whether the closure returns "did I change it" to keep fact emission precise)
 it is built with the first hot bulk-write system that defines those, as a pure
 addition.
 
-Recursive containment policy stays app-side. A consumer that needs a subtree
-composes the immediate `contents` query and chooses its own pruning, ordering, and
-termination rules; the engine does not carry a generic traversal API without a
-concrete consumer to shape it.
+Relations that promise acyclicity implement `AcyclicRelation`; ancestor and
+descendant walks require that marker at compile time, so a cyclic relation cannot
+enter a tree walk. `walk_descendants` owns only its DFS stack and gives the caller
+explicit `Walk::{Descend, Prune, Stop}` control for each visited entity. The engine
+owns traversal mechanics; the consumer owns pruning and early termination. Order is
+unspecified because the borrowed reverse lists are unordered.
 
 Proximity queries ("things near `[x,y]`") are a different beast needing a spatial
 index, and belong to app logic once coordinates exist. Deferred.

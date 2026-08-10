@@ -1,7 +1,8 @@
 # Gauges
 
-> Status: **specified; implementation pending.** No runtime gauge types,
-> evaluator registry, predicates, effects, or planner integration are built.
+> Status: **value vocabulary built; evaluation pending.** `GaugeId`, `GaugeLevel`,
+> `GaugeDirection`, and `GaugeTarget` are built and tested. The evaluator registry,
+> qualitative regions, predicates, effects, and planner integration remain pending.
 
 Component presence and relations describe categorical facts. They do not describe
 an ordered quantity such as health, hunger, temperature, or affinity without
@@ -73,8 +74,7 @@ gameplay, not merely to make a numeric amount visible to predicates.
 
 ## Runtime targets and planner thresholds
 
-The proposed raw `GaugeTarget` would serve handler calculations and imperative
-queries:
+The raw `GaugeTarget` serves handler calculations and imperative queries:
 
 ```rust
 GaugeTarget::at(level)

@@ -7,12 +7,12 @@
 //! `docs/architecture/actions.md`.
 
 use musce_core::{EntityId, World};
-use musce_proto::{ConnectionId, Outgoing};
+use musce_proto::Outgoing;
 
 use crate::audience::{self, Outbound};
 use crate::bindings::Actors;
 use crate::caps::{CapId, Verdict};
-use crate::ctx::{ColdOp, Ctx};
+use crate::ctx::{Caller, ColdOp, Ctx};
 
 /// A verb's parse-and-act function. Receives the command context and the
 /// argument tail (everything after the verb word). An app writes these and
@@ -102,17 +102,6 @@ impl Default for CommandTable {
     }
 }
 
-/// The acting principal a dispatch runs under: the actor entity the connection
-/// drives, the connection that issued the command, and the resolved authorization
-/// [`Verdict`]. Bundled because they always travel together as "who is acting under
-/// what authority"; the world and the [`Actors`] index are ambient inputs, not part
-/// of the principal, so they stay separate arguments.
-pub struct Caller<'a> {
-    pub actor: EntityId,
-    pub conn: ConnectionId,
-    pub verdict: &'a Verdict,
-}
-
 /// Dispatch one command line against a command table for a [`Caller`]: look the verb
 /// up, gate-check it on the caller's verdict, run its handler to gather semantic
 /// output, then resolve those events' audiences to connections through `emit`. Frame
@@ -147,9 +136,9 @@ pub fn dispatch_command(
     // its tail hands back the cold-store requests the handler queued (a plain move,
     // since a cold op needs no world/actor resolution).
     let cold = {
-        let mut ctx = Ctx::new(world, caller.actor, caller.conn, &mut out);
+        let mut ctx = Ctx::new(world, caller, &mut out);
         match table.lookup(&word.to_lowercase()) {
-            Some(verb) if verb.gate.permits(caller.verdict) => (verb.handler)(&mut ctx, rest),
+            Some(verb) if verb.gate.permits(ctx.verdict()) => (verb.handler)(&mut ctx, rest),
             Some(_) => ctx.feedback("You aren't allowed to do that."),
             None => ctx.feedback(format!("I don't understand \"{word}\".")),
         }
@@ -180,7 +169,7 @@ pub fn dispatch_perform(
 ) -> Vec<ColdOp> {
     let mut out: Vec<Outbound> = Vec::new();
     let cold = {
-        let mut ctx = Ctx::new(world, caller.actor, caller.conn, &mut out);
+        let mut ctx = Ctx::new(world, caller, &mut out);
         handler(&mut ctx, act.affordance, act.focus, act.with);
         ctx.take_cold()
     };
@@ -198,7 +187,7 @@ mod tests {
     use crate::CapSet;
     use musce_core::hecs::EntityBuilder;
     use musce_core::{Description, Locus};
-    use musce_proto::{Delivery, EventKind};
+    use musce_proto::{ConnectionId, Delivery, EventKind};
 
     /// Two test verbs over the public emit API, standing in for app content so
     /// the engine routing is exercised without depending on a real app. `ping`
@@ -243,11 +232,7 @@ mod tests {
             &table,
             world,
             actors,
-            Caller {
-                actor,
-                conn,
-                verdict: &Verdict::guest(),
-            },
+            Caller::new(actor, conn, &Verdict::guest()),
             line,
             &mut |o| out.push(o),
         );
@@ -306,11 +291,7 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            Caller {
-                actor,
-                conn,
-                verdict: &Verdict::guest(),
-            },
+            Caller::new(actor, conn, &Verdict::guest()),
             "yell",
             &mut |o| out.push(o),
         );
@@ -329,7 +310,8 @@ mod tests {
     #[test]
     fn cap_gate_permits_only_with_the_cap() {
         let (mut world, actors, actor, conn) = world_with_player();
-        let cap = CapId(0);
+        let mut caps = crate::CapRegistry::new();
+        let cap = caps.register("smite");
 
         let mut t = CommandTable::new();
         t.register("smite", Gate::Cap(cap), |c, _| c.feedback("zap"));
@@ -341,11 +323,7 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            Caller {
-                actor,
-                conn,
-                verdict: &guest,
-            },
+            Caller::new(actor, conn, &guest),
             "smite",
             &mut |o| out.push(o),
         );
@@ -362,11 +340,7 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            Caller {
-                actor,
-                conn,
-                verdict: &granted,
-            },
+            Caller::new(actor, conn, &granted),
             "smite",
             &mut |o| out.push(o),
         );
@@ -382,11 +356,7 @@ mod tests {
             &t,
             &mut world,
             &actors,
-            Caller {
-                actor,
-                conn,
-                verdict: &su,
-            },
+            Caller::new(actor, conn, &su),
             "smite",
             &mut |o| out.push(o),
         );

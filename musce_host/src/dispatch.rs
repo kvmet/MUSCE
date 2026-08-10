@@ -218,11 +218,7 @@ impl Dispatch {
         dispatch_perform(
             world,
             &actors,
-            Caller {
-                actor,
-                conn: id,
-                verdict: &verdict,
-            },
+            Caller::new(actor, id, &verdict),
             self.app.perform,
             Grounded {
                 affordance: &perform.name,
@@ -324,11 +320,7 @@ fn dispatch_through_actor(
         table,
         world,
         &actors,
-        Caller {
-            actor,
-            conn: id,
-            verdict: &verdict,
-        },
+        Caller::new(actor, id, &verdict),
         line,
         emit,
     )

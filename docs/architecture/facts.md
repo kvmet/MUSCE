@@ -125,11 +125,11 @@ principle, and would spam besides (a character with fifty items would emit fifty
 and stops.
 
 The **right way for a consumer** to react to the carried subtree is to start from the
-mover's fact and recursively follow `contents(entity)`, only when it needs to (a region
-trigger usually cares about the character stepping into the lava, not each coin in the
-bag). The engine exposes the immediate borrowed query rather than a generic descendant
-walker: only the app knows *whether* the subtree matters and which pruning, ordering,
-or termination policy the reaction needs. It computes that cheaply on demand, whereas
+mover's fact and call `walk_descendants::<Containment>(entity, visitor)`, only when it
+needs to (a region trigger usually cares about the character stepping into the lava,
+not each coin in the bag). The visitor chooses `Descend`, `Prune`, or `Stop`, so only
+the app decides whether the subtree matters and where traversal terminates. The
+engine owns the relation walk and computes it cheaply on demand, whereas
 the engine emitting it eagerly would pay that cost on every move for reactions that
 mostly do not want it. The rule (fire for the entity whose own link changed) is also
 exactly the rule the reparent cascade already obeys: a destroyed container's surviving

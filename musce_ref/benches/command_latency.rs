@@ -51,11 +51,7 @@ fn setup() -> Bench {
 /// verb is `Gate::Open`), dropping the resolved output.
 fn run(bench: &mut Bench, line: &str) {
     let verdict = Verdict::guest();
-    let caller = Caller {
-        actor: bench.actor,
-        conn: CONN,
-        verdict: &verdict,
-    };
+    let caller = Caller::new(bench.actor, CONN, &verdict);
     dispatch_command(
         &bench.commands,
         &mut bench.world,

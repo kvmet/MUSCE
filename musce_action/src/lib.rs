@@ -23,6 +23,7 @@ mod ctx;
 mod dispatch;
 mod event;
 mod executor;
+mod gauge;
 mod registry;
 
 use musce_core::{EntityId, World};
@@ -31,13 +32,13 @@ pub use affordance::{Affordance, Clause, Frame, Guard, Literal, Predicate, Term,
 pub use audience::{Outbound, resolve};
 pub use bindings::Actors;
 pub use caps::{CapId, CapSet, Verdict};
-pub use ctx::{ColdOp, Ctx, System, SystemCtx, run_systems};
+pub use ctx::{Caller, ColdOp, Ctx, System, SystemCtx, run_systems};
 pub use dispatch::{
-    Caller, CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command,
-    dispatch_perform,
+    CommandTable, Gate, Grounded, Handler, PerformHandler, dispatch_command, dispatch_perform,
 };
 pub use event::{Audience, Event};
 pub use executor::{Action, ExecError, execute};
+pub use gauge::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 pub use registry::CapRegistry;
 
 /// The actor's own description, for floor confirmations like "You are now X."

@@ -160,14 +160,19 @@ mod tests {
     /// The room hears a third-person line when a being eats; the eater reads its own.
     #[test]
     fn the_room_hears_the_eating() {
-        use musce::action::{Audience, Outbound};
+        use musce::action::{Audience, Caller, Outbound, Verdict};
         use musce::wire::ConnectionId;
 
         let mut f = fixture();
         f.world.move_entity(f.crumb, f.mouse).unwrap();
 
         let mut out: Vec<Outbound> = Vec::new();
-        let mut ctx = Ctx::new(&mut f.world, f.mouse, ConnectionId(1), &mut out);
+        let verdict = Verdict::guest();
+        let mut ctx = Ctx::new(
+            &mut f.world,
+            Caller::new(f.mouse, ConnectionId(1), &verdict),
+            &mut out,
+        );
         eat(&mut ctx, "bread");
 
         let room_lines: Vec<String> = out

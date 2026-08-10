@@ -72,12 +72,14 @@ indexes both keyed off `"xyz"`. Because the trigger names the *component*, one
 `Xyz` write emits one `ComponentChanged` that the maintainer fans out to every
 index over that component. The engine never learns the index registry exists.
 
-## Buckets are always multi-valued
+## Cardinality is explicit; uniqueness is diagnosed
 
-Every key maps to a slice of entities. The index is a rebuilt read model and cannot
-intercept writes, so it does not declare or pretend to enforce uniqueness. If an app
-needs a unique key, that invariant belongs at the write boundary; a diagnostic scan
-can be added with the first real consumer that needs one.
+Every key maps to a slice of entities. Registration says whether shared keys are
+expected: `register_many` for ordinary buckets, `register_unique` for a key expected
+to identify at most one entity. A rebuilt read model cannot intercept writes, so
+`Unique` is diagnostic metadata, never enforcement. `conflicts()` borrows each
+violating `(key, entities)` bucket without allocating; the app enforces the invariant
+at its write boundary and can inspect the index for drift.
 
 ## The reference consumer
 

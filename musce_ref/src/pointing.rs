@@ -207,7 +207,7 @@ fn perceivable(world: &World, actor: EntityId, id: EntityId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use musce::action::{Audience, Outbound};
+    use musce::action::{Audience, Caller, Outbound, Verdict};
     use musce::wire::ConnectionId;
     use musce::world::hecs::EntityBuilder;
     use musce::world::{Description, Name};
@@ -218,7 +218,12 @@ mod tests {
     /// a perform test reads the actor feedback the seam emits.
     fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
         let mut out = Vec::new();
-        let mut ctx = Ctx::new(world, actor, ConnectionId(1), &mut out);
+        let verdict = Verdict::guest();
+        let mut ctx = Ctx::new(
+            world,
+            Caller::new(actor, ConnectionId(1), &verdict),
+            &mut out,
+        );
         f(&mut ctx);
         out
     }
