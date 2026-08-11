@@ -73,8 +73,8 @@ shared rule helper keeps a scripted mover subject to the same rules as a player.
 The MVP intent set is exactly two:
 
 - `Move { dir }` — resolves the named exit out of the carrier's room and traverses
-  it through `do_move`, the same rule-checked path the `go` verb runs. A `Locked`
-  exit (or any future door / skill-check veto `can_traverse` grows) stops a
+  it through the same canonical `go` affordance every other initiator uses. A `Locked`
+  exit (or any future app guard) stops a
   scripted mover exactly as it stops a player; a blocked or missing exit is a
   no-op beat and the sequence still advances.
 - `Destroy` — despawns the carrier itself. Rule-free, the terminal beat of an

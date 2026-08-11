@@ -1,7 +1,8 @@
 # Actions and the Executor
 
-> Status: **structural vocabulary and canonical grounded-action performer built;
-> typed narration and runtime registry injection built, consumer migration underway.** The engine
+> Status: **built.** The structural vocabulary, canonical grounded-action
+> performer, typed narration, runtime registry injection, and reference consumer
+> migration are complete. The engine
 > owns the structural executor
 > (`Action::Move`/`Relate`/`Unrelate`/`Create`/`Destroy`/`SetComponent`/`RemoveComponent` +
 > `execute` + `ExecError`), the `CommandTable` lookup and registration, `Ctx` and
@@ -61,26 +62,21 @@ failure mode, and an opaque affordance is excluded from planning. Rules do not m
 into `execute`: each primitive stays atomic and free of intent, `execute` owns
 structural truth, and affordance contracts own gameplay meaning.
 
-**The narration is shared too, one layer higher.** An affordance's typed narrator
+**Narration is shared too, one layer higher.** An affordance's typed narrator
 receives its actor, generated input fields, and successful result fields, so prose
-does not depend on fixed `object`/`target` roles. A single **narrating perform**
-(`musce_ref`'s `act::perform_narrated`) runs the silent `agency::perform` and emits
-the affordance's first- and third-person lines, so a typed verb, a clicked control,
-and an autonomous agent all narrate the same act identically. A verb handler now
-owns only its parse and name resolution, then hands the grounded action to the shared
-narrator; a click supplies typed input bindings and hands the complete grounding
-over the same way; a tick
-system's driver runs it per beat, so an NPC's acts narrate to the room instead of
-mutating silently. First-person is **entity-addressed** (`to_entity(actor)`, not
+does not depend on universal participant roles. The canonical performer invokes
+that narrator after every successful commit, so a text command, clicked control,
+script, and autonomous agent narrate the same affordance identically. A verb owns
+only parsing and name resolution; a planner or system supplies the same typed
+grounding through `SystemCtx::perform`. First-person is **entity-addressed** (`to_entity(actor)`, not
 `to_connection`), so it follows embodiment: it reaches a self-acting player, a
 piloting player through the body they drive, and no one for a connless NPC, while
-the room line reaches bystanders in every case. A performer wanting bespoke,
-goal-flavored narration (the magpie's "tucks it into its nest" for a `put` serving
-its hoard drive, which the affordance-level narrator cannot know) opts out: it runs
-the silent `agency::perform` and emits its own line. `NarrationCtx` carries the
+the room line reaches bystanders in every case. Callers cannot suppress or replace
+an affordance's narration. Different behavior is a different app-defined
+affordance, optionally distinguished by an actor-kind guard. `NarrationCtx` carries the
 pre-commit observations captured by the performer plus post-commit world access,
 so `go` can address departure and arrival loci without hiding location state in a
-fixed frame or recomputing the vanished source after movement.
+caller-owned side channel or recomputing the vanished source after movement.
 
 A **Command** is a request with provenance (it may be rejected); an **Action** is
 the authorized, validated mutation it parses into. The command/action boundary,
@@ -145,9 +141,9 @@ are one `Move`:
 | `@destroy <t>` | `Destroy` | `despawn(t)` | admin |
 | `@dig <dir> [name]` | `Create` + `Relate` | spawn a room (a `Locus`), then `Create` + `Relate` an exit entity each way | admin |
 
-`give` is the first row migrated end to end to the canonical affordance registry;
-its exact contract is recorded in
-[affordance-migration.md](affordance-migration.md).
+The reference `take`, `drop`, `put`, `eat`, `give`, and `go` rows are app-defined
+canonical affordances. Admin rows intentionally remain direct privileged uses of
+the structural executor.
 
 Communication mutates nothing, so it is not in the action vocabulary: mutation
 funnels through `execute` (which emits no perception events), while output flows

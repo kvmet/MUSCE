@@ -1,7 +1,7 @@
 //! The arbiter: which goal an agent pursues this tick, and the commitment that
 //! keeps it from thrashing between two near-equal goals every tick.
 //!
-//! A [`Goal`] pairs a predicate (the [`Clause`] the planner regresses toward) with
+//! A [`Goal`] pairs a canonical formula with
 //! an urgency. Drives emit goals; the arbiter ranks them and *commits* to one. Its
 //! substance is not the ranking (a max) but the hysteresis: an incumbent goal holds
 //! its commitment until a challenger's urgency exceeds it by a margin, so a small
@@ -16,7 +16,7 @@
 //! satisfaction is detected once, by the planner, not duplicated into a second
 //! `holds` pass the arbiter would have to get right for existential goals too.
 
-use musce_action::Clause;
+use musce_action::schema::Formula;
 
 /// A goal's priority; higher is more urgent. A drive computes it from the NPC's own
 /// need-state (a `Hunger`-driven curve); an imperative goal injects a fixed value.
@@ -28,7 +28,7 @@ pub type Urgency = u32;
 /// a shifted urgency is the same commitment, refreshed, not a new goal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Goal {
-    pub predicate: Clause,
+    pub predicate: Formula,
     pub urgency: Urgency,
 }
 
@@ -117,26 +117,24 @@ fn highest(goals: &[Goal]) -> Option<Goal> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use musce_action::{Predicate, Term};
+    use musce_action::schema::{ComponentId, Condition, Formula, Term};
 
     // Distinct one-literal goal predicates, keyed by a tag name, so tests can name
     // goals without building the full vocabulary each time.
     fn want(tag: &str, urgency: Urgency) -> Goal {
         Goal {
-            predicate: Clause(vec![
-                Predicate::Tag {
-                    e: Term::var("actor"),
-                    comp: tag.into(),
-                }
-                .into(),
-            ]),
+            predicate: Formula::all(vec![Condition::ComponentPresent {
+                entity: Term::Actor,
+                component: ComponentId::new(tag).unwrap(),
+                present: true,
+            }]),
             urgency,
         }
     }
 
     fn tag_of(goal: &Goal) -> String {
-        match &goal.predicate.0[0].predicate {
-            Predicate::Tag { comp, .. } => comp.clone(),
+        match &goal.predicate.conditions()[0] {
+            Condition::ComponentPresent { component, .. } => component.to_string(),
             _ => unreachable!(),
         }
     }

@@ -5,12 +5,11 @@
 //! resolves to connections the same way it does a verb's output. See
 //! `docs/architecture/concurrency.md` and `docs/architecture/engine-and-app.md`.
 
-use musce::action::SystemCtx;
+use musce::action::{PerformOutcome, SystemCtx, Verdict};
 use musce::world::{Controls, DestroyCause, EntityId, Fact, Id, NamedComponent, World};
 
 use crate::exits::ExitQueries;
-use crate::names::display_name;
-use crate::verbs::{Health, Locked, MoveOutcome, Special, do_move};
+use crate::verbs::{Health, Locked, Special};
 use musce::wire::EventKind;
 use serde::{Deserialize, Serialize};
 
@@ -77,8 +76,8 @@ pub fn wander(ctx: &mut SystemCtx) {
 
         // `exits_of` is a reverse index rebuilt on load with no guaranteed order,
         // so sort by id and take the lowest exit with a destination for a
-        // deterministic step. The traversal veto (a locked exit) is left to
-        // `do_move`, the shared rule path a player's `go` also runs.
+        // deterministic step. The canonical affordance applies the same traversal
+        // contract and narration used for every other initiator.
         let mut exits = ctx.world.exits_of(room).to_vec();
         exits.sort();
         let Some(exit) = exits
@@ -88,28 +87,14 @@ pub fn wander(ctx: &mut SystemCtx) {
             continue; // no exit out of here, or every exit is half-wired
         };
 
-        let who = display_name(ctx.world, creature);
-        match do_move(ctx.world, creature, exit) {
-            MoveOutcome::Moved {
-                from,
-                dest,
-                direction,
-            } => {
-                // Narration is audience-resolved after the move commits, so the
-                // creature (now in `dest`) is not among the old room's hearers.
-                if let Some(from) = from {
-                    ctx.emit_locus(
-                        from,
-                        EventKind::Narration,
-                        format!("{who} wanders {direction}."),
-                    );
-                }
-                ctx.emit_locus(dest, EventKind::Narration, format!("{who} wanders in."));
-            }
-            // A locked exit (or a structurally wedged one, already logged by
-            // `do_move`) halts the wanderer this tick; it does not try another
-            // exit. NoDestination cannot occur: we filtered for a destination.
-            MoveOutcome::NoDestination | MoveOutcome::Blocked(_) => {}
+        let destination = ctx
+            .world
+            .exit_destination(exit)
+            .expect("the selected exit was filtered for a destination");
+        let action = crate::affordances::go_action(creature, exit, destination);
+        match ctx.perform(&Verdict::guest(), &action) {
+            Ok(PerformOutcome::Committed(_)) | Ok(PerformOutcome::Refused(_)) => {}
+            Err(error) => tracing::error!(error = %error, "wander action failed"),
         }
     }
 }
@@ -200,7 +185,8 @@ mod tests {
 
     /// Run `wander` at an explicit tick, returning its emitted outbound buffer.
     fn tick(world: &mut World, tick: u64) -> Vec<Outbound> {
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
         let mut out = Vec::new();
         let mut ctx = SystemCtx::new(
             world,
@@ -216,7 +202,8 @@ mod tests {
 
     /// Run `death_cry` against a given fact batch, returning its outbound buffer.
     fn cry(world: &mut World, facts: &[Fact]) -> Vec<Outbound> {
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
         let mut out = Vec::new();
         let mut ctx = SystemCtx::new(
             world,
@@ -247,13 +234,11 @@ mod tests {
 
         let lines = room_narration(&out);
         assert!(
-            lines
-                .iter()
-                .any(|t| t.contains("a sewer rat wanders north")),
+            lines.iter().any(|t| t.contains("a sewer rat leaves north")),
             "departure narration, got: {lines:?}"
         );
         assert!(
-            lines.iter().any(|t| t.contains("a sewer rat wanders in")),
+            lines.iter().any(|t| t.contains("a sewer rat arrives")),
             "arrival narration, got: {lines:?}"
         );
     }
@@ -308,10 +293,8 @@ mod tests {
 
     /// The other half of the shared-rule guarantee (the player twin is
     /// `go_through_a_locked_exit_rejects` in verbs.rs): a locked exit stops the
-    /// ambient wanderer exactly as it stops a player, now that both route through
-    /// `do_move`. This is the bug that fix closes: the old `wander` called
-    /// `execute(Move)` directly and would have walked through a locked door. Lock
-    /// the exit through the registered `locked` tag the fixture's `register` wires.
+    /// ambient wanderer exactly as it stops a player because both perform the same
+    /// canonical `go` affordance.
     #[test]
     fn a_locked_exit_keeps_it_put() {
         let mut f = fixture();
@@ -348,7 +331,7 @@ mod tests {
         assert!(
             room_narration(&out)
                 .iter()
-                .any(|t| t.contains("a sewer rat wanders north")),
+                .any(|t| t.contains("a sewer rat leaves north")),
             "reloaded rat should still wander, got: {:?}",
             room_narration(&out)
         );

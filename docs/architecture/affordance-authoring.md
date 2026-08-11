@@ -4,9 +4,9 @@
 > typed inputs, results, pre-commit observations, mutation-only execution, result
 > encoding, and post-commit narration. The app-facing Rust `affordance!` procedural
 > macro implements that boundary and lowers directly into the canonical
-> representation in [affordances.md](affordances.md). The reference `give`
-> affordance exercises the generated registration, grounding, execution, and
-> narration path.
+> representation in [affordances.md](affordances.md). The reference `take`,
+> `drop`, `put`, `eat`, `give`, and `go` affordances exercise generated
+> registration, grounding, execution, and narration.
 
 The authoring language resembles a typed function signature with a logical
 contract around an ordinary Rust implementation. It removes parameter-id and

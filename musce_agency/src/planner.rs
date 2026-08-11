@@ -1,939 +1,731 @@
-//! The GOAP planner: backward goal-regression over the affordance table.
-//!
-//! A search node is a subgoal [`Clause`] (the literals that must become true).
-//! The search starts from the goal and works *backward*: it picks an unsatisfied
-//! literal, finds an affordance whose `effect` produces it, and replaces that
-//! literal with the affordance's guard preconditions, prepending the step. It
-//! succeeds when every literal of a node already holds in the *actual current
-//! world*, so the planner never simulates a hypothetical world; it only ever asks
-//! the app's [`WorldModel`] whether a ground literal holds right now. That is why
-//! regression fits this vocabulary where a forward simulation would need a
-//! hypothetical-state model the engine does not have.
-//!
-//! The output is a transient [`Plan`]: a sequence of bound steps the app lowers
-//! through its grounded action (`perform`), where the veto lives. Nothing here is
-//! persisted. Cost is minimized through the app's [`CostModel`] (uniform-cost
-//! search); the trivial [`UnitCost`](crate::UnitCost) makes this min-length.
-//!
-//! Scope of the current planner (see `docs/architecture/agency/planner.md`):
-//! effects are add-only (no delete lists), so only a positive subgoal literal is
-//! regressed; a negated literal is checked by `holds` and, if unsatisfied, dead-ends
-//! the branch (no effect makes a fact false). Soundness under step interference is
-//! backstopped by execution's replan-on-veto, not by the planner. Movement (`go`)
-//! stays out until multi-room knowledge makes a cross-room goal formable.
+//! Bounded backward regression over canonical affordance schemas.
 
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::HashMap;
 
+use musce_action::schema::{
+    AffordanceId, AffordanceSchema, Condition, Effect, Formula, GroundAction, LocalId,
+    OptionalEntity, ParameterId, Resolution, Term, Value, ValueSort,
+};
+use musce_action::{AffordanceRegistry, Gate};
 use musce_core::{EntityId, World};
 
-use musce_action::{Affordance, Clause, Frame, Literal, Predicate, Term, Var, WorldModel};
+use crate::{Cost, CostModel};
 
-use crate::{Cost, CostModel, bind_var};
+/// One executable plan beat. Canonical ground actions are used directly so no
+/// planner-only frame or app lowering step can drift from execution.
+pub type Step = GroundAction;
 
-/// One bound step of a plan: an affordance and the frame grounding its roles. The
-/// app lowers it through its grounded action for that affordance name.
-#[derive(Debug, Clone)]
-pub struct Step {
-    pub affordance: Affordance,
-    pub frame: Frame,
-}
-
-/// A transient, ordered action sequence the planner emits. Never persisted: a plan
-/// lowers to the executor's structural `Action` set through the app's grounded
-/// action, so no agency type embeds in a serialized script.
+/// A transient ordered action sequence.
 pub type Plan = Vec<Step>;
 
-/// A backward-regression planner over a fixed affordance table. The static
-/// planning context (the table and the app's read/cost policies) lives here; the
-/// per-query inputs (actor, goal, known set, world) are arguments to [`plan`]. The
-/// replan loop's exclusion set is the extra argument to [`plan_excluding`],
-/// consumed by [`Driver`](crate::Driver) (see the planner and execution docs).
-///
-/// [`plan`]: Planner::plan
-/// [`plan_excluding`]: Planner::plan_excluding
-pub struct Planner<'a> {
-    affordances: &'a [Affordance],
-    model: &'a dyn WorldModel,
-    cost: &'a dyn CostModel,
-}
-
-/// The deepest plan the search will build, and the most nodes it will settle,
-/// before giving up. Backstops against a pathological table; the reference verb
-/// set plans in two steps over a handful of affordances, so neither binds in
-/// practice. They exist so `plan` is total (a plan or `None`, never a spin).
 const MAX_DEPTH: usize = 8;
 const MAX_SETTLED: usize = 10_000;
 
+/// A planner retains only cost policy. Registry and world are per-query borrows,
+/// allowing a caller to release them before executing the returned action.
+pub struct Planner<'a> {
+    cost: &'a dyn CostModel,
+}
+
 impl<'a> Planner<'a> {
-    pub fn new(
-        affordances: &'a [Affordance],
-        model: &'a dyn WorldModel,
-        cost: &'a dyn CostModel,
-    ) -> Self {
-        Planner {
-            affordances,
-            model,
-            cost,
-        }
+    pub fn new(cost: &'a dyn CostModel) -> Self {
+        Self { cost }
     }
 
-    /// A minimum-cost plan whose execution makes `goal` hold for `actor`, or `None`
-    /// if no chain of known affordances reaches it. `known` is the candidate set the
-    /// actor may bind a fungible goal slot against (the app's knowledge seam): a
-    /// goal like "hold some food" (`∃x. related(x, actor, contained_by) ∧ tag(x,
-    /// food)`) enumerates `x` over `known`, grounds the goal per candidate, and keeps
-    /// the cheapest plan. `world` is borrowed only for the duration of the call, so
-    /// the caller can take `&mut World` to execute the returned plan immediately
-    /// after.
     pub fn plan(
         &self,
+        registry: &AffordanceRegistry,
         actor: EntityId,
-        goal: &Clause,
+        goal: &Formula,
         known: &[EntityId],
         world: &World,
     ) -> Option<Plan> {
-        self.plan_excluding(actor, goal, known, world, &[])
+        self.plan_excluding(registry, actor, goal, known, world, &[])
     }
 
-    /// [`plan`](Planner::plan), but never emitting any step in `excluded`. The
-    /// replan loop's entry: when a beat vetoes, the executor adds the failed
-    /// `(affordance, frame)` to `excluded` and replans, so the planner routes around
-    /// the step that just failed or, if it was the only route, returns `None`. A
-    /// step is excluded on its affordance name and bound frame, so a *different*
-    /// binding of the same affordance stays available. `plan` is this with an empty
-    /// set.
     pub fn plan_excluding(
         &self,
+        registry: &AffordanceRegistry,
         actor: EntityId,
-        goal: &Clause,
+        goal: &Formula,
         known: &[EntityId],
         world: &World,
         excluded: &[Step],
     ) -> Option<Plan> {
-        // Ground the actor role: a goal is written in the same role vocabulary as
-        // affordance clauses, so `actor` names the planning agent.
-        let goal = goal.substitute(&Var("actor".to_string()), actor);
-
-        let free = free_vars(&goal);
-        let result = match free.as_slice() {
-            [] => self.regress(actor, &goal, known, world, excluded),
-            [var] => {
-                // Bind the fungible slot: candidates are the known entities the
-                // *static* part of the goal admits (the properties no affordance can
-                // grant, so they must already hold, e.g. `tag(x, food)`). The
-                // achievable part (`related(x, actor, contained_by)`) is left for
-                // regression to plan. Each grounding is regressed; the cheapest wins.
-                let filter = self.static_filter(var, &goal);
-                bind_var(var, &filter, known, world, self.model)
-                    .into_iter()
-                    .filter_map(|c| {
-                        self.regress(actor, &goal.substitute(var, c), known, world, excluded)
-                    })
-                    .min_by_key(|(cost, _)| *cost)
-            }
-            // Multiple free vars is a combinatorial product no current goal needs;
-            // deferred (see the planner doc). A two-var goal simply finds no plan.
-            _ => None,
-        };
-        result.map(|(_, plan)| plan)
+        let mut settled = 0;
+        ground_goals(goal, known)
+            .into_iter()
+            .filter_map(|conditions| {
+                let mut visited = HashMap::new();
+                regress(
+                    Search {
+                        registry,
+                        actor,
+                        known,
+                        world,
+                        excluded,
+                        cost: self.cost,
+                    },
+                    conditions,
+                    Vec::new(),
+                    0,
+                    &mut settled,
+                    &mut visited,
+                )
+            })
+            .min_by_key(|(cost, _)| *cost)
+            .map(|(_, plan)| plan)
     }
 
-    /// Whether `goal` holds for `actor` in the live world. Mirrors the planner's
-    /// supported grounding scope: no free variable is tested directly; one free
-    /// variable is existentially tested over `known`; more than one is unsupported.
-    /// The driver calls this after execution so a committed plan is not mistaken
-    /// for an achieved goal when add-only regression missed interference.
-    pub(crate) fn goal_holds(
+    pub fn goal_holds(
         &self,
+        registry: &AffordanceRegistry,
         actor: EntityId,
-        goal: &Clause,
+        goal: &Formula,
         known: &[EntityId],
         world: &World,
     ) -> bool {
-        let goal = goal.substitute(&Var("actor".to_string()), actor);
-        match free_vars(&goal).as_slice() {
-            [] => goal
-                .0
+        ground_goals(goal, known).into_iter().any(|conditions| {
+            conditions
                 .iter()
-                .all(|literal| literal.holds(world, self.model)),
-            [var] => known.iter().copied().any(|candidate| {
-                goal.substitute(var, candidate)
-                    .0
-                    .iter()
-                    .all(|literal| literal.holds(world, self.model))
-            }),
-            _ => false,
+                .all(|condition| holds(registry, actor, condition, world))
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Search<'a> {
+    registry: &'a AffordanceRegistry,
+    actor: EntityId,
+    known: &'a [EntityId],
+    world: &'a World,
+    excluded: &'a [Step],
+    cost: &'a dyn CostModel,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn regress(
+    search: Search<'_>,
+    conditions: Vec<Condition>,
+    plan: Plan,
+    cost: Cost,
+    settled: &mut usize,
+    visited: &mut HashMap<Vec<Condition>, Cost>,
+) -> Option<(Cost, Plan)> {
+    if plan.len() > MAX_DEPTH || *settled >= MAX_SETTLED {
+        return None;
+    }
+    if visited
+        .get(&conditions)
+        .is_some_and(|settled_cost| *settled_cost <= cost)
+    {
+        return None;
+    }
+    visited.insert(conditions.clone(), cost);
+    *settled += 1;
+
+    let Some((at, goal)) = conditions
+        .iter()
+        .enumerate()
+        .find(|(_, condition)| !holds(search.registry, search.actor, condition, search.world))
+    else {
+        return Some((cost, plan));
+    };
+
+    let mut best = None;
+    for schema in search.registry.schemas() {
+        if schema.resolution() == Resolution::Opaque {
+            continue;
         }
-    }
-
-    /// The literals of `goal` that mention `var` and that no affordance can make
-    /// true (no positive effect shares their shape), so they must already hold: the
-    /// static constraint that filters candidate bindings for `var`. A negated literal
-    /// is always static (no add-only effect makes a fact false). The rest of the
-    /// goal, the achievable part, is planned by regression, not used to filter.
-    fn static_filter(&self, var: &Var, goal: &Clause) -> Clause {
-        Clause(
-            goal.0
-                .iter()
-                .filter(|l| mentions(l, var) && !self.is_achievable(l))
-                .cloned()
-                .collect(),
-        )
-    }
-
-    /// Whether some affordance's positive effect could produce this literal: a
-    /// positive literal whose predicate shares a kind/comp with an effect. Used only
-    /// to split a goal into its achievable and static parts.
-    fn is_achievable(&self, literal: &Literal) -> bool {
-        !literal.negated
-            && self
-                .affordances
-                .iter()
-                .flat_map(|a| a.effect.0.iter())
-                .filter(|e| !e.negated)
-                .any(|e| same_shape(&e.predicate, &literal.predicate))
-    }
-
-    /// The frames grounding `affordance`'s guard for this step: one per way to bind
-    /// a role the effect left free, or `[frame]` when the guard names no free role.
-    ///
-    /// After effect-unification produces `frame`, an affordance whose guard names a
-    /// role its effect does not (eat's food: its effect is `fed(actor)`, so
-    /// unification binds only `actor`) still carries that role as a free variable.
-    /// It is bound against `known`, filtered by the *static* part of the guard (the
-    /// properties no affordance can grant, e.g. `tag(food, edible)`), through the
-    /// same `bind_var` the goal slot uses: a mid-search existential is grounded
-    /// exactly as a goal one and never reaches outside the actor's knowledge. Every
-    /// take/drop/put step has no free guard role, so this returns the frame
-    /// unchanged there. One free role yields a frame per candidate; more than one is
-    /// the same combinatorial product the goal binder defers.
-    fn guard_bindings(
-        &self,
-        affordance: &Affordance,
-        frame: Frame,
-        known: &[EntityId],
-        world: &World,
-    ) -> Vec<Frame> {
-        let guard = Clause(
-            affordance
-                .guards
-                .iter()
-                .flat_map(|g| g.clause.bind(&frame).0)
-                .collect(),
-        );
-        match free_vars(&guard).as_slice() {
-            [] => vec![frame],
-            [var] => {
-                let filter = self.static_filter(var, &guard);
-                bind_var(var, &filter, known, world, self.model)
-                    .into_iter()
-                    .filter_map(|cand| bind_role(&frame, var, cand))
-                    .collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    /// Uniform-cost backward search from `goal`. Nodes are settled cheapest-first,
-    /// so the first node whose every literal holds yields an optimal plan, returned
-    /// with its total cost.
-    fn regress(
-        &self,
-        actor: EntityId,
-        goal: &Clause,
-        known: &[EntityId],
-        world: &World,
-        excluded: &[Step],
-    ) -> Option<(Cost, Plan)> {
-        let mut heap = BinaryHeap::new();
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut seq: u64 = 0;
-        heap.push(Frontier {
-            cost: 0,
-            seq,
-            subgoal: goal.clone(),
-            steps: Vec::new(),
-        });
-
-        let mut settled = 0;
-        let mut hit_depth_bound = false;
-        while let Some(node) = heap.pop() {
-            // Settle-on-pop: the cheapest path to this subgoal is now final.
-            if !visited.insert(canonical(&node.subgoal)) {
+        for effect in schema.effects() {
+            let Some(seed) = match_effect(effect, goal, search.actor) else {
                 continue;
-            }
-            settled += 1;
-            if settled > MAX_SETTLED {
-                tracing::warn!(
-                    max_settled = MAX_SETTLED,
-                    "planner search hit its settled-node bound; returning no plan"
+            };
+            for grounding in ground_inputs(schema, seed, &conditions, search) {
+                let action = GroundAction::new(
+                    schema.id().clone(),
+                    search.actor,
+                    input_values(schema, &grounding),
                 );
-                return None;
-            }
+                if search.excluded.contains(&action) {
+                    continue;
+                }
 
-            let unsatisfied: Vec<&Literal> = node
-                .subgoal
-                .0
-                .iter()
-                .filter(|l| !l.holds(world, self.model))
-                .collect();
-            if unsatisfied.is_empty() {
-                let mut plan = node.steps;
-                plan.reverse(); // pick order is last-executed-first
-                return Some((node.cost, plan));
-            }
-            // A negated literal cannot be achieved: no add-only effect makes a fact
-            // false, so a branch that still needs one is dead. (Its message-side
-            // twin, a guard that already holds, passed the filter above.)
-            if unsatisfied.iter().any(|l| l.negated) {
-                continue;
-            }
-            if node.steps.len() >= MAX_DEPTH {
-                hit_depth_bound = true;
-                continue;
-            }
-
-            // Regress one unsatisfied (positive) literal by every affordance whose
-            // effect can produce it.
-            let target = unsatisfied[0].predicate.clone();
-            for affordance in self.affordances {
-                for effect in affordance.effect.0.iter().filter(|l| !l.negated) {
-                    let Some(frame) = unify(&effect.predicate, &target, actor) else {
-                        continue;
-                    };
-                    // Ground any guard role the effect left free (a mid-search
-                    // existential, e.g. eat's food) against `known`, one successor per
-                    // candidate, so every recorded step's frame is bound. A guard with
-                    // no free role yields the frame unchanged, the case every current
-                    // chaining verb hits.
-                    for frame in self.guard_bindings(affordance, frame, known, world) {
-                        // Skip a step the replan loop has excluded (a beat that
-                        // vetoed): same affordance, same bound frame. A different
-                        // binding survives.
-                        if is_excluded(affordance, &frame, excluded) {
-                            continue;
+                let mut next = conditions.clone();
+                next.remove(at);
+                let mut applicable = true;
+                for guard in schema.guards() {
+                    match search.registry.state().evaluate(
+                        guard.formula(),
+                        schema,
+                        &action,
+                        None,
+                        search.world,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) if guard.formula().locals().is_empty() => {
+                            for condition in guard.formula().conditions() {
+                                let Some(condition) =
+                                    ground_condition(condition, schema, &grounding, search.actor)
+                                else {
+                                    applicable = false;
+                                    break;
+                                };
+                                if !next.contains(&condition) {
+                                    next.push(condition);
+                                }
+                            }
                         }
-                        let subgoal = successor(&node.subgoal, affordance, &frame);
-                        if visited.contains(&canonical(&subgoal)) {
-                            continue;
-                        }
-                        seq += 1;
-                        let mut steps = node.steps.clone();
-                        steps.push(Step {
-                            affordance: affordance.clone(),
-                            frame,
-                        });
-                        heap.push(Frontier {
-                            cost: node.cost + self.cost.cost(actor, affordance, world),
-                            seq,
-                            subgoal,
-                            steps,
-                        });
+                        Ok(false) | Err(_) => applicable = false,
                     }
+                    if !applicable {
+                        break;
+                    }
+                }
+                if !applicable {
+                    continue;
+                }
+
+                let mut next_plan = plan.clone();
+                next_plan.insert(0, action.clone());
+                let next_cost = cost.saturating_add(search.cost.cost(
+                    search.actor,
+                    schema,
+                    &action,
+                    search.world,
+                ));
+                if let Some(candidate) =
+                    regress(search, next, next_plan, next_cost, settled, visited)
+                    && best
+                        .as_ref()
+                        .is_none_or(|(best_cost, _)| candidate.0 < *best_cost)
+                {
+                    best = Some(candidate);
                 }
             }
         }
-        if hit_depth_bound {
-            tracing::warn!(
-                max_depth = MAX_DEPTH,
-                "planner search exhausted after pruning at its depth bound"
-            );
-        }
-        None
     }
+    best
 }
 
-/// The distinct free variables in a clause (every `Term::Var`), in first-seen
-/// order. After actor-substitution these are the goal's existential slots.
-fn free_vars(clause: &Clause) -> Vec<Var> {
-    let mut vars: Vec<Var> = Vec::new();
-    let mut note = |term: &Term| {
-        if let Term::Var(v) = term
-            && !vars.contains(v)
-        {
-            vars.push(v.clone());
-        }
-    };
-    for literal in &clause.0 {
-        match &literal.predicate {
-            Predicate::Related { a, b, .. } => {
-                note(a);
-                note(b);
+fn ground_goals(goal: &Formula, known: &[EntityId]) -> Vec<Vec<Condition>> {
+    fn visit(
+        at: usize,
+        goal: &Formula,
+        known: &[EntityId],
+        bindings: &mut HashMap<LocalId, Value>,
+        out: &mut Vec<Vec<Condition>>,
+    ) {
+        let Some(local) = goal.locals().get(at) else {
+            let conditions = goal
+                .conditions()
+                .iter()
+                .map(|condition| substitute_locals(condition, bindings))
+                .collect::<Option<Vec<_>>>();
+            if let Some(conditions) = conditions {
+                out.push(conditions);
             }
-            Predicate::Tag { e, .. } => note(e),
+            return;
+        };
+        if local.sort() != &ValueSort::Entity {
+            return;
         }
-    }
-    vars
-}
-
-/// A copy of `frame` with the entity role named by `var` bound to `id`, or `None`
-/// if `var` names no fillable entity role. A guard existential is always written
-/// over a frame role (`object`/`target`), so this is total for the vars
-/// [`guard_bindings`](Planner::guard_bindings) passes; the `None` guards a var that
-/// named some other role, which simply contributes no binding.
-fn bind_role(frame: &Frame, var: &Var, id: EntityId) -> Option<Frame> {
-    let mut bound = frame.clone();
-    match var.0.as_str() {
-        "object" => bound.object = Some(id),
-        "target" => bound.target = Some(id),
-        _ => return None,
-    }
-    Some(bound)
-}
-
-/// Whether the replan loop has excluded this bound step: an excluded entry names
-/// the same affordance and the same frame. Frame equality is exact, so a different
-/// binding of the same affordance (a different object or target) is not excluded.
-fn is_excluded(affordance: &Affordance, frame: &Frame, excluded: &[Step]) -> bool {
-    excluded
-        .iter()
-        .any(|s| s.affordance.name == affordance.name && s.frame == *frame)
-}
-
-/// Whether `var` appears in a literal's predicate.
-fn mentions(literal: &Literal, var: &Var) -> bool {
-    let is = |term: &Term| matches!(term, Term::Var(v) if v == var);
-    match &literal.predicate {
-        Predicate::Related { a, b, .. } => is(a) || is(b),
-        Predicate::Tag { e, .. } => is(e),
-    }
-}
-
-/// Whether two predicates could unify on their app vocabulary alone (same variant
-/// and same relation kind / component), ignoring terms. The cheap achievability
-/// test the static/achievable goal split uses.
-fn same_shape(a: &Predicate, b: &Predicate) -> bool {
-    match (a, b) {
-        (Predicate::Related { kind: ka, .. }, Predicate::Related { kind: kb, .. }) => ka == kb,
-        (Predicate::Tag { comp: ca, .. }, Predicate::Tag { comp: cb, .. }) => ca == cb,
-        _ => false,
-    }
-}
-
-/// The subgoal after regressing through `affordance` under `frame`: the literals
-/// the affordance's bound effect produces are discharged from `subgoal`, and its
-/// bound guard preconditions become new obligations. Literals are deduplicated so
-/// two affordances requiring the same precondition do not double it.
-fn successor(subgoal: &Clause, affordance: &Affordance, frame: &Frame) -> Clause {
-    let produced = affordance.effect.bind(frame);
-    let mut next: Vec<Literal> = subgoal
-        .0
-        .iter()
-        .filter(|l| !produced.0.contains(l))
-        .cloned()
-        .collect();
-    for guard in &affordance.guards {
-        for literal in guard.clause.bind(frame).0 {
-            if !next.contains(&literal) {
-                next.push(literal);
-            }
+        for candidate in known {
+            bindings.insert(local.id().clone(), Value::Entity(*candidate));
+            visit(at + 1, goal, known, bindings, out);
         }
+        bindings.remove(local.id());
     }
-    Clause(next)
+
+    let mut out = Vec::new();
+    visit(0, goal, known, &mut HashMap::new(), &mut out);
+    out
 }
 
-/// Match an affordance's (positive) effect predicate against a ground subgoal
-/// predicate, producing the [`Frame`] that grounds the affordance's roles, or
-/// `None` if they cannot match. Not general unification: the frame has three fixed
-/// roles (`actor`, `object`, `target`), so this is a small positional match of the
-/// effect's role-vars against the subgoal's entities, with `actor` fixed to the
-/// planning agent.
-fn unify(effect: &Predicate, goal: &Predicate, actor: EntityId) -> Option<Frame> {
-    let mut frame = Frame {
-        actor,
-        object: None,
-        target: None,
-    };
-    match (effect, goal) {
+fn substitute_locals(
+    condition: &Condition,
+    bindings: &HashMap<musce_action::schema::LocalId, Value>,
+) -> Option<Condition> {
+    map_condition(condition, &mut |term| match term {
+        Term::Local(id) => bindings.get(id).cloned().map(Term::Constant),
+        other => Some(other.clone()),
+    })
+}
+
+fn holds(
+    registry: &AffordanceRegistry,
+    actor: EntityId,
+    condition: &Condition,
+    world: &World,
+) -> bool {
+    let schema = AffordanceSchema::new(
+        AffordanceId::new("agency:goal").expect("static id"),
+        "agency goal",
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Gate::Open,
+        Resolution::Opaque,
+    );
+    let action = GroundAction::new(schema.id().clone(), actor, Vec::new());
+    registry
+        .state()
+        .evaluate(
+            &Formula::all(vec![condition.clone()]),
+            &schema,
+            &action,
+            None,
+            world,
+        )
+        .unwrap_or(false)
+}
+
+fn match_effect(
+    effect: &Effect,
+    goal: &Condition,
+    actor: EntityId,
+) -> Option<HashMap<ParameterId, Value>> {
+    let mut bindings = HashMap::new();
+    let matched = match (effect, goal) {
         (
-            Predicate::Related {
-                a: ea,
-                b: eb,
-                kind: ek,
+            Effect::SetRelation {
+                source,
+                relation,
+                target,
             },
-            Predicate::Related {
-                a: ga,
-                b: gb,
-                kind: gk,
+            Condition::RelationTarget {
+                source: wanted_source,
+                relation: wanted_relation,
+                target: OptionalEntity::Is(wanted_target),
             },
-        ) if ek == gk => {
-            unify_term(ea, ga, &mut frame)?;
-            unify_term(eb, gb, &mut frame)?;
-            Some(frame)
+        ) if relation == wanted_relation => {
+            unify(source, wanted_source, actor, &mut bindings)
+                && unify(target, wanted_target, actor, &mut bindings)
         }
-        (Predicate::Tag { e: ee, comp: ec }, Predicate::Tag { e: ge, comp: gc }) if ec == gc => {
-            unify_term(ee, ge, &mut frame)?;
-            Some(frame)
+        (
+            Effect::ClearRelation { source, relation },
+            Condition::RelationTarget {
+                source: wanted_source,
+                relation: wanted_relation,
+                target: OptionalEntity::IsUnset,
+            },
+        ) if relation == wanted_relation => unify(source, wanted_source, actor, &mut bindings),
+        (
+            Effect::SetComponent { entity, component },
+            Condition::ComponentPresent {
+                entity: wanted,
+                component: wanted_component,
+                present: true,
+            },
+        ) if component == wanted_component => unify(entity, wanted, actor, &mut bindings),
+        (
+            Effect::RemoveComponent { entity, component },
+            Condition::ComponentPresent {
+                entity: wanted,
+                component: wanted_component,
+                present: false,
+            },
+        ) if component == wanted_component => unify(entity, wanted, actor, &mut bindings),
+        (
+            Effect::SetLocus { entity, locus },
+            Condition::LocusOf {
+                entity: wanted_entity,
+                locus: OptionalEntity::Is(wanted_locus),
+            },
+        ) => {
+            unify(entity, wanted_entity, actor, &mut bindings)
+                && unify(locus, wanted_locus, actor, &mut bindings)
         }
-        _ => None,
-    }
-}
-
-/// Match one effect term against the (ground) subgoal term, recording any role
-/// binding into `frame`. The subgoal term must be ground; an effect `Const` must
-/// equal it, an effect role-var binds (or must agree with) its frame slot, and an
-/// effect var that is not a frame role cannot be grounded here.
-fn unify_term(effect: &Term, goal: &Term, frame: &mut Frame) -> Option<()> {
-    let Term::Const(id) = goal else {
-        return None; // the subgoal is expected ground; a free var cannot match
+        (
+            Effect::ClearLocus { entity },
+            Condition::LocusOf {
+                entity: wanted,
+                locus: OptionalEntity::IsUnset,
+            },
+        ) => unify(entity, wanted, actor, &mut bindings),
+        (
+            Effect::Destroy { entity },
+            Condition::Exists {
+                entity: wanted,
+                exists: false,
+            },
+        ) => unify(entity, wanted, actor, &mut bindings),
+        _ => false,
     };
-    let id = *id;
-    match effect {
-        Term::Const(c) => (*c == id).then_some(()),
-        Term::Var(Var(role)) => match role.as_str() {
-            "actor" => (frame.actor == id).then_some(()),
-            "object" => set_slot(&mut frame.object, id),
-            "target" => set_slot(&mut frame.target, id),
-            _ => None,
+    matched.then_some(bindings)
+}
+
+fn unify(
+    offered: &Term,
+    wanted: &Term,
+    actor: EntityId,
+    bindings: &mut HashMap<ParameterId, Value>,
+) -> bool {
+    let Some(wanted) = ground_term(wanted, actor) else {
+        return false;
+    };
+    match offered {
+        Term::Actor => wanted == Value::Entity(actor),
+        Term::Input(id) => match bindings.get(id) {
+            Some(bound) => *bound == wanted,
+            None => {
+                bindings.insert(id.clone(), wanted);
+                true
+            }
         },
+        Term::Constant(value) => *value == wanted,
+        Term::Result(_) | Term::Local(_) => false,
     }
 }
 
-/// Bind a frame slot to `id`, or require agreement if it is already bound.
-fn set_slot(slot: &mut Option<EntityId>, id: EntityId) -> Option<()> {
-    match slot {
-        Some(existing) => (*existing == id).then_some(()),
-        None => {
-            *slot = Some(id);
-            Some(())
+fn ground_inputs(
+    schema: &AffordanceSchema,
+    seed: HashMap<ParameterId, Value>,
+    conditions: &[Condition],
+    search: Search<'_>,
+) -> Vec<HashMap<ParameterId, Value>> {
+    fn visit(
+        at: usize,
+        inputs: &[&musce_action::schema::Parameter],
+        candidates: &[Value],
+        bindings: &mut HashMap<ParameterId, Value>,
+        out: &mut Vec<HashMap<ParameterId, Value>>,
+    ) {
+        let Some(parameter) = inputs.get(at) else {
+            out.push(bindings.clone());
+            return;
+        };
+        if let Some(bound) = bindings.get(parameter.id()) {
+            if bound.sort() == *parameter.sort() {
+                visit(at + 1, inputs, candidates, bindings, out);
+            }
+            return;
         }
+        for candidate in candidates
+            .iter()
+            .filter(|value| value.sort() == *parameter.sort())
+        {
+            bindings.insert(parameter.id().clone(), candidate.clone());
+            visit(at + 1, inputs, candidates, bindings, out);
+        }
+        bindings.remove(parameter.id());
+    }
+
+    let mut entities: Vec<EntityId> = search.known.to_vec();
+    for condition in conditions {
+        collect_entities(condition, &mut entities);
+    }
+    entities.sort();
+    entities.dedup();
+    let candidates: Vec<Value> = entities.into_iter().map(Value::Entity).collect();
+    let inputs: Vec<_> = schema.inputs().collect();
+    let mut out = Vec::new();
+    visit(0, &inputs, &candidates, &mut seed.clone(), &mut out);
+    out
+}
+
+fn input_values(schema: &AffordanceSchema, bindings: &HashMap<ParameterId, Value>) -> Vec<Value> {
+    let mut values = vec![Value::Entity(EntityId(0)); schema.inputs().count()];
+    for parameter in schema.inputs() {
+        values[parameter.slot() as usize] = bindings
+            .get(parameter.id())
+            .expect("ground_inputs binds every input")
+            .clone();
+    }
+    values
+}
+
+fn ground_condition(
+    condition: &Condition,
+    schema: &AffordanceSchema,
+    bindings: &HashMap<ParameterId, Value>,
+    actor: EntityId,
+) -> Option<Condition> {
+    map_condition(condition, &mut |term| match term {
+        Term::Actor => Some(Term::Actor),
+        Term::Input(id) => bindings.get(id).cloned().map(Term::Constant),
+        Term::Constant(value) => Some(Term::Constant(value.clone())),
+        Term::Result(_) | Term::Local(_) => None,
+    })
+    .filter(|_| schema.inputs().all(|p| bindings.contains_key(p.id())))
+    .map(|condition| normalize_actor(condition, actor))
+}
+
+fn normalize_actor(condition: Condition, actor: EntityId) -> Condition {
+    map_condition(&condition, &mut |term| match term {
+        Term::Actor => Some(Term::Constant(Value::Entity(actor))),
+        other => Some(other.clone()),
+    })
+    .expect("normalization is total")
+}
+
+fn map_condition(
+    condition: &Condition,
+    term: &mut impl FnMut(&Term) -> Option<Term>,
+) -> Option<Condition> {
+    let optional = |value: &OptionalEntity, term: &mut dyn FnMut(&Term) -> Option<Term>| {
+        Some(match value {
+            OptionalEntity::Is(value) => OptionalEntity::Is(term(value)?),
+            OptionalEntity::IsNot(value) => OptionalEntity::IsNot(term(value)?),
+            OptionalEntity::IsUnset => OptionalEntity::IsUnset,
+        })
+    };
+    Some(match condition {
+        Condition::RelationTarget {
+            source,
+            relation,
+            target,
+        } => Condition::RelationTarget {
+            source: term(source)?,
+            relation: relation.clone(),
+            target: optional(target, term)?,
+        },
+        Condition::ComponentPresent {
+            entity,
+            component,
+            present,
+        } => Condition::ComponentPresent {
+            entity: term(entity)?,
+            component: component.clone(),
+            present: *present,
+        },
+        Condition::LocusOf { entity, locus } => Condition::LocusOf {
+            entity: term(entity)?,
+            locus: optional(locus, term)?,
+        },
+        Condition::GaugeAtLeast {
+            entity,
+            gauge,
+            region,
+        } => Condition::GaugeAtLeast {
+            entity: term(entity)?,
+            gauge: gauge.clone(),
+            region: region.clone(),
+        },
+        Condition::GaugeAtMost {
+            entity,
+            gauge,
+            region,
+        } => Condition::GaugeAtMost {
+            entity: term(entity)?,
+            gauge: gauge.clone(),
+            region: region.clone(),
+        },
+        Condition::Exists { entity, exists } => Condition::Exists {
+            entity: term(entity)?,
+            exists: *exists,
+        },
+        Condition::Distinct { left, right } => Condition::Distinct {
+            left: term(left)?,
+            right: term(right)?,
+        },
+    })
+}
+
+fn ground_term(term: &Term, actor: EntityId) -> Option<Value> {
+    match term {
+        Term::Actor => Some(Value::Entity(actor)),
+        Term::Constant(value) => Some(value.clone()),
+        Term::Input(_) | Term::Result(_) | Term::Local(_) => None,
     }
 }
 
-/// An order-independent key for a subgoal, for the visited set. Two subgoals with
-/// the same literal set are the same node regardless of literal order. Built from
-/// the derived `Debug` of each literal, sorted; the search is small enough that the
-/// string cost is irrelevant, and this avoids imposing a total order on the
-/// vocabulary types for a planner-internal need.
-fn canonical(clause: &Clause) -> String {
-    let mut literals: Vec<String> = clause.0.iter().map(|l| format!("{l:?}")).collect();
-    literals.sort();
-    literals.join("|")
-}
-
-/// A frontier node, ordered for a min-heap by cost. `seq` (unique per push) breaks
-/// ties into a total, deterministic order so equal-cost plans are found in a stable
-/// sequence.
-struct Frontier {
-    cost: Cost,
-    seq: u64,
-    subgoal: Clause,
-    steps: Vec<Step>,
-}
-
-impl PartialEq for Frontier {
-    fn eq(&self, other: &Self) -> bool {
-        self.seq == other.seq
-    }
-}
-impl Eq for Frontier {}
-impl Ord for Frontier {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // BinaryHeap is a max-heap; reverse so least cost (then earliest seq) is
-        // popped first.
-        other
-            .cost
-            .cmp(&self.cost)
-            .then_with(|| other.seq.cmp(&self.seq))
-    }
-}
-impl PartialOrd for Frontier {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+fn collect_entities(condition: &Condition, out: &mut Vec<EntityId>) {
+    let mut collect = |term: &Term| {
+        if let Term::Constant(Value::Entity(entity)) = term {
+            out.push(*entity);
+        }
+    };
+    match condition {
+        Condition::RelationTarget { source, target, .. } => {
+            collect(source);
+            if let OptionalEntity::Is(value) | OptionalEntity::IsNot(value) = target {
+                collect(value);
+            }
+        }
+        Condition::ComponentPresent { entity, .. }
+        | Condition::GaugeAtLeast { entity, .. }
+        | Condition::GaugeAtMost { entity, .. }
+        | Condition::Exists { entity, .. } => collect(entity),
+        Condition::LocusOf { entity, locus } => {
+            collect(entity);
+            if let OptionalEntity::Is(value) | OptionalEntity::IsNot(value) = locus {
+                collect(value);
+            }
+        }
+        Condition::Distinct { left, right } => {
+            collect(left);
+            collect(right);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Guard, UnitCost};
+    use crate::UnitCost;
+    use musce_action::schema::{
+        ActionOutcome, ComponentId, Guard, Parameter, ParameterMode, RelationId,
+    };
+    use musce_action::state::StateRegistry;
+    use musce_action::{AffordanceRegistryBuilder, HandlerOutcome};
+    use musce_core::hecs::EntityBuilder;
+    use musce_core::{Containment, Locus, NamedComponent, Relation};
 
-    // A ground-fact stub standing in for an app's reading: `holds` answers from a
-    // fixed set of true relations and tags, ignoring the (empty) `World`. It plays
-    // the role `RefWorldModel` plays for `musce_ref`, letting the generic planner
-    // be tested without an app. The relation kinds and tags are illustrative.
-    #[derive(Default)]
-    struct Facts {
-        relations: HashSet<(EntityId, EntityId, String)>,
-        tags: HashSet<(EntityId, String)>,
-    }
-    impl WorldModel for Facts {
-        fn holds(&self, predicate: &Predicate, _world: &World) -> bool {
-            match predicate {
-                Predicate::Related { a, b, kind } => match (as_const(a), as_const(b)) {
-                    (Some(a), Some(b)) => self.relations.contains(&(a, b, kind.clone())),
-                    _ => false,
-                },
-                Predicate::Tag { e, comp } => match as_const(e) {
-                    Some(e) => self.tags.contains(&(e, comp.clone())),
-                    None => false,
-                },
-            }
-        }
-    }
-    fn as_const(term: &Term) -> Option<EntityId> {
-        match term {
-            Term::Const(id) => Some(*id),
-            Term::Var(_) => None,
-        }
+    struct Fixture {
+        world: World,
+        registry: AffordanceRegistry,
+        actor: EntityId,
+        first: EntityId,
+        second: EntityId,
+        goal: Formula,
     }
 
-    // The two chaining verbs under test, mirroring `musce_ref`'s affordances: take
-    // makes the object held (`object contained_by actor`); put makes it contained
-    // by the target, guarded on the object being held and the target being a
-    // container.
-    fn take() -> Affordance {
-        Affordance {
-            name: "take".into(),
-            guards: vec![Guard {
-                clause: Clause(vec![
-                    Predicate::Tag {
-                        e: Term::var("object"),
-                        comp: "fixture".into(),
-                    }
-                    .not(),
-                ]),
-                reason: "You can't take that.",
-            }],
-            effect: Clause(vec![
-                Predicate::Related {
-                    a: Term::var("object"),
-                    b: Term::var("actor"),
-                    kind: "contained_by".into(),
-                }
-                .into(),
-            ]),
+    fn fixture(held: bool) -> Fixture {
+        let mut world = World::new();
+        let actor = world.spawn(EntityBuilder::new());
+        let first = world.spawn(EntityBuilder::new());
+        let second = world.spawn(EntityBuilder::new());
+        if held {
+            world.move_entity(first, actor).unwrap();
+            world.move_entity(second, actor).unwrap();
         }
-    }
-    fn put() -> Affordance {
-        Affordance {
-            name: "put".into(),
-            guards: vec![
-                Guard {
-                    clause: Clause(vec![
-                        Predicate::Related {
-                            a: Term::var("object"),
-                            b: Term::var("actor"),
-                            kind: "contained_by".into(),
-                        }
-                        .into(),
-                    ]),
-                    reason: "You aren't carrying that.",
-                },
-                Guard {
-                    clause: Clause(vec![
-                        Predicate::Tag {
-                            e: Term::var("target"),
-                            comp: "container".into(),
-                        }
-                        .into(),
-                    ]),
-                    reason: "You can't put things in that.",
-                },
+
+        let relation = RelationId::new(Containment::TARGET_TAG).unwrap();
+        let marker = ComponentId::new(Locus::TAG).unwrap();
+        let item = ParameterId::new("item").unwrap();
+        let food = ParameterId::new("food").unwrap();
+
+        let take = AffordanceSchema::new(
+            AffordanceId::new("take").unwrap(),
+            "take",
+            vec![
+                Parameter::new(
+                    item.clone(),
+                    "item",
+                    ValueSort::Entity,
+                    ParameterMode::Input,
+                    0,
+                )
+                .unwrap(),
             ],
-            effect: Clause(vec![
-                Predicate::Related {
-                    a: Term::var("object"),
-                    b: Term::var("target"),
-                    kind: "contained_by".into(),
-                }
-                .into(),
-            ]),
-        }
-    }
-
-    // A consumer verb whose effect is about the *actor*, not the object: eating
-    // makes the actor fed. Its guard names the food (`object`), which the fed(actor)
-    // effect never binds, so the food stays a free role after unification and must
-    // be bound mid-search. This is the shape the reference `eat` affordance has.
-    fn eat() -> Affordance {
-        Affordance {
-            name: "eat".into(),
-            guards: vec![Guard {
-                clause: Clause(vec![
-                    Predicate::Related {
-                        a: Term::var("object"),
-                        b: Term::var("actor"),
-                        kind: "contained_by".into(),
-                    }
-                    .into(),
-                    Predicate::Tag {
-                        e: Term::var("object"),
-                        comp: "edible".into(),
-                    }
-                    .into(),
-                ]),
-                reason: "You have nothing edible to eat.",
+            Vec::new(),
+            vec![Effect::SetRelation {
+                source: Term::Input(item),
+                relation: relation.clone(),
+                target: Term::Actor,
             }],
-            effect: Clause(vec![
-                Predicate::Tag {
-                    e: Term::var("actor"),
-                    comp: "fed".into(),
-                }
-                .into(),
-            ]),
+            Gate::Open,
+            Resolution::Deterministic,
+        );
+        let eat = AffordanceSchema::new(
+            AffordanceId::new("eat").unwrap(),
+            "eat",
+            vec![
+                Parameter::new(
+                    food.clone(),
+                    "food",
+                    ValueSort::Entity,
+                    ParameterMode::Input,
+                    0,
+                )
+                .unwrap(),
+            ],
+            vec![Guard::new(
+                Formula::all(vec![Condition::RelationTarget {
+                    source: Term::Input(food),
+                    relation,
+                    target: OptionalEntity::Is(Term::Actor),
+                }]),
+                "not held",
+            )],
+            vec![Effect::SetComponent {
+                entity: Term::Actor,
+                component: marker.clone(),
+            }],
+            Gate::Open,
+            Resolution::Contested,
+        );
+
+        let mut state = StateRegistry::new();
+        state.register_relation::<Containment>().unwrap();
+        state.register_component::<Locus>().unwrap();
+        let mut builder = AffordanceRegistryBuilder::new(state);
+        builder
+            .register(take, |_, _| {
+                HandlerOutcome::committed(ActionOutcome::empty())
+            })
+            .unwrap();
+        builder
+            .register(
+                eat,
+                |_, _| HandlerOutcome::committed(ActionOutcome::empty()),
+            )
+            .unwrap();
+        let registry = builder.build(&world).unwrap();
+        let goal = Formula::all(vec![Condition::ComponentPresent {
+            entity: Term::Actor,
+            component: marker,
+            present: true,
+        }]);
+
+        Fixture {
+            world,
+            registry,
+            actor,
+            first,
+            second,
+            goal,
         }
     }
 
-    const ACTOR: EntityId = EntityId(1);
-    const COIN: EntityId = EntityId(2);
-    const CHEST: EntityId = EntityId(3);
-    const BERRY: EntityId = EntityId(6);
-    const PEBBLE: EntityId = EntityId(7);
-
-    fn coin_in_chest_goal() -> Clause {
-        Clause(vec![
-            Predicate::Related {
-                a: Term::Const(COIN),
-                b: Term::Const(CHEST),
-                kind: "contained_by".into(),
-            }
-            .into(),
-        ])
-    }
-
     #[test]
-    fn regresses_a_two_step_chain() {
-        // Coin on the floor, chest is a container: reaching "coin in chest" needs
-        // take (to hold the coin) then put. This is the backward chain: put's
-        // held-precondition is achieved by take's effect.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
-        let table = [take(), put()];
-        let planner = Planner::new(&table, &facts, &UnitCost);
+    fn regression_emits_canonical_ground_actions() {
+        let fixture = fixture(false);
+        let costs = UnitCost;
+        let plan = Planner::new(&costs)
+            .plan(
+                &fixture.registry,
+                fixture.actor,
+                &fixture.goal,
+                &[fixture.first],
+                &fixture.world,
+            )
+            .unwrap();
 
-        let plan = planner
-            .plan(ACTOR, &coin_in_chest_goal(), &[], &World::new())
-            .expect("a plan exists");
-
-        let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
-        assert_eq!(names, ["take", "put"]);
-        assert_eq!(plan[0].frame.object, Some(COIN));
-        assert_eq!(plan[1].frame.object, Some(COIN));
-        assert_eq!(plan[1].frame.target, Some(CHEST));
-        assert!(plan.iter().all(|s| s.frame.actor == ACTOR));
-    }
-
-    #[test]
-    fn already_satisfied_goal_plans_nothing() {
-        // The coin is already in the chest: the goal holds, so the empty plan is
-        // optimal.
-        let mut facts = Facts::default();
-        facts.relations.insert((COIN, CHEST, "contained_by".into()));
-        let table = [take(), put()];
-        let plan = Planner::new(&table, &facts, &UnitCost)
-            .plan(ACTOR, &coin_in_chest_goal(), &[], &World::new())
-            .expect("an empty plan");
-        assert!(plan.is_empty());
-    }
-
-    #[test]
-    fn no_plan_when_a_precondition_is_unreachable() {
-        // The chest is not a container and no affordance makes it one, so put's
-        // container guard can never hold: there is no plan.
-        let facts = Facts::default(); // CHEST lacks the container tag
-        let table = [take(), put()];
-        let plan = Planner::new(&table, &facts, &UnitCost).plan(
-            ACTOR,
-            &coin_in_chest_goal(),
-            &[],
-            &World::new(),
-        );
-        assert!(plan.is_none());
-    }
-
-    #[test]
-    fn a_negated_guard_that_holds_does_not_block() {
-        // The coin is not a fixture, so take's `¬fixture` guard holds and is not
-        // something the planner tries (and fails) to achieve.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
-        let table = [take(), put()];
-        let plan = Planner::new(&table, &facts, &UnitCost)
-            .plan(ACTOR, &coin_in_chest_goal(), &[], &World::new())
-            .expect("a plan exists");
         assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].affordance().as_str(), "take");
+        assert_eq!(plan[1].affordance().as_str(), "eat");
+        assert_eq!(plan[0].inputs(), &[Value::Entity(fixture.first)]);
+        assert_eq!(plan[1].inputs(), &[Value::Entity(fixture.first)]);
     }
 
     #[test]
-    fn binds_a_fungible_goal_slot_from_known_and_plans_for_it() {
-        // Goal: "hold some item" — ∃x. related(x, actor, contained_by) ∧ tag(x,
-        // item). The item tag is static (no affordance grants it), so it filters the
-        // candidates; the held relation is achievable, so take plans it. A known
-        // non-item (a rat) must be filtered out, not planned toward.
-        const RAT: EntityId = EntityId(4);
-        let mut facts = Facts::default();
-        facts.tags.insert((COIN, "item".into()));
-        // RAT is known but not an item; nothing tags it, so the filter rejects it.
+    fn excluding_one_grounding_preserves_another() {
+        let fixture = fixture(true);
+        let costs = UnitCost;
+        let planner = Planner::new(&costs);
+        let first_plan = planner
+            .plan(
+                &fixture.registry,
+                fixture.actor,
+                &fixture.goal,
+                &[fixture.first, fixture.second],
+                &fixture.world,
+            )
+            .unwrap();
+        let replacement = planner
+            .plan_excluding(
+                &fixture.registry,
+                fixture.actor,
+                &fixture.goal,
+                &[fixture.first, fixture.second],
+                &fixture.world,
+                &first_plan,
+            )
+            .unwrap();
 
-        let goal = Clause(vec![
-            Predicate::Related {
-                a: Term::var("x"),
-                b: Term::var("actor"),
-                kind: "contained_by".into(),
-            }
-            .into(),
-            Predicate::Tag {
-                e: Term::var("x"),
-                comp: "item".into(),
-            }
-            .into(),
-        ]);
-
-        let table = [take(), put()];
-        let known = [COIN, RAT];
-        let plan = Planner::new(&table, &facts, &UnitCost)
-            .plan(ACTOR, &goal, &known, &World::new())
-            .expect("a plan for the one known item");
-
-        let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
-        assert_eq!(names, ["take"]);
-        assert_eq!(plan[0].frame.object, Some(COIN)); // the item, not the rat
-    }
-
-    // The consume goal: fed(actor). Ground once the actor role is substituted, with
-    // no fungible slot of its own; the food only surfaces mid-search, in eat's guard.
-    fn fed_goal() -> Clause {
-        Clause(vec![
-            Predicate::Tag {
-                e: Term::var("actor"),
-                comp: "fed".into(),
-            }
-            .into(),
-        ])
-    }
-
-    #[test]
-    fn binds_a_guard_existential_mid_search() {
-        // Goal fed(actor) has no free var, so it regresses directly through eat.
-        // eat's fed(actor) effect binds only the actor, so its guard's food role is
-        // free *after* unification and must be bound mid-search against `known`,
-        // filtered by `edible`. The plan is take-the-berry then eat it, and the eat
-        // step is ground (its object is the berry, not a dangling role). A known
-        // non-edible (a pebble) is rejected.
-        let mut facts = Facts::default();
-        facts.tags.insert((BERRY, "edible".into()));
-        // PEBBLE is known but not edible, so the guard filter rejects it.
-        let table = [take(), eat()];
-        let known = [BERRY, PEBBLE];
-        let plan = Planner::new(&table, &facts, &UnitCost)
-            .plan(ACTOR, &fed_goal(), &known, &World::new())
-            .expect("a plan that eats the one edible thing");
-
-        let names: Vec<&str> = plan.iter().map(|s| s.affordance.name.as_str()).collect();
-        assert_eq!(names, ["take", "eat"]);
-        assert_eq!(plan[0].frame.object, Some(BERRY));
-        assert_eq!(plan[1].frame.object, Some(BERRY)); // the eat step is ground
-    }
-
-    #[test]
-    fn no_edible_known_yields_no_consume_plan() {
-        // Nothing edible is within reach, so eat's guard existential binds nothing
-        // and fed(actor) has no plan: the "nothing known fits" answer, mid-search.
-        let facts = Facts::default(); // BERRY not tagged edible
-        let table = [take(), eat()];
-        let plan = Planner::new(&table, &facts, &UnitCost).plan(
-            ACTOR,
-            &fed_goal(),
-            &[BERRY],
-            &World::new(),
-        );
-        assert!(plan.is_none());
-    }
-
-    #[test]
-    fn no_known_candidate_fits_the_goal_slot() {
-        // The one known entity is not an item, so the fungible slot binds nothing
-        // and there is no plan (the "nothing known fits" answer, not an error).
-        let facts = Facts::default(); // COIN lacks the item tag
-        let goal = Clause(vec![
-            Predicate::Related {
-                a: Term::var("x"),
-                b: Term::var("actor"),
-                kind: "contained_by".into(),
-            }
-            .into(),
-            Predicate::Tag {
-                e: Term::var("x"),
-                comp: "item".into(),
-            }
-            .into(),
-        ]);
-        let table = [take(), put()];
-        let plan =
-            Planner::new(&table, &facts, &UnitCost).plan(ACTOR, &goal, &[COIN], &World::new());
-        assert!(plan.is_none());
-    }
-
-    #[test]
-    fn an_excluded_step_is_routed_around_or_abandoned() {
-        // Two containers admit "coin in some container". Excluding the put into the
-        // first chest forces the planner onto the second; excluding both leaves no
-        // plan. This is the replan loop's mechanism in isolation.
-        const CHEST_B: EntityId = EntityId(5);
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
-        facts.tags.insert((CHEST_B, "container".into()));
-        let table = [take(), put()];
-        let planner = Planner::new(&table, &facts, &UnitCost);
-
-        // ∃t. related(coin, t, contained_by) ∧ tag(t, container).
-        let goal = Clause(vec![
-            Predicate::Related {
-                a: Term::Const(COIN),
-                b: Term::var("t"),
-                kind: "contained_by".into(),
-            }
-            .into(),
-            Predicate::Tag {
-                e: Term::var("t"),
-                comp: "container".into(),
-            }
-            .into(),
-        ]);
-        let known = [CHEST, CHEST_B];
-
-        let put_into = |target: EntityId| Step {
-            affordance: put(),
-            frame: Frame {
-                actor: ACTOR,
-                object: Some(COIN),
-                target: Some(target),
-            },
-        };
-
-        // Excluding the put into CHEST routes the plan onto CHEST_B.
-        let plan = planner
-            .plan_excluding(ACTOR, &goal, &known, &World::new(), &[put_into(CHEST)])
-            .expect("a plan routing around the excluded chest");
-        assert_eq!(plan.last().unwrap().frame.target, Some(CHEST_B));
-
-        // Excluding the put into both leaves no route.
-        let none = planner.plan_excluding(
-            ACTOR,
-            &goal,
-            &known,
-            &World::new(),
-            &[put_into(CHEST), put_into(CHEST_B)],
-        );
-        assert!(none.is_none());
-    }
-
-    #[test]
-    fn a_negated_precondition_that_fails_dead_ends() {
-        // Make the coin a fixture: take's `¬fixture` guard fails and nothing can
-        // un-fixture it, so the only chain to the goal is dead and no plan exists.
-        let mut facts = Facts::default();
-        facts.tags.insert((CHEST, "container".into()));
-        facts.tags.insert((COIN, "fixture".into()));
-        let table = [take(), put()];
-        let plan = Planner::new(&table, &facts, &UnitCost).plan(
-            ACTOR,
-            &coin_in_chest_goal(),
-            &[],
-            &World::new(),
-        );
-        assert!(plan.is_none());
+        assert_eq!(replacement.len(), 1);
+        assert_ne!(replacement[0].inputs(), first_plan[0].inputs());
     }
 }

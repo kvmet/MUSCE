@@ -1,8 +1,7 @@
 # The Arbiter
 
-> Status: **selection and commitment built; condition-formula goal integration
-> pending.** Goal selection
-> lives in `musce_agency` (`arbiter.rs`) as `Arbiter` / `Goal` / `Urgency`. The
+> Status: **built.** Selection, commitment, and canonical formula goal integration
+> live in `musce_agency` (`arbiter.rs`) as `Arbiter` / `Goal` / `Urgency`. The
 > reference magpie ([drives.md](drives.md)) feeds it two *competing* drives (hoard and
 > admire) on the sim tick, so hysteresis is no longer dormant: the arbiter holds a
 > commitment across ticks that a near-equal challenger cannot steal. Because agency
@@ -90,7 +89,7 @@ let mut arbiter = Arbiter::new(hysteresis);
 loop {                                   // once per agent tick (wiring deferred)
     let Some(goal) = arbiter.select(&candidate_goals) else { continue };
     match driver.pursue(actor, &goal.condition, &known, world, run) {
-        Progress::Achieved | Progress::Unmet | Progress::Abandoned => arbiter.release(),
+        Progress::Achieved | Progress::Abandoned => arbiter.release(),
     }
 }
 ```

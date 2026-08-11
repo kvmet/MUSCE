@@ -389,7 +389,7 @@ async fn a_wandering_creature_moves_with_no_input() {
     // Bounded-poll for the rat's autonomous step; it wanders on its own.
     let mut saw_wander = false;
     for _ in 0..20 {
-        if read_burst(&mut reader).await.contains("rat wanders") {
+        if read_burst(&mut reader).await.contains("rat leaves") {
             saw_wander = true;
             break;
         }

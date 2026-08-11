@@ -33,7 +33,7 @@ Touch the doc when you touch the code:
 | admin/builder verbs, the reflection/`SetComponent` layer | `admin-verbs.md` |
 | accounts, authentication, capabilities, the verdict/gate (`musce_auth`, `AccountStore`, `CapRegistry`) | `authorization.md` |
 | sequences, effects, timers | `sequences.md` |
-| the affordance vocabulary, predicates, `WorldModel`, guards, the dispatch veto | `affordances.md` |
+| the affordance vocabulary, formulas, registry, guards, and shared performer | `affordances.md` |
 | gauges (derived, read-only qualitative readings) vs stored components, directional effects | `gauges.md` |
 | the GOAP planner, `bind_var`, `CostModel`, drives, the arbiter | `agency/README.md` |
 | secondary indexes (`musce_index`), the `World` resource store, coordinates | `indexes.md` |

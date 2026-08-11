@@ -1,15 +1,12 @@
 # The Planner
 
-> Status: **target design specified; implementation pending.** The planner is a
-> bounded backward-regression search over typed affordance inputs/results and the
-> closed functional state-slot algebra.
-
-The built prototype already performs bounded backward regression over add-only
-`Related`/`Tag` predicates and fixed frames, with one free variable at most. It
-returns no plan at depth 8 or after 10,000 settled nodes and logs when either bound
-causes pruning, so resource exhaustion is distinguishable from an ordinary
-unreachable goal in operations. The representation and regression rules below are
-its pending replacement.
+> Status: **canonical categorical planner built.** It is a bounded backward-
+> regression search over canonical typed affordance schemas and emits grounded
+> canonical actions. Relation/component/locus/existence achievement, multiple
+> entity-input binding, existential entity goals, cost ordering, and exact-step
+> exclusions are built. Result references, finite-symbol enumeration, QSIM gauge
+> regression, and the complete interference rules in [regression.md](regression.md)
+> remain deferred.
 
 The planner finds a minimum-cost sequence of affordance steps whose contracted
 successful execution makes a goal condition hold. It manipulates the same canonical

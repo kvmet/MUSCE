@@ -1,49 +1,10 @@
-//! Eating: a hungry creature consumes a held edible thing and is sated. The
-//! grounded action a player's `eat` verb and the consume drive's plan both resolve
-//! to, so a scripted eat is vetoed exactly as a typed one. Unlike take/drop/put,
-//! eating's effect lands on the *eater* (a `Fed` marker), not on the food's
-//! location, which is why the planner must bind the food mid-search (see
-//! `docs/architecture/agency/planner.md`).
+//! Eating command parsing. The canonical app affordance owns applicability,
+//! mutation, advertised effects, and narration.
 
-use musce::action::{Ctx, Frame};
+use musce::action::Ctx;
 use musce::wire::EventKind;
-use musce::world::{EntityId, World};
 
-use crate::agency::{RefWorldModel, eat as eat_affordance};
-use crate::consume::Fed;
-use crate::kinds::Edible;
 use crate::names::{self, Scope};
-use crate::verbs::Outcome;
-
-/// Consume `food` for `actor`: sate the eater and use the food up. Vetoes through
-/// the `eat` affordance's guard (the food must be held and edible), read through
-/// the same `RefWorldModel` the planner reads, so a scripted eat is filtered
-/// exactly as a typed one. On commit the eater gains the `Fed` marker (the
-/// `fed(actor)` effect the planner chained toward) and the food loses its `Edible`
-/// tag (it is eaten down, not re-eatable). `Ctx`-free and silent; the caller
-/// narrates.
-///
-/// Eating deliberately does not despawn the food: the reference drives change
-/// component and containment state, never destroy, so the drive layer stays clear
-/// of the structural destruction reaction (`death_cry`), which is a separate
-/// concern. The spent crust remains as a plain, inedible thing.
-pub(crate) fn do_eat(world: &mut World, actor: EntityId, food: EntityId) -> Outcome {
-    let frame = Frame {
-        actor,
-        object: Some(food),
-        target: None,
-    };
-    if let Some(guard) = eat_affordance().veto(&frame, world, &RefWorldModel) {
-        return Outcome::Refused(guard.reason);
-    }
-    world
-        .remove::<Edible>(food)
-        .expect("the applicable eat frame names a live food");
-    world
-        .insert(actor, Fed)
-        .expect("the applicable eat frame names a live actor");
-    Outcome::Committed
-}
 
 /// `eat <food>`: eat a held edible thing. Resolves in inventory scope (you eat what
 /// you carry), mirroring `drop`, which keeps the verb consistent with `eat`'s
@@ -59,22 +20,19 @@ pub fn eat(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let actor = ctx.actor();
-    let frame = Frame {
-        actor,
-        object: Some(target),
-        target: None,
-    };
-    let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::eat(), &frame, out);
+    let action = crate::affordances::eat_action(ctx.actor(), target);
+    crate::affordances::perform_command(ctx, &action, "You can't eat that.");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kinds::{Creature, Item};
+    use crate::consume::Fed;
+    use crate::kinds::{Creature, Edible, Item};
+    use musce::action::{PerformOutcome, Refusal, SystemCtx, Verdict};
     use musce::world::hecs::EntityBuilder;
-    use musce::world::{Description, Locus, Name};
+    use musce::world::{Description, EntityId, Locus, Name, World};
+    use std::time::SystemTime;
 
     struct Fixture {
         world: World,
@@ -118,14 +76,33 @@ mod tests {
         w.spawn(b)
     }
 
+    fn perform(world: &mut World, actor: EntityId, food: EntityId) -> PerformOutcome {
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
+        let mut out = Vec::new();
+        let mut ctx = SystemCtx::new(
+            world,
+            &affordances,
+            1,
+            SystemTime::UNIX_EPOCH,
+            &[],
+            &mut out,
+        );
+        ctx.perform(
+            &Verdict::guest(),
+            &crate::affordances::eat_action(actor, food),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn eating_a_held_edible_sates_the_eater_and_spends_it() {
         let mut f = fixture();
         // Put the crumb in the mouse's hands, then eat it.
         f.world.move_entity(f.crumb, f.mouse).unwrap();
 
-        let out = do_eat(&mut f.world, f.mouse, f.crumb);
-        assert!(matches!(out, Outcome::Committed));
+        let out = perform(&mut f.world, f.mouse, f.crumb);
+        assert!(matches!(out, PerformOutcome::Committed(_)));
         assert!(f.world.has::<Fed>(f.mouse), "the eater is now fed");
         assert!(
             !f.world.has::<Edible>(f.crumb),
@@ -139,8 +116,11 @@ mod tests {
     fn eating_an_unheld_thing_is_refused() {
         // The crust is on the floor, not held: the guard's held literal fails.
         let mut f = fixture();
-        let out = do_eat(&mut f.world, f.mouse, f.crumb);
-        assert!(matches!(out, Outcome::Refused(_)));
+        let out = perform(&mut f.world, f.mouse, f.crumb);
+        assert!(matches!(
+            out,
+            PerformOutcome::Refused(Refusal::Guard { .. })
+        ));
         assert!(!f.world.has::<Fed>(f.mouse));
         assert!(f.world.has::<Edible>(f.crumb)); // untouched
     }
@@ -156,8 +136,11 @@ mod tests {
         });
         f.world.move_entity(pebble, f.mouse).unwrap();
 
-        let out = do_eat(&mut f.world, f.mouse, pebble);
-        assert!(matches!(out, Outcome::Refused(_)));
+        let out = perform(&mut f.world, f.mouse, pebble);
+        assert!(matches!(
+            out,
+            PerformOutcome::Refused(Refusal::Guard { .. })
+        ));
         assert!(!f.world.has::<Fed>(f.mouse));
     }
 
@@ -172,7 +155,8 @@ mod tests {
 
         let mut out: Vec<Outbound> = Vec::new();
         let verdict = Verdict::guest();
-        let affordances = musce::action::AffordanceRegistry::empty(&f.world).unwrap();
+        let affordances =
+            crate::affordances::build(&f.world, &musce::action::CapRegistry::new()).unwrap();
         let mut ctx = Ctx::new(
             &mut f.world,
             &affordances,

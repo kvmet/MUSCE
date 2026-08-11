@@ -91,7 +91,7 @@ pub fn inventory(ctx: &mut Ctx, _args: &str) {
 /// Build a room's look text: its description, its exits, and the other things in
 /// it. Shared by `look` and the auto-look on arrival. `None` if the viewer is not
 /// in a room.
-fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
+pub(crate) fn describe_room(world: &World, viewer: EntityId) -> Option<String> {
     let room = world.enclosing_locus(viewer)?;
 
     let mut s = description_or(world, room, "An indistinct space.");

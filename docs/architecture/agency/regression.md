@@ -1,8 +1,9 @@
 # Regression Semantics
 
-> Status: **target design specified; implementation pending.** This document
-> defines how the backward planner regresses functional slot assignments,
-> qualitative gauges, and derived locus changes.
+> Status: **foundational categorical regression built; advanced rules pending.**
+> Direct relation/component/locus/existence assignment achievement is built.
+> Full side-effect interference, inequality achievement, qualitative gauges,
+> descendant-aware locus validation, and fresh-result regression remain pending.
 
 The planner first selects candidate affordances through the reverse effect index
 described in [planner.md](planner.md). It then applies the assignment and derived

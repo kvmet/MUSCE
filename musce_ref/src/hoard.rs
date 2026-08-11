@@ -15,20 +15,16 @@
 //! what the bird is committed to are all game content over `musce_agency`'s generic
 //! mechanism.
 
-use std::cell::RefCell;
-
-use musce::action::SystemCtx;
-use musce::agency::{
-    Arbiter, Beat, Clause, Driver, Goal, Planner, Predicate, Progress, Term, UnitCost,
+use musce::action::schema::{
+    ComponentId, Condition, Formula, Local, LocalId, OptionalEntity, RelationId, Term, ValueSort,
 };
-use musce::wire::EventKind;
-use musce::world::{Cascade, Controls, EntityId, Id, NamedComponent, Relation, World};
+use musce::action::{PerformOutcome, SystemCtx, Verdict};
+use musce::agency::{Arbiter, Beat, Driver, Goal, Next, Planner, Progress, UnitCost};
+use musce::world::{Cascade, Containment, Controls, EntityId, Id, NamedComponent, Relation, World};
 use serde::{Deserialize, Serialize};
 
-use crate::agency::{RefWorldModel, known_here, perform, put, take};
+use crate::agency::known_here;
 use crate::kinds::Shiny;
-use crate::names::display_name;
-use crate::verbs::Outcome;
 
 /// A creature that hoards, carrying its current urge to do so. Its presence opts a
 /// creature into the [`hoard_drive`], exactly as [`Wander`](crate::systems::Wander)
@@ -148,19 +144,22 @@ pub fn hoard_drive(world: &World, bird: EntityId) -> Option<Goal> {
         return None;
     }
     let nest = world.target_of::<Nest>(bird)?;
-    let predicate = Clause(vec![
-        Predicate::Related {
-            a: Term::var("x"),
-            b: Term::Const(nest),
-            kind: "contained_by".into(),
-        }
-        .into(),
-        Predicate::Tag {
-            e: Term::var("x"),
-            comp: "shiny".into(),
-        }
-        .into(),
-    ]);
+    let x = LocalId::new("x").expect("static local id");
+    let predicate = Formula::new(
+        vec![Local::new(x.clone(), ValueSort::Entity)],
+        vec![
+            Condition::RelationTarget {
+                source: Term::Local(x.clone()),
+                relation: RelationId::new(Containment::TARGET_TAG).expect("static relation id"),
+                target: OptionalEntity::Is(Term::Constant(nest.into())),
+            },
+            Condition::ComponentPresent {
+                entity: Term::Local(x),
+                component: ComponentId::new(Shiny::TAG).expect("static component id"),
+                present: true,
+            },
+        ],
+    );
     Some(Goal {
         predicate,
         urgency: urge,
@@ -181,19 +180,22 @@ pub fn admire_drive(world: &World, bird: EntityId) -> Option<Goal> {
     if itch < THRESHOLD {
         return None;
     }
-    let predicate = Clause(vec![
-        Predicate::Related {
-            a: Term::var("x"),
-            b: Term::var("actor"),
-            kind: "contained_by".into(),
-        }
-        .into(),
-        Predicate::Tag {
-            e: Term::var("x"),
-            comp: "shiny".into(),
-        }
-        .into(),
-    ]);
+    let x = LocalId::new("x").expect("static local id");
+    let predicate = Formula::new(
+        vec![Local::new(x.clone(), ValueSort::Entity)],
+        vec![
+            Condition::RelationTarget {
+                source: Term::Local(x.clone()),
+                relation: RelationId::new(Containment::TARGET_TAG).expect("static relation id"),
+                target: OptionalEntity::Is(Term::Actor),
+            },
+            Condition::ComponentPresent {
+                entity: Term::Local(x),
+                component: ComponentId::new(Shiny::TAG).expect("static component id"),
+                present: true,
+            },
+        ],
+    );
     Some(Goal {
         predicate,
         urgency: itch,
@@ -268,38 +270,35 @@ fn magpie_known(world: &World, bird: EntityId) -> Vec<EntityId> {
     known
 }
 
-/// Plan and run the committed goal through the *silent* [`perform`], returning how it
-/// ended and the object of the last committed beat (what the bird actually moved, for
-/// narration). This is the deliberate flavor-override path: the magpie's line is
-/// goal-flavored ("tucks it into its nest" for a `put` serving the hoard drive, not
-/// the default "puts it in the nest"), which the affordance-level narrator cannot
-/// express, so the bird keeps its beats silent and emits one evocative line itself
-/// (see [`hoard`] and `crate::act`). The whole plan runs in this one call;
-/// interleaving it a beat per tick is the deferred sim refinement (see
-/// `docs/architecture/agency/execution.md`).
-fn pursue_goal(world: &mut World, bird: EntityId, goal: &Clause) -> (Progress, Option<EntityId>) {
-    let table = [take(), put()];
-    let known = magpie_known(world, bird);
-    let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
-    let driver = Driver::new(&planner);
-
-    // The object of the last beat that committed, captured so the narration names what
-    // the bird acted on after the pursuit frees the world borrow.
-    let acted: RefCell<Option<EntityId>> = RefCell::new(None);
-    let progress = driver.pursue(bird, goal, &known, world, |world, step| {
-        let out = perform(world, &step.affordance, &step.frame);
-        if matches!(out, Outcome::Committed)
-            && let Some(item) = step.frame.object
-        {
-            *acted.borrow_mut() = Some(item);
+/// Plan and run the committed goal through canonical actions. Each beat uses the
+/// affordance's fixed narration regardless of who initiated it. The whole plan
+/// runs in this one call; interleaving it a beat per tick remains an app-level
+/// scheduling choice.
+fn pursue_goal(ctx: &mut SystemCtx<'_>, bird: EntityId, goal: &Formula) -> Progress {
+    let costs = UnitCost;
+    let planner = Planner::new(&costs);
+    let mut pursuit = Driver::new(bird, goal.clone());
+    loop {
+        let next = {
+            let (world, registry) = ctx.planning();
+            let known = magpie_known(world, bird);
+            pursuit.next(&planner, registry, &known, world)
+        };
+        match next {
+            Next::Action(action) => {
+                let beat = match ctx.perform(&Verdict::guest(), &action) {
+                    Ok(PerformOutcome::Committed(_)) => Beat::Committed,
+                    Ok(PerformOutcome::Refused(_)) => Beat::Refused,
+                    Err(error) => {
+                        tracing::error!(error = %error, "hoard pursuit action failed");
+                        Beat::Refused
+                    }
+                };
+                pursuit.record(beat);
+            }
+            Next::Complete(progress) => return progress,
         }
-        match out {
-            Outcome::Committed => Beat::Committed,
-            Outcome::Refused(_) => Beat::Refused,
-        }
-    });
-    let acted = *acted.borrow();
-    (progress, acted)
+    }
 }
 
 /// Run every uncontrolled magpie one turn of the agency loop, on ticks that are a
@@ -334,25 +333,10 @@ pub fn hoard(ctx: &mut SystemCtx) {
 
         // Drives -> arbiter (resumed from the persisted commitment) -> driver ->
         // perform. Commitment is what stops the two drives thrashing the bead.
-        let Some((drive, goal)) = commit_and_select(ctx.world, bird, HYSTERESIS) else {
+        let Some((_drive, goal)) = commit_and_select(ctx.world, bird, HYSTERESIS) else {
             continue;
         };
-        let (progress, acted) = pursue_goal(ctx.world, bird, &goal.predicate);
-
-        // Narrate only a beat that actually moved something (an already-satisfied goal
-        // runs an empty plan and moves nothing), by the drive it served.
-        if progress == Progress::Achieved
-            && let Some(item) = acted
-            && let Some(room) = ctx.world.enclosing_locus(bird)
-        {
-            let who = display_name(ctx.world, bird);
-            let what = display_name(ctx.world, item);
-            let text = match drive {
-                Drive::Hoard => format!("{who} tucks {what} into its nest."),
-                Drive::Admire => format!("{who} turns {what} over, admiring it."),
-            };
-            ctx.emit_locus(room, EventKind::Narration, text);
-        }
+        let _progress = pursue_goal(ctx, bird, &goal.predicate);
     }
 }
 
@@ -434,9 +418,7 @@ mod tests {
     /// makes it contend with hoarding (the two-drive oracle).
     fn fixture_with(itch: u32) -> Fixture {
         let mut world = World::new();
-        register(&mut world);
-        crate::kinds::register(&mut world);
-        crate::names::register(&mut world);
+        crate::systems::register(&mut world);
 
         let room = spawn(&mut world, |b| {
             b.add(Locus);
@@ -491,7 +473,8 @@ mod tests {
 
     /// Run `hoard` at an explicit tick, returning its emitted outbound buffer.
     fn tick(world: &mut World, tick: u64) -> Vec<Outbound> {
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
         let mut out = Vec::new();
         let mut ctx = SystemCtx::new(
             world,
@@ -549,7 +532,7 @@ mod tests {
         assert!(
             room_narration(&out)
                 .iter()
-                .any(|t| t.contains("a magpie tucks a glass bead into its nest")),
+                .any(|t| t.contains("a magpie puts a glass bead in a twiggy nest")),
             "stow narration, got: {:?}",
             room_narration(&out)
         );
@@ -696,7 +679,18 @@ mod tests {
                 .find(|(_, goal)| goal.predicate == chosen.predicate)
                 .map(|(_, goal)| goal)
                 .expect("the chosen goal came from a candidate");
-            pursue_goal(world, bird, &goal.predicate);
+            let affordances =
+                crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
+            let mut out = Vec::new();
+            let mut ctx = SystemCtx::new(
+                world,
+                &affordances,
+                tick,
+                SystemTime::UNIX_EPOCH,
+                &[],
+                &mut out,
+            );
+            pursue_goal(&mut ctx, bird, &goal.predicate);
         }
     }
 }

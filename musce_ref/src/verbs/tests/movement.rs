@@ -31,9 +31,7 @@ fn go_invalid_exit_rejects() {
 
 /// Half of the shared-rule guarantee: a locked exit vetoes the player. The
 /// `wander` twin (`a_locked_exit_keeps_it_put` in systems.rs) proves the same
-/// veto stops a scripted/ambient mover, which is the bug routing both through
-/// `do_move` fixes. The veto is now the `go` affordance's `¬ tag(exit, "locked")`
-/// guard, which reads the marker by name, so the fixture registers components.
+/// veto stops a scripted/ambient mover through the same canonical `go` guard.
 #[test]
 fn go_through_a_locked_exit_rejects() {
     let mut f = fixture();

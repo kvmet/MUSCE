@@ -16,13 +16,13 @@
 //! content over `musce_agency`'s generic mechanism; the mid-search binding it leans
 //! on is the one new engine-side capability.
 
-use musce::action::{Outbound, SystemCtx};
-use musce::agency::{Beat, Clause, Driver, Goal, Planner, Predicate, Term, UnitCost};
+use musce::action::schema::{ComponentId, Condition, Formula, Term};
+use musce::action::{PerformOutcome, SystemCtx, Verdict};
+use musce::agency::{Beat, Driver, Goal, Next, Planner, UnitCost};
 use musce::world::{Controls, EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
-use crate::agency::{RefWorldModel, eat, known_here, take};
-use crate::verbs::Outcome;
+use crate::agency::known_here;
 
 /// A creature that gets hungry, carrying its current pang. Its presence opts a
 /// creature into the [`consume_drive`], exactly as [`Hoarder`](crate::hoard::Hoarder)
@@ -92,13 +92,11 @@ pub fn consume_drive(world: &World, eater: EntityId) -> Option<Goal> {
     if pang < THRESHOLD {
         return None;
     }
-    let predicate = Clause(vec![
-        Predicate::Tag {
-            e: Term::var("actor"),
-            comp: "fed".into(),
-        }
-        .into(),
-    ]);
+    let predicate = Formula::all(vec![Condition::ComponentPresent {
+        entity: Term::Actor,
+        component: ComponentId::new(Fed::TAG).expect("static component id"),
+        present: true,
+    }]);
     Some(Goal {
         predicate,
         urgency: pang,
@@ -110,27 +108,32 @@ pub fn consume_drive(world: &World, eater: EntityId) -> Option<Goal> {
 /// player eating would produce (an already-fed creature runs an empty plan and
 /// narrates nothing). The whole plan runs in this one call, as the magpie's does;
 /// interleaving it a beat per tick is the deferred sim refinement.
-fn pursue_goal(world: &mut World, out: &mut Vec<Outbound>, eater: EntityId, goal: &Clause) {
-    let table = [take(), eat()];
-    let known = known_here(world, eater);
-    let planner = Planner::new(&table, &RefWorldModel, &UnitCost);
-    let driver = Driver::new(&planner);
-    driver.pursue(
-        eater,
-        goal,
-        &known,
-        world,
-        |world, step| match crate::act::perform_narrated(
-            world,
-            eater,
-            &step.affordance,
-            &step.frame,
-            out,
-        ) {
-            Outcome::Committed => Beat::Committed,
-            Outcome::Refused(_) => Beat::Refused,
-        },
-    );
+fn pursue_goal(ctx: &mut SystemCtx<'_>, eater: EntityId, goal: &Formula) {
+    let costs = UnitCost;
+    let planner = Planner::new(&costs);
+    let mut pursuit = Driver::new(eater, goal.clone());
+    loop {
+        let next = {
+            let (world, registry) = ctx.planning();
+            let mut known = known_here(world, eater);
+            known.extend_from_slice(world.contents(eater));
+            pursuit.next(&planner, registry, &known, world)
+        };
+        match next {
+            Next::Action(action) => {
+                let beat = match ctx.perform(&Verdict::guest(), &action) {
+                    Ok(PerformOutcome::Committed(_)) => Beat::Committed,
+                    Ok(PerformOutcome::Refused(_)) => Beat::Refused,
+                    Err(error) => {
+                        tracing::error!(error = %error, "consume pursuit action failed");
+                        Beat::Refused
+                    }
+                };
+                pursuit.record(beat);
+            }
+            Next::Complete(_) => return,
+        }
+    }
 }
 
 /// Run every uncontrolled hungry creature one turn of the consume loop, on ticks
@@ -152,26 +155,23 @@ pub fn consume(ctx: &mut SystemCtx) {
         .map(|(id, _)| id.0)
         .collect();
 
-    // Split the world and the output buffer once: the driver's per-beat narration
-    // emits into `out` while the pursuit mutates `world`.
-    let (world, out) = ctx.world_and_out();
     for eater in eaters {
         // A controller halts it, exactly as it halts a wanderer or a magpie.
-        if world.target_of::<Controls>(eater).is_some() {
+        if ctx.world.target_of::<Controls>(eater).is_some() {
             continue;
         }
 
         // Metabolism moves the pang from the current world state: up while hungry,
         // down once fed, so relief is a property of the world (read here), never of
         // the drive or the driver.
-        metabolize(world, eater);
+        metabolize(ctx.world, eater);
 
-        let Some(goal) = consume_drive(world, eater) else {
+        let Some(goal) = consume_drive(ctx.world, eater) else {
             continue;
         };
         // The narrated perform emits each beat (the take, then the eat) to the room
         // itself, so there is no terminal narration to reconstruct here.
-        pursue_goal(world, out, eater, &goal.predicate);
+        pursue_goal(ctx, eater, &goal.predicate);
     }
 }
 
@@ -221,9 +221,7 @@ mod tests {
     /// so the mouse knows the bread.
     fn fixture() -> Fixture {
         let mut world = World::new();
-        register(&mut world);
-        crate::kinds::register(&mut world);
-        crate::names::register(&mut world);
+        crate::systems::register(&mut world);
 
         let room = spawn(&mut world, |b| {
             b.add(Locus);
@@ -261,7 +259,8 @@ mod tests {
 
     /// Run `consume` at an explicit tick, returning its emitted outbound buffer.
     fn tick(world: &mut World, tick: u64) -> Vec<Outbound> {
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
         let mut out = Vec::new();
         let mut ctx = SystemCtx::new(
             world,
@@ -341,9 +340,8 @@ mod tests {
 
     /// The room hears *every* beat, not just the last. The mouse must take the loose
     /// crust before it can eat it, so the two-beat plan narrates the take and the eat
-    /// in turn, the same lines a player would produce. Before the shared narrator the
-    /// drive reconstructed one terminal line and the intermediate take was silent (an
-    /// NPC grabbed its food invisibly). Both beats are the default affordance prose.
+    /// in turn, the same lines a player would produce. Both beats are the canonical
+    /// affordance prose.
     #[test]
     fn the_room_hears_each_beat_of_the_meal() {
         let mut f = fixture();

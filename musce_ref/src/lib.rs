@@ -5,7 +5,6 @@
 //! content-free; a real game forks this crate and replaces its content. See
 //! `docs/architecture/engine-and-app.md`.
 
-mod act;
 mod admin;
 mod affordances;
 pub mod agency;

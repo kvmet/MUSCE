@@ -106,8 +106,8 @@ impl Default for CommandTable {
 
 /// Dispatch one command line against a command table for a [`Caller`]: look the verb
 /// up, gate-check it on the caller's verdict, run its handler to gather semantic
-/// output, then resolve those events' audiences to connections through `emit`. Frame
-/// selection (`@`-floor vs embodiment vs admin) is the host's job; this runs
+/// output, then resolve those events' audiences to connections through `emit`. Input
+/// stack selection (`@`-floor vs embodiment vs admin) is the host's job; this runs
 /// whichever table the host hands it, so it serves both the bare embodiment frame
 /// (the app table) and the admin frame (the `@`-verb table), the gate carrying the
 /// difference.

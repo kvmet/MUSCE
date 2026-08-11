@@ -1,51 +1,11 @@
-//! Containers: moving a held thing into a container (`put`) or into someone's
-//! hands (`give`). Both are one `Move` under a game rule about what the
-//! destination accepts, the same shape as `take`/`drop`: `put` accepts anything
-//! marked `Container`; `give` is the reference app's first typed canonical
-//! affordance. The rules are game policy, not part of `execute`. See
-//! `docs/architecture/actions.md`.
+//! Container command parsing. The `put` and `give` affordances own their rules,
+//! structural mutations, and fixed narration.
 
-use musce::action::{Action, Ctx, Frame, PerformOutcome, Refusal, execute};
+use musce::action::Ctx;
 use musce::wire::EventKind;
 use musce::world::{EntityId, World};
 
-use crate::agency::RefWorldModel;
 use crate::names::{self, Scope};
-use crate::verbs::Outcome;
-
-/// Put `item` into `container`, subject to the put rule. The grounded action a
-/// player's `put` verb and an agent's plan both resolve to, so a scripted put is
-/// vetoed exactly as a typed one. `Ctx`-free and silent; the caller narrates.
-pub(crate) fn do_put(
-    world: &mut World,
-    actor: EntityId,
-    item: EntityId,
-    container: EntityId,
-) -> Outcome {
-    // The gameplay veto (item held, destination is a container) is the `put`
-    // affordance's guards, read through the same `RefWorldModel` the planner
-    // reads, so verb and plan cannot disagree on what `put` permits.
-    let frame = Frame {
-        actor,
-        object: Some(item),
-        target: Some(container),
-    };
-    if let Some(guard) = crate::agency::put().veto(&frame, world, &RefWorldModel) {
-        return Outcome::Refused(guard.reason);
-    }
-    // Putting a held container into itself would cycle; the executor rejects it,
-    // and "you can't put that there" is the right thing for the player to hear.
-    match execute(
-        world,
-        Action::Move {
-            entity: item,
-            into: container,
-        },
-    ) {
-        Ok(_) => Outcome::Committed,
-        Err(_) => Outcome::Refused("You can't put that there."),
-    }
-}
 
 /// `put <item> in <container>`: move a held thing into a container in reach. The
 /// item comes from the actor's hands; the container may be held (a pack) or on the
@@ -74,14 +34,8 @@ pub fn put(ctx: &mut Ctx, args: &str) {
         return;
     };
 
-    let actor = ctx.actor();
-    let frame = Frame {
-        actor,
-        object: Some(item),
-        target: Some(container),
-    };
-    let (world, out) = ctx.world_and_out();
-    crate::act::perform_narrated(world, actor, &crate::agency::put(), &frame, out);
+    let action = crate::affordances::put_action(ctx.actor(), item, container);
+    crate::affordances::perform_command(ctx, &action, "You can't put that there.");
 }
 
 /// `give <item> to <someone>`: hand a held thing to a being in the room.
@@ -112,20 +66,7 @@ pub fn give(ctx: &mut Ctx, args: &str) {
         return;
     };
     let action = crate::affordances::give_action(ctx.actor(), item, recipient);
-    match ctx.perform(&action) {
-        Ok(PerformOutcome::Committed(_)) => {}
-        Ok(PerformOutcome::Refused(Refusal::Guard { reason, .. }))
-        | Ok(PerformOutcome::Refused(Refusal::Resolution { reason })) => {
-            ctx.emit_self(EventKind::Feedback, reason);
-        }
-        Ok(PerformOutcome::Refused(Refusal::Gate)) => {
-            ctx.emit_self(EventKind::Feedback, "You aren't allowed to do that.");
-        }
-        Err(error) => {
-            tracing::error!(error = %error, "canonical give failed");
-            ctx.emit_self(EventKind::Feedback, "You can't give that away.");
-        }
-    }
+    crate::affordances::perform_command(ctx, &action, "You can't give that away.");
 }
 
 /// Split `args` on the first occurrence of `sep` into two trimmed, non-empty
@@ -166,8 +107,8 @@ mod tests {
 
     /// A room holding the actor (carrying a coin), a chest (a `Container`), and a
     /// giant rat (a `Creature`, so a valid gift recipient). Components are
-    /// registered as at boot, so `put`'s guard can read the container tag by name
-    /// through `RefWorldModel`.
+    /// registered as at boot, so the canonical `put` guard can read its typed
+    /// container component.
     fn fixture() -> Fixture {
         let mut world = World::new();
         crate::systems::register(&mut world);
@@ -255,9 +196,8 @@ mod tests {
         (result, out)
     }
 
-    // Directed lines, whether connection- or entity-addressed: `put` narrates its
-    // first person to the actor entity through the shared narrator, while `give`
-    // still emits its own connection-addressed feedback.
+    // Directed lines, whether connection- or entity-addressed. Canonical
+    // affordance narrators address first person to the actor entity.
     fn feedback(out: &[Outbound]) -> Vec<String> {
         out.iter()
             .filter(|o| matches!(o.event.to, Audience::Connection(_) | Audience::Entity(_)))
@@ -445,149 +385,5 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("Give what to whom?"))
         );
-    }
-
-    // Guard/handler agreement: does an affordance's `veto`, read through
-    // `RefWorldModel`, produce the same permit/refuse (and the same message) the
-    // imperative handler produces? These pin what the current predicate vocabulary
-    // can and cannot express as a gameplay veto, and that `put`'s handler now
-    // shares its container check with the affordance the planner reads.
-
-    /// `put`'s veto is two guards the vocabulary expresses in full (item held AND
-    /// destination is a container), each carrying the message the handler shows.
-    /// The `veto` agrees with the handler on every gameplay case.
-    #[test]
-    fn put_guards_predict_the_gameplay_veto() {
-        use crate::agency::{RefWorldModel, put as put_aff};
-        use musce::agency::Frame;
-
-        // Held item + container destination: no veto, and it commits.
-        {
-            let mut f = fixture();
-            let frame = Frame {
-                actor: f.actor,
-                object: Some(f.coin),
-                target: Some(f.chest),
-            };
-            let veto = put_aff()
-                .veto(&frame, &f.world, &RefWorldModel)
-                .map(|g| g.reason);
-            run(&mut f.world, f.actor, |c| put(c, "coin in chest"));
-            let committed = f.world.container_of(f.coin) == Some(f.chest);
-            assert!(
-                veto.is_none() && committed,
-                "veto {veto:?}, committed {committed}"
-            );
-        }
-        // Held item + non-container destination (a creature): the container guard
-        // vetoes with exactly the message the handler shows, and nothing commits.
-        {
-            let mut f = fixture();
-            let frame = Frame {
-                actor: f.actor,
-                object: Some(f.coin),
-                target: Some(f.rat),
-            };
-            let veto = put_aff()
-                .veto(&frame, &f.world, &RefWorldModel)
-                .map(|g| g.reason);
-            let out = run(&mut f.world, f.actor, |c| put(c, "coin in rat"));
-            let committed = f.world.container_of(f.coin) == Some(f.rat);
-            assert_eq!(veto, Some("You can't put things in that."));
-            assert!(!committed);
-            assert!(
-                feedback(&out)
-                    .iter()
-                    .any(|t| t == "You can't put things in that.")
-            );
-        }
-        // Item not held (a container on the floor): the held guard vetoes first.
-        {
-            let f = fixture();
-            let frame = Frame {
-                actor: f.actor,
-                object: Some(f.chest),
-                target: Some(f.chest),
-            };
-            let veto = put_aff()
-                .veto(&frame, &f.world, &RefWorldModel)
-                .map(|g| g.reason);
-            assert_eq!(veto, Some("You aren't carrying that."));
-        }
-    }
-
-    /// The one refusal a guard should NOT capture: the containment cycle is a
-    /// structural invariant the executor re-checks at commit, not a gameplay rule.
-    /// The guards permit, the handler refuses, and that divergence is the boundary
-    /// between what belongs in a guard and what does not.
-    #[test]
-    fn put_guards_do_not_capture_the_structural_cycle() {
-        use crate::agency::{RefWorldModel, put as put_aff};
-        use musce::agency::Frame;
-
-        let mut f = fixture();
-        let bag = spawn(&mut f.world, |b| {
-            b.add(Container);
-            b.add(Name("a leather bag".into()));
-        });
-        f.world.move_entity(bag, f.actor).unwrap();
-
-        let frame = Frame {
-            actor: f.actor,
-            object: Some(bag),
-            target: Some(bag),
-        };
-        let veto = put_aff()
-            .veto(&frame, &f.world, &RefWorldModel)
-            .map(|g| g.reason);
-        run(&mut f.world, f.actor, |c| put(c, "bag in bag"));
-        let committed = f.world.container_of(bag) == Some(bag);
-
-        assert!(
-            veto.is_none(),
-            "bag is held and is a container: guards permit"
-        );
-        assert!(!committed, "the cycle is a structural refusal at commit");
-    }
-
-    /// `drop`'s veto (the item is held) is a single relation guard, fully
-    /// expressible; the `veto` agrees with the handler.
-    #[test]
-    fn drop_guard_predicts_the_veto() {
-        use crate::agency::{RefWorldModel, drop as drop_aff};
-        use crate::verbs::drop;
-        use musce::agency::Frame;
-
-        // Held item: no veto, and it lands in the room.
-        {
-            let mut f = fixture();
-            let frame = Frame {
-                actor: f.actor,
-                object: Some(f.coin),
-                target: Some(f.room),
-            };
-            let veto = drop_aff()
-                .veto(&frame, &f.world, &RefWorldModel)
-                .map(|g| g.reason);
-            run(&mut f.world, f.actor, |c| drop(c, "coin"));
-            let committed = f.world.container_of(f.coin) == Some(f.room);
-            assert!(
-                veto.is_none() && committed,
-                "veto {veto:?}, committed {committed}"
-            );
-        }
-        // Item on the floor, not held: the held guard vetoes.
-        {
-            let f = fixture();
-            let frame = Frame {
-                actor: f.actor,
-                object: Some(f.chest),
-                target: Some(f.room),
-            };
-            let veto = drop_aff()
-                .veto(&frame, &f.world, &RefWorldModel)
-                .map(|g| g.reason);
-            assert_eq!(veto, Some("You aren't carrying that."));
-        }
     }
 }

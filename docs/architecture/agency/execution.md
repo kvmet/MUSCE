@@ -1,14 +1,9 @@
 # Execution and Replanning
 
-> Status: **target grounded-step integration specified; implementation pending.**
-> The driver executes canonical actions, binds results, and replans around
-> contested outcomes or changed live state.
-
-The built prototype driver executes fixed-frame steps and replans around a refused
-beat. After every beat in a plan commits, it evaluates the original goal against
-the live world (including its supported single existential binding) and returns
-`Achieved` only when the goal actually holds; `Unmet` exposes interference or a
-broken effect contract. Canonical result bindings remain pending below.
+> Status: **canonical pursuit state machine built.** It owns no world or registry
+> borrow, yields one grounded canonical action at a time, records committed or
+> refused beats, excludes refused groundings, and replans from live state. Result
+> references and persisted one-beat scheduling remain deferred.
 
 The driver is the executing half of agency. Given a committed goal, it asks the
 planner for a transient plan, runs its steps through the app's shared affordance
@@ -85,7 +80,7 @@ own node/depth bounds. `MAX_REPLANS` provides an outer bound.
 The driver therefore reports:
 
 ```text
-Progress = Achieved | Unmet | Abandoned
+Progress = Achieved | Abandoned
 ```
 
 An already-satisfied goal produces an empty plan and `Achieved`. Exhausting every
@@ -131,18 +126,24 @@ therefore describes the immediate successful commit.
 ## API shape
 
 ```rust
-Driver::new(&planner).pursue(
-    actor,
-    goal,
-    known,
-    &mut world,
-    run_grounded_action,
-) -> Progress
+let mut pursuit = Driver::new(actor, goal);
+loop {
+    let known = app_knowledge(world, actor);
+    match pursuit.next(&planner, registry, &known, world) {
+        Next::Action(action) => {
+            let beat = perform_through_context(action);
+            pursuit.record(beat);
+        }
+        Next::Complete(progress) => break progress,
+    }
+}
 ```
 
-`run_grounded_action` is app-supplied, preserving the crate boundary: the generic
-driver knows the canonical affordance representation but not concrete app handlers
-or outcome prose.
+The caller owns scheduling and execution authority. The generic pursuit sees the
+canonical registry and world only while proposing a beat; it never receives an
+app handler callback or a narration override. Knowledge candidates are supplied
+for each `next` decision rather than stored in the pursuit, so a replan observes
+the app's current perception policy after movement or intervening world changes.
 
 ## Falsifiability
 

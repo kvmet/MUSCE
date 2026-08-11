@@ -1,9 +1,8 @@
 # Affordance Instances and Grounded Execution
 
-> Status: **target design specified; implementation pending.** Concrete app
-> affordances will be expressed with the engine-owned input/result and functional
-> state-slot representation described in
-> [../affordances.md](../affordances.md).
+> Status: **built for the reference categorical actions.** Concrete app
+> affordances use the engine-owned input/result and functional state-slot
+> representation described in [../affordances.md](../affordances.md).
 
 An affordance is the shared gameplay act beneath every front end. A text command,
 a clicked control, a script, and an autonomous plan may bind it differently, but
@@ -45,7 +44,7 @@ roles:
 | `go` | `exit: Entity`, `destination: Entity` | actor becomes located at destination |
 | `open` | `door: Entity` | `Locked` is removed from door |
 | `unlock` | `door: Entity`, `key: Entity` | `Locked` is removed from door |
-| `eat` | `food: Entity` | food is destroyed; actor's hunger gauge shifts down |
+| `eat` | `food: Entity` | food loses `Edible`; actor gains `Fed` |
 | `hang` | `item: Entity`, `support: Entity`, `fastener: Entity` | item's mounted relation slot is assigned to support |
 | `say` | `text: Text` | no persistent effect; emits speech |
 | `craft` | input `material: Entity`; result `product: Entity` | product is created and categorized |

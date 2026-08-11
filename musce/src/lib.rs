@@ -49,17 +49,13 @@ pub mod action {
         PerformOutcome, Refusal, RegistryError, SchemaError, TypedHandlerOutcome,
     };
     pub use musce_action::{
-        Affordance, Clause, Frame, Guard, Literal, Predicate, Term, Var, WorldModel,
-    };
-    pub use musce_action::{
         Caller, CommandTable, Gate, Handler, dispatch_command, dispatch_perform,
     };
     pub use musce_action::{CapId, CapRegistry, CapSet, Verdict};
     pub use musce_action::{ColdOp, Ctx, System, SystemCtx, run_systems};
     pub use musce_action::{GaugeDirection, GaugeId, GaugeLevel, GaugeTarget};
 
-    /// Canonical typed affordance schemas and grounded values. Additive during the
-    /// fixed-frame prototype migration.
+    /// Canonical typed affordance schemas and grounded values.
     pub mod schema {
         pub use musce_action::schema::*;
     }

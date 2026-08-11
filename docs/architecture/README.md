@@ -85,20 +85,17 @@ These hold across every subsystem:
   registration, structural schema validation, reverse effect indexing, the shared
   performer, its typed execution/observation/narration boundary, and one boot-time
   registry injected into command and system contexts, and the Rust `affordance!`
-  authoring macro. A reusable effect-oracle harness and remaining text/agency
-  consumer migration are pending; reference `give` and generic pointing are
-  migrated.)*
-- [affordance-migration.md](affordance-migration.md): the fixed-frame prototype,
-  additive canonical build, cutover boundary, and legacy removal condition.
+  authoring macro. Reference text, pointing, systems, sequences, and agency are
+  migrated; a reusable generated effect-oracle harness remains pending.)*
 - [affordance-authoring.md](affordance-authoring.md): the Rust `affordance!`
   description language, generated typed handler interface, closed-vocabulary
-  boundary, and path to future non-Rust front ends. *(Built, with the reference
-  `give` affordance as the first app declaration.)*
+  boundary, and path to future non-Rust front ends. *(Built and used by all six
+  reference gameplay affordances.)*
 - [affordance-contracts.md](affordance-contracts.md): ordered applicability
   guards, deterministic/contested/opaque resolution, unconditional effects, and
   executable-oracle obligations. *(Built: structural registration checks, shared
   grounding/gate/guard execution, resolution enforcement, result validation, and
-  post-commit typed narration, plus the reference `give` content oracle; reusable
+  post-commit typed narration, plus reference content tests; reusable
   effect-oracle harness pending.)*
 - [gauges.md](gauges.md): the split between stored components and derived gauges,
   raw normalized readings, registered qualitative regions, strict directional
@@ -111,7 +108,8 @@ These hold across every subsystem:
 - [agency/](agency/README.md): autonomous behavior on the shared affordance layer:
   drives, goal arbitration, backward planning over comparable effects, knowledge-
   scoped parameter binding, QSIM gauges, and grounded execution with replanning.
-  *(Target affordance/planner representation specified; implementation pending.)*
+  *(Canonical categorical planner, arbiter, and pursuit driver built; result
+  dependencies, full interference, and QSIM regression deferred.)*
 - [networking-and-sessions.md](networking-and-sessions.md): transports behind one
   `Connection`, input modes, and the session/control model (embodiment vs modal
   overlay, the account floor, staff multi-puppet). *(Built: raw TCP, session
@@ -225,10 +223,9 @@ Built:
   the `Readable` book (the first cold-content consumer: a resident entity holds only
   the cold key, `read` fetches its text and `inscribe` overwrites it through the
   engine's async cold-op path, decoded by a UTF-8 `decode_cold`),
-  the takeable rule and
-  the control rule, the shared `do_move` traversal helper (the one rule-checked
-  move path, with a `Locked`-exit veto, run by `go`, `wander`, and sequences
-  alike), narration prose, the
+  the takeable rule, the control rule, and the app-owned canonical `take`, `drop`,
+  `put`, `eat`, `give`, and `go` affordances (including the `Locked`-exit guard and
+  fixed narration shared by commands, agency, wanderers, and sequences), the
   code-seeded starter world (with a controllable drone), the `@play` actor policy,
   and its own tick-loop systems (a `Wander` marker plus the `wander` system that
   drifts uncontrolled wanderers between rooms, the `death_cry` reaction that
@@ -249,9 +246,9 @@ Built:
 
 Deferred (with seams in place where noted):
 
-- Affordance/agency integration: remaining consumer migration onto the built
-  immutable registry, macro, shared performer, and pointing wire; directional
-  gauge-effect verification, effect-goal unification, and QSIM regression. The
+- Affordance/agency extensions: generated effect-oracle infrastructure,
+  fresh-result dependencies, complete functional-assignment interference,
+  directional gauge-effect verification, and QSIM regression. The
   target design is in
   `affordances.md`, `affordance-authoring.md`, `affordance-contracts.md`,
   `gauges.md`, `offers.md`, and `agency/`.

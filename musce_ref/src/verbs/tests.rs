@@ -12,7 +12,6 @@ use musce::wire::ConnectionId;
 use musce::world::hecs::EntityBuilder;
 use musce::world::{Description, EntityId, Locus, Name, World};
 
-mod agency;
 mod control;
 mod manipulate;
 mod movement;
@@ -82,7 +81,7 @@ fn link(w: &mut World, from: EntityId, to: EntityId, dir: &str) {
 
 /// Run a handler and return its emitted (pre-resolution) outbound buffer.
 fn run(world: &mut World, actor: EntityId, f: impl FnOnce(&mut Ctx)) -> Vec<Outbound> {
-    let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+    let affordances = crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
     let mut out = Vec::new();
     let verdict = Verdict::guest();
     let mut ctx = Ctx::new(

@@ -8,22 +8,21 @@
 //! only the generic persisted-component plumbing. See
 //! `docs/architecture/sequences.md`.
 
-use musce::action::{Action, SystemCtx};
+use musce::action::{Action, PerformOutcome, SystemCtx, Verdict};
 use musce::world::{EntityId, Id, NamedComponent, World};
 use serde::{Deserialize, Serialize};
 
 use crate::commit_or_log;
-use crate::names::{self, Scope, display_name};
-use crate::verbs::{MoveOutcome, do_move};
-use musce::wire::EventKind;
+use crate::exits::ExitQueries;
+use crate::names::{self, Scope};
 
 /// What a step does when it fires. A rule-checked intent (resolved and vetoed the
 /// same way a player command is), not a raw structural `Action`. The MVP set is
 /// deliberately two: a rule-checked `Move` and a rule-free self-`Destroy`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Intent {
-    /// Traverse the exit named `dir` out of the carrier's room, through the shared
-    /// `do_move` path (so a locked exit vetoes a scripted mover too). A blocked or
+    /// Traverse the exit named `dir` out of the carrier's room through the
+    /// canonical `go` affordance. A blocked or
     /// missing exit is a no-op beat; the sequence still advances.
     Move { dir: String },
     /// Despawn the carrier itself. Rule-free, the terminal beat of a finite
@@ -237,33 +236,21 @@ fn advance(ctx: &mut SystemCtx, carrier: EntityId, mut inst: Instance) -> Advanc
     }
 }
 
-/// Run one beat's intent against the carrier. A `Move` runs through the shared
-/// `do_move` rule path (so a scripted mover is vetoed exactly as a player is) and
-/// narrates to the rooms it leaves and enters; a `Destroy` despawns the carrier.
+/// Run one beat's intent against the carrier. `Move` grounds the canonical `go`
+/// affordance; `Destroy` remains a rule-free structural intent.
 fn fire(ctx: &mut SystemCtx, carrier: EntityId, intent: &Intent) {
     match intent {
         Intent::Move { dir } => {
             let Some(exit) = names::resolve(ctx.world, carrier, Scope::Exits, dir) else {
                 return; // no such exit out of here: a no-op beat
             };
-            let who = display_name(ctx.world, carrier);
-            match do_move(ctx.world, carrier, exit) {
-                MoveOutcome::Moved {
-                    from,
-                    dest,
-                    direction,
-                } => {
-                    if let Some(from) = from {
-                        ctx.emit_locus(
-                            from,
-                            EventKind::Narration,
-                            format!("{who} leaves {direction}."),
-                        );
-                    }
-                    ctx.emit_locus(dest, EventKind::Narration, format!("{who} arrives."));
-                }
-                // Blocked (a locked exit) or half-wired: a no-op beat, no narration.
-                MoveOutcome::NoDestination | MoveOutcome::Blocked(_) => {}
+            let Some(destination) = ctx.world.exit_destination(exit) else {
+                return;
+            };
+            let action = crate::affordances::go_action(carrier, exit, destination);
+            match ctx.perform(&Verdict::guest(), &action) {
+                Ok(PerformOutcome::Committed(_)) | Ok(PerformOutcome::Refused(_)) => {}
+                Err(error) => tracing::error!(error = %error, "sequence movement failed"),
             }
         }
         Intent::Destroy => {
@@ -389,7 +376,8 @@ mod tests {
     }
 
     fn sweep(world: &mut World, tick: u64) -> Vec<Outbound> {
-        let affordances = musce::action::AffordanceRegistry::empty(world).unwrap();
+        let affordances =
+            crate::affordances::build(world, &musce::action::CapRegistry::new()).unwrap();
         let mut out = Vec::new();
         let mut ctx = SystemCtx::new(
             world,

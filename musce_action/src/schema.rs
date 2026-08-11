@@ -1,7 +1,6 @@
 //! Canonical affordance schema and grounding values.
 //!
-//! These types are additive while the fixed-frame prototype is migrated. Stable
-//! symbolic ids cross process and wire boundaries; compact parameter slots index
+//! Stable symbolic ids cross process and wire boundaries; compact parameter slots index
 //! runtime input/result arrays. The two identities are deliberately separate so
 //! reordering storage never renames an authored parameter.
 

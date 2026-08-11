@@ -1,7 +1,6 @@
 # Affordances, Conditions, and Effects
 
-> Status: **canonical schema, state evaluation, registration, and execution built;
-> consumer migration underway.** `musce_action::schema` provides stable symbolic affordance and
+> Status: **built.** `musce_action::schema` provides stable symbolic affordance and
 > parameter ids, separate dense parameter slots, typed values, input/result
 > declarations, canonical terms, formulas, effects, resolution modes, partial
 > bindings, grounded actions, and outcomes. `musce_action::state` registers typed
@@ -13,17 +12,10 @@
 > The host builds the app registry once after world-type registration and injects
 > it into every command and system context. Generic offer classification, app
 > exposure policy, and the typed perform wire execute through that registry. The
-> `affordance!` macro is built and the reference `give` declaration exercises it.
-> Executable effect oracles and planner integration remain pending. The reference
-> `give` verb and pointing surface are canonical consumers.
-
-## Built prototype during migration
-
-The fixed-frame runtime and add-only planner remain built and exercised while the
-canonical representation lands additively. Their exact shapes, current consumers,
-freeze boundary, and removal condition live in
-[affordance-migration.md](affordance-migration.md). They are migration source, not
-a second design to extend.
+> `affordance!` macro authors the reference `take`, `drop`, `put`, `eat`, `give`,
+> and `go` actions. Text, pointing, systems, sequences, and agency all converge on
+> the registry performer. The reusable generated effect-oracle harness remains
+> pending; reference behavioral tests exercise the shipped declarations.
 
 An **affordance** describes an attempt an actor can make: the values that identify
 the attempt, the world conditions under which it is applicable, the state changes
@@ -287,5 +279,3 @@ in [affordance-contracts.md](affordance-contracts.md#schema-registration).
   ultimately commits.
 - [gauges.md](gauges.md): normalized readings, targets, and directional effects.
 - [offers.md](offers.md): partial grounding for pointing clients.
-- [affordance-migration.md](affordance-migration.md): the shipped prototype,
-  additive construction sequence, cutover boundary, and removal condition.

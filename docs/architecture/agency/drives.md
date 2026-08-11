@@ -1,8 +1,9 @@
 # Drives and the Agency Loop
 
-> Status: **target integration specified.** Drives remain app policy over need
-> state. Their goals use the closed condition algebra, including registered
-> qualitative gauge thresholds for ordered needs.
+> Status: **categorical reference drives built.** Drives remain app policy over
+> need state and emit canonical condition formulas. The reference hunger and
+> hoard drives use components and relations; qualitative gauge goals remain
+> specified for the deferred QSIM extension.
 
 A drive turns an actor's internal need into a goal and an urgency. It does not
 choose actions. The arbiter chooses among goals, the planner finds grounded

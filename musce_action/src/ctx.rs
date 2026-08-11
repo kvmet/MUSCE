@@ -325,6 +325,13 @@ impl<'a> SystemCtx<'a> {
         (self.world, self.out)
     }
 
+    /// Immutable planning inputs as one short-lived borrow. A pursuit can choose
+    /// its next grounded action, release this pair, then execute through
+    /// [`SystemCtx::perform`] without retaining a registry or world borrow.
+    pub fn planning(&self) -> (&World, &AffordanceRegistry) {
+        (self.world, self.affordances)
+    }
+
     /// Run an autonomous canonical action through the same performer as a player.
     /// Systems have no account principal, so the app supplies the deliberate
     /// default verdict instead of deriving authority from the chosen actor.

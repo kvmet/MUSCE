@@ -1,9 +1,9 @@
 # Conditions, Terms, and Binding
 
-> Status: **target design specified; implementation pending.** Planning
-> conditions constrain functional relation and locus slots, component presence,
-> existence, and registered qualitative gauge regions. Affordances distinguish
-> typed inputs from results.
+> Status: **canonical vocabulary and categorical planning built.** Conditions
+> constrain functional relation and locus slots, component presence, existence,
+> and registered qualitative gauge regions. Gauge regression and result-dependent
+> planning remain deferred.
 
 The planner must compare goals, preconditions, and effects statically. A predicate
 is therefore not an arbitrary app callback. It is a condition in a closed state
