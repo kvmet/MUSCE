@@ -12,8 +12,8 @@ use musce_core::{EntityId, World};
 use crate::caps::Verdict;
 use crate::perform::AffordanceRegistry;
 use crate::schema::{
-    AffordanceId, Condition, Formula, GroundAction, OptionalEntity, ParameterId, ParameterMode,
-    PartialGrounding, Term, Value, ValueSort,
+    AffordanceId, AffordanceSchema, Condition, Formula, GroundAction, OptionalEntity, ParameterId,
+    ParameterMode, PartialGrounding, Term, Value, ValueSort,
 };
 use crate::state::EvaluationError;
 
@@ -173,6 +173,13 @@ impl From<EvaluationError> for GroundingError {
     }
 }
 
+struct ValidatedBindings<'a> {
+    schema: &'a AffordanceSchema,
+    slots: Vec<Value>,
+    bound: HashSet<ParameterId>,
+    missing: Vec<ParameterId>,
+}
+
 impl AffordanceRegistry {
     /// Validate and classify an app-selected partial grounding. The app controls
     /// exposure and candidates; the engine controls canonical interpretation.
@@ -183,8 +190,12 @@ impl AffordanceRegistry {
         actor: EntityId,
         proposal: OfferProposal,
     ) -> Result<ClassifiedOffer, GroundingError> {
-        let (schema, slots, bound, missing) =
-            self.validate_bindings(world, actor, proposal.grounding())?;
+        let ValidatedBindings {
+            schema,
+            slots,
+            bound,
+            missing,
+        } = self.validate_bindings(world, actor, proposal.grounding())?;
         validate_candidates(self, world, schema, &bound, proposal.candidates())?;
 
         let status = if !schema.gate().permits(verdict) {
@@ -224,7 +235,12 @@ impl AffordanceRegistry {
         actor: EntityId,
         grounding: &PartialGrounding,
     ) -> Result<GroundAction, GroundingError> {
-        let (schema, slots, _bound, missing) = self.validate_bindings(world, actor, grounding)?;
+        let ValidatedBindings {
+            schema,
+            slots,
+            missing,
+            ..
+        } = self.validate_bindings(world, actor, grounding)?;
         if !missing.is_empty() {
             return Err(GroundingError::MissingInputs(missing.into_boxed_slice()));
         }
@@ -236,15 +252,7 @@ impl AffordanceRegistry {
         world: &World,
         actor: EntityId,
         grounding: &PartialGrounding,
-    ) -> Result<
-        (
-            &'a crate::schema::AffordanceSchema,
-            Vec<Value>,
-            HashSet<ParameterId>,
-            Vec<ParameterId>,
-        ),
-        GroundingError,
-    > {
+    ) -> Result<ValidatedBindings<'a>, GroundingError> {
         if !world.contains(actor) {
             return Err(GroundingError::DeadActor(actor));
         }
@@ -288,7 +296,12 @@ impl AffordanceRegistry {
                 })
             })
             .collect();
-        Ok((schema, slots, bound, missing))
+        Ok(ValidatedBindings {
+            schema,
+            slots,
+            bound,
+            missing,
+        })
     }
 }
 
@@ -305,7 +318,7 @@ fn classify_after_guards(missing: Vec<ParameterId>) -> OfferStatus {
 fn validate_candidates(
     registry: &AffordanceRegistry,
     world: &World,
-    schema: &crate::schema::AffordanceSchema,
+    schema: &AffordanceSchema,
     bound: &HashSet<ParameterId>,
     candidates: &[InputCandidates],
 ) -> Result<(), GroundingError> {

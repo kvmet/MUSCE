@@ -71,7 +71,8 @@ fn kinds_of(world: &World, id: EntityId) -> Vec<String> {
         (world.has::<Locked>(id), "locked"),
     ]
     .into_iter()
-    .filter_map(|(present, tag)| present.then(|| tag.to_string()))
+    .filter(|(present, _)| *present)
+    .map(|(_, tag)| tag.to_string())
     .collect()
 }
 

@@ -696,7 +696,7 @@ fn expand(definition: Definition) -> Result<TokenStream2> {
             let function = &observation.function;
             (quote!(#ty), quote!(#function(world, actor, inputs)))
         }
-        None => (quote!(()), quote!(())),
+        None => (quote!(()), quote!({})),
     };
     let execute = &definition.execute;
     let narrate = match &definition.narrate {

@@ -84,9 +84,8 @@ mod tests {
     #[test]
     fn wrong_password_is_false_not_error() {
         let phc = hash_password("hunter2").unwrap();
-        assert_eq!(
-            verify_password("hunter3", &phc).unwrap(),
-            false,
+        assert!(
+            !verify_password("hunter3", &phc).unwrap(),
             "a wrong password is a clean non-match, not an error"
         );
     }

@@ -975,8 +975,8 @@ mod tests {
         let _ = w.snapshot();
         let _ = w.take_facts();
 
-        assert_eq!(w.remove::<Description>(entity).unwrap(), false);
-        assert_eq!(w.modify::<Description>(entity, |_| {}).unwrap(), false);
+        assert!(!w.remove::<Description>(entity).unwrap());
+        assert!(!w.modify::<Description>(entity, |_| {}).unwrap());
         assert!(matches!(
             w.insert(missing, Description("x".into())),
             Err(MutateError::NoSuchEntity(id)) if id == missing
